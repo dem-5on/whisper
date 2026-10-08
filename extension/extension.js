@@ -100,7 +100,9 @@ class TranscriberIndicator extends PanelMenu.Button {
         this.menu.box.add_style_class_name('transcriber-popup-content');
         this._statusItem = new PopupMenu.PopupMenuItem('', { reactive: false });
         this._statusItem.label.add_style_class_name('transcriber-status-label');
+        this._statusItem.label.get_clutter_text().set_single_line_mode(true);
         this._statusItem.label.get_clutter_text().set_ellipsize(Pango.EllipsizeMode.END);
+        this._statusItem.label.set_clip_to_allocation(true);
         this._actionsItem = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false });
         const actionsBox = new St.BoxLayout({ style_class: 'transcriber-action-row', x_expand: true });
         this._recordButton = new St.Button({
@@ -214,7 +216,9 @@ class TranscriberIndicator extends PanelMenu.Button {
         this._modelsFetching = false;
         this._keyItem = new PopupMenu.PopupMenuItem('', { reactive: false });
         this._keyItem.label.add_style_class_name('transcriber-key-label');
+        this._keyItem.label.get_clutter_text().set_single_line_mode(true);
         this._keyItem.label.get_clutter_text().set_ellipsize(Pango.EllipsizeMode.END);
+        this._keyItem.label.set_clip_to_allocation(true);
         // ON/OFF switch for the full completed transcript. While recording,
         // status.live_text carries the rolling partial (committed + newest
         // provisional words); only the finalized text is ever typed.
@@ -237,7 +241,9 @@ class TranscriberIndicator extends PanelMenu.Button {
         });
         this._liveInfoItem = new PopupMenu.PopupMenuItem('', { reactive: false });
         this._liveInfoItem.label.add_style_class_name('transcriber-live-info-label');
+        this._liveInfoItem.label.get_clutter_text().set_single_line_mode(true);
         this._liveInfoItem.label.get_clutter_text().set_ellipsize(Pango.EllipsizeMode.END);
+        this._liveInfoItem.label.set_clip_to_allocation(true);
         this._transcriptItem = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false });
         this._transcriptScroll = new St.ScrollView({
             style_class: 'transcriber-transcript-scroll',
@@ -541,20 +547,22 @@ class TranscriberIndicator extends PanelMenu.Button {
             vertical: false,
             style_class: 'transcriber-choice-control',
             x_expand: true,
+            clip_to_allocation: true,
         });
         const tile = new St.BoxLayout({
             style_class: 'transcriber-choice-row',
             x_expand: true,
+            clip_to_allocation: true,
         });
         const tileContent = new St.BoxLayout({
             style_class: 'transcriber-choice-content',
             x_expand: true,
+            clip_to_allocation: true,
         });
         const tileIcon = new St.Icon({ icon_name: iconName, style_class: 'transcriber-choice-icon' });
-        const tileLabels = new St.BoxLayout({ vertical: true, style_class: 'transcriber-choice-labels', x_expand: true });
+        const tileLabels = new St.BoxLayout({ vertical: true, style_class: 'transcriber-choice-labels', x_expand: true, clip_to_allocation: true });
         const titleLabel = new St.Label({ text: label, style_class: 'transcriber-choice-title' });
-        const valueLabel = new St.Label({ text: '', style_class: 'transcriber-choice-value' });
-        valueLabel.set_width(190);
+        const valueLabel = new St.Label({ text: '', style_class: 'transcriber-choice-value', x_expand: true, clip_to_allocation: true });
         valueLabel.get_clutter_text().set_single_line_mode(true);
         valueLabel.get_clutter_text().set_ellipsize(3);
         tileLabels.add_child(titleLabel);
@@ -584,10 +592,10 @@ class TranscriberIndicator extends PanelMenu.Button {
         this._choiceDetailsItem.visible = show;
         if (!show)
             return;
-        const rowWidth = this._providerModelRow.get_width();
-        const cardWidth = Math.max(240, rowWidth - 24);
+        const rowWidth = Math.min(340, this._providerModelRow.get_width() || 340);
+        const cardWidth = Math.max(240, Math.min(316, rowWidth - 24));
         this._choiceDetailsPanel.set_width(cardWidth);
-        this._choiceDetailsScroll.set_width(Math.max(180, cardWidth - 40));
+        this._choiceDetailsScroll.set_width(Math.max(180, Math.min(276, cardWidth - 40)));
         this._choiceDetailsTitle.text = control.title;
         this._choiceDetailsIcon.icon_name = control.iconName;
         this._renderChoiceOptions(control.choices);
@@ -617,8 +625,9 @@ class TranscriberIndicator extends PanelMenu.Button {
                 style_class: 'transcriber-option-label',
                 x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
+                clip_to_allocation: true,
             });
-            label.set_width(420);
+            label.set_width(280);
             label.get_clutter_text().set_single_line_mode(true);
             label.get_clutter_text().set_ellipsize(3);
             const check = new St.Icon({
