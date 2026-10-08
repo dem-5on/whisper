@@ -7,6 +7,36 @@ The daemon owns the work; the panel only displays state and sends commands.
 
 ## Install
 
+For GNOME on Wayland on Debian/Ubuntu-based Linux, open Terminal and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dem-5on/whisper/main/install.sh | bash
+```
+
+The installer asks for permission to install SoX, ydotool, PipeWire tools, and
+Python support; creates an isolated Python environment; installs and starts the
+user daemon; and installs the GNOME panel extension. It keeps existing settings
+and keys. Sign out and back in once if GNOME doesn't show the panel icon after
+installation. The local `base` model is downloaded the first time the daemon
+starts, so the first launch needs internet access.
+
+Versioned downloads will be published on the project's
+[GitHub Releases page](https://github.com/dem-5on/whisper/releases).
+
+To remove the app later while keeping settings, keys, recordings, and
+transcripts:
+
+```bash
+bash ~/.local/share/whisper/uninstall.sh
+```
+
+For other Linux distributions, use `make package` to create a source bundle and
+a GNOME extension ZIP under `dist/`, then follow the manual setup below.
+Currently, the guided installer supports GNOME on Wayland on Debian/Ubuntu; it
+does not claim support for GNOME X11, KDE, Windows, or macOS.
+
+### Manual setup
+
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e '.[local,dev]'
@@ -14,7 +44,7 @@ mkdir -p ~/.config/transcriber
 cp config.example.yaml ~/.config/transcriber/config.yaml
 ```
 
-The default local engine needs `faster-whisper`. Audio capture uses SoX's `rec`; install it with your distribution package manager. For direct Wayland typing, install and configure `ydotool` (including access to `/dev/uinput`). X11 uses `xdotool`. Mic enumeration uses `wpctl` (PipeWire), falling back to `pactl` then `arecord -l`.
+Audio capture uses SoX's `rec`; microphone listing uses `wpctl` (PipeWire), falling back to `pactl` then `arecord -l`. On Wayland, automatic text insertion uses `ydotool` and its `ydotoold` daemon; the daemon needs access to `/dev/uinput`. Distros configure that permission differently, so if audio transcribes but isn't typed into the focused app, consult your distribution's ydotool setup instructions. This grants synthetic keyboard input and should only be configured for a trusted local user.
 
 ## Run
 
@@ -133,7 +163,7 @@ legacy record-to-WAV-then-transcribe path. The stock VAD needs only NumPy;
 installing `webrtcvad` (optional) upgrades per-frame speech classification;
 the default 20 ms capture frame uses it directly.
 
-## GNOME panel (`extension/`)
+### GNOME panel (`extension/`)
 
 Install the `transcriber@local` extension (targets GNOME 45–50):
 

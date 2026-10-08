@@ -4,5 +4,5 @@
   "description": "Push-to-talk voice input: record, transcribe, and insert text into the focused app. Daemon owns the work; this panel shows state and sends commands.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "version": 2,
-  "url": "https://localhost/transcriber"
+  "url": "https://github.com/dem-5on/whisper"
 }

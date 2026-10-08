@@ -1,0 +1,33 @@
+name: Build desktop release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches app version
+        run: |
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' pyproject.toml | head -n 1)"
+          test "${GITHUB_REF_NAME#v}" = "$VERSION"
+
+      - name: Build install and extension packages
+        run: bash scripts/package.sh
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/whisper-*-linux-gnome.tar.gz
+          dist/transcriber-gnome-extension-*.zip
+          --title "Whisper $GITHUB_REF_NAME"
+          --generate-notes

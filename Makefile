@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 GPU_COMPOSE = $(COMPOSE) -f compose.yaml -f compose.gpu.yaml
 
-.PHONY: up up-gpu down logs status token-add token-revoke
+.PHONY: up up-gpu down logs status token-add token-revoke package install uninstall
 
 up:
 	$(COMPOSE) up -d --build
@@ -27,3 +27,12 @@ token-revoke:
 	@test -n "$(USER_ID)" || (echo "Usage: make token-revoke USER_ID=<friend-or-user-id>" >&2; exit 2)
 	$(COMPOSE) run --rm --no-deps whisper-server whisper-server token revoke --user "$(USER_ID)" --file /data/tokens.json
 	@if $(COMPOSE) ps --status running --services | grep -qx whisper-server; then $(COMPOSE) restart whisper-server; fi
+
+package:
+	bash scripts/package.sh
+
+install:
+	bash install.sh
+
+uninstall:
+	bash uninstall.sh

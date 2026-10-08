@@ -23,6 +23,11 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const POLL_MS = 500;
 
+function userCommand(name) {
+    const localCommand = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', name]);
+    return GLib.file_test(localCommand, GLib.FileTest.EXISTS) ? localCommand : name;
+}
+
 function socketPath() {
     const runtime = GLib.getenv('XDG_RUNTIME_DIR');
     if (runtime)
@@ -34,7 +39,7 @@ function runTranscriber(argv) {
     return new Promise(resolve => {
         try {
             const proc = Gio.Subprocess.new(
-                ['whisper', ...argv],
+                [userCommand('whisper'), ...argv],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
             proc.communicate_utf8_async(null, null, (p, res) => {
@@ -321,7 +326,7 @@ class TranscriberIndicator extends PanelMenu.Button {
             );
         } catch {
             try {
-                Gio.Subprocess.new(['whisper-daemon'], Gio.SubprocessFlags.NONE);
+                Gio.Subprocess.new([userCommand('whisper-daemon')], Gio.SubprocessFlags.NONE);
             } catch (e) {
                 Main.notify('Transcriber', 'Could not start daemon');
             }
