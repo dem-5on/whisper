@@ -11,11 +11,11 @@ import sys
 TASK_NAME = "WhisperTranscriber"
 
 
-def _daemon_command() -> str:
+def _tray_command() -> str:
     executable = Path(sys.executable)
     pythonw = executable.with_name("pythonw.exe")
     runner = pythonw if pythonw.is_file() else executable
-    return subprocess.list2cmdline([str(runner), "-m", "transcriber.daemon"])
+    return subprocess.list2cmdline([str(runner), "-m", "transcriber.platforms.windows.tray"])
 
 
 def enable() -> tuple[bool, str]:
@@ -23,7 +23,7 @@ def enable() -> tuple[bool, str]:
     if os.name != "nt":
         return False, "Windows startup registration is only available on Windows."
     result = subprocess.run(
-        ["schtasks.exe", "/Create", "/F", "/SC", "ONLOGON", "/TN", TASK_NAME, "/TR", _daemon_command()],
+        ["schtasks.exe", "/Create", "/F", "/SC", "ONLOGON", "/TN", TASK_NAME, "/TR", _tray_command()],
         capture_output=True,
         text=True,
         check=False,
