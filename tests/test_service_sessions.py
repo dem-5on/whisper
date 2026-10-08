@@ -94,6 +94,36 @@ class SessionManagerTests(unittest.IsolatedAsyncioTestCase):
         await second.cancel()
         await third.cancel()
 
+    async def test_rolling_session_start_limit_applies_per_user_and_expires(self) -> None:
+        now = [100.0]
+        limits = SessionLimits(
+            max_concurrent_global=1,
+            max_starts_per_window=1,
+            rate_window_seconds=60,
+        )
+        manager = SessionManager(self.worker, (self.profile,), device="cpu", limits=limits,
+                                 clock=lambda: now[0])
+        session = await manager.start("user-a", "default")
+        await session.cancel()
+        with self.assertRaisesRegex(ServiceError, "Session start limit reached") as raised:
+            await manager.start("user-a", "default")
+        self.assertEqual(raised.exception.code, "rate_limited")
+        self.assertTrue(raised.exception.retryable)
+
+        # The limit is keyed by authenticated user, not shared across users.
+        other_user = await manager.start("user-b", "default")
+        await other_user.cancel()
+        now[0] += 60
+        after_window = await manager.start("user-a", "default")
+        await after_window.cancel()
+
+    async def test_cpu_friendly_defaults(self) -> None:
+        limits = SessionLimits()
+        self.assertEqual(limits.max_audio_seconds, 300)
+        self.assertEqual(limits.max_concurrent_global, 1)
+        self.assertEqual(limits.max_starts_per_window, 10)
+        self.assertEqual(limits.rate_window_seconds, 3600)
+
     async def test_max_audio_duration_cancels_and_releases_session(self) -> None:
         limits = SessionLimits(max_audio_seconds=1, max_audio_bytes=32000, max_chunk_bytes=32000)
         manager = SessionManager(self.worker, (self.profile,), device="cpu", limits=limits)

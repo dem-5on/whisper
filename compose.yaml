@@ -25,6 +25,14 @@ services:
       - "${WHISPER_MODEL:-base}"
       - --token-file
       - /data/tokens.json
+      - --max-session-seconds
+      - "${WHISPER_MAX_SESSION_SECONDS:-300}"
+      - --max-concurrent
+      - "${WHISPER_MAX_CONCURRENT:-1}"
+      - --max-starts-per-window
+      - "${WHISPER_MAX_STARTS_PER_WINDOW:-10}"
+      - --rate-window-seconds
+      - "${WHISPER_RATE_WINDOW_SECONDS:-3600}"
     volumes:
       - whisper_data:/data
 

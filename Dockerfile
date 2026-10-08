@@ -29,4 +29,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=15m --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2)" || exit 1
 
 ENTRYPOINT ["sh", "/usr/local/bin/whisper-entrypoint"]
-CMD ["whisper-server", "serve", "--host", "0.0.0.0", "--port", "8765", "--device", "auto", "--model", "base", "--token-file", "/data/tokens.json"]
+CMD ["whisper-server", "serve", "--host", "0.0.0.0", "--port", "8765", "--device", "auto", "--model", "base", "--token-file", "/data/tokens.json", "--max-session-seconds", "300", "--max-concurrent", "1", "--max-starts-per-window", "10", "--rate-window-seconds", "3600"]

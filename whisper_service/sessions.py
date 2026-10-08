@@ -8,7 +8,9 @@ revisions, and cleanup; it deliberately does not retain submitted audio.
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass
+import time
 from typing import Awaitable, Callable, Protocol
 from uuid import uuid4
 
@@ -57,10 +59,12 @@ class TranscriptionWorker(Protocol):
 
 @dataclass(frozen=True)
 class SessionLimits:
-    max_audio_seconds: int = 600
-    max_audio_bytes: int = PCM_BYTES_PER_SECOND * 600
-    max_concurrent_global: int = 2
+    max_audio_seconds: int = 300
+    max_audio_bytes: int = PCM_BYTES_PER_SECOND * 300
+    max_concurrent_global: int = 1
     max_concurrent_per_user: int = 1
+    max_starts_per_window: int = 10
+    rate_window_seconds: int = 3600
     max_chunk_bytes: int = PCM_BYTES_PER_SECOND // 10  # 100 ms
 
     def __post_init__(self) -> None:
@@ -68,6 +72,8 @@ class SessionLimits:
             raise ValueError("audio duration must be between 1 and 3600 seconds, with a positive byte limit")
         if self.max_concurrent_global < 1 or self.max_concurrent_per_user < 1:
             raise ValueError("concurrency limits must be positive")
+        if self.max_starts_per_window < 1 or self.rate_window_seconds < 1:
+            raise ValueError("session start rate limits must be positive")
         if self.max_chunk_bytes < 2 or self.max_chunk_bytes % 2:
             raise ValueError("max_chunk_bytes must be a positive even number")
 
@@ -76,7 +82,8 @@ class SessionManager:
     """Creates isolated sessions and applies resource limits before inference."""
 
     def __init__(self, worker: TranscriptionWorker, profiles: tuple[ModelProfile, ...], *,
-                 device: str, limits: SessionLimits | None = None) -> None:
+                 device: str, limits: SessionLimits | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self._worker = worker
         self._profiles = {profile.profile_id: profile for profile in profiles}
         if not self._profiles:
@@ -85,10 +92,12 @@ class SessionManager:
             raise ValueError("model profile IDs must be unique")
         self._device = device
         self._limits = limits or SessionLimits()
+        self._clock = clock
         self._lock = asyncio.Lock()
         self._sessions: dict[str, LiveSession] = {}
         self._starting_by_user: dict[str, int] = {}
         self._starting_total = 0
+        self._start_times_by_user: dict[str, deque[float]] = {}
 
     @property
     def limits(self) -> SessionLimits:
@@ -109,6 +118,25 @@ class SessionManager:
                 raise ServiceError("session_limit", "Your concurrent session limit was reached.", retryable=True)
             if len(self._sessions) + self._starting_total >= self._limits.max_concurrent_global:
                 raise ServiceError("service_busy", "The service is at capacity. Try again shortly.", retryable=True)
+            now = self._clock()
+            window_start = now - self._limits.rate_window_seconds
+            for tracked_user, timestamps in tuple(self._start_times_by_user.items()):
+                while timestamps and timestamps[0] <= window_start:
+                    timestamps.popleft()
+                if not timestamps:
+                    self._start_times_by_user.pop(tracked_user, None)
+            start_times = self._start_times_by_user.get(user_id)
+            if start_times is None:
+                start_times = deque()
+                self._start_times_by_user[user_id] = start_times
+            if len(start_times) >= self._limits.max_starts_per_window:
+                retry_after = max(1, int(start_times[0] + self._limits.rate_window_seconds - now + 0.999))
+                raise ServiceError(
+                    "rate_limited",
+                    f"Session start limit reached. Try again in about {retry_after} seconds.",
+                    retryable=True,
+                )
+            start_times.append(now)
             self._starting_total += 1
             self._starting_by_user[user_id] = user_starting + 1
 

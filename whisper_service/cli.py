@@ -35,8 +35,10 @@ def main() -> None:
     serve.add_argument("--model", default="base", help="server-owned faster-whisper model profile")
     serve.add_argument("--profile", default="default", help="client-visible allow-listed profile ID")
     serve.add_argument("--token-file", type=Path, default=_default_token_file())
-    serve.add_argument("--max-session-seconds", type=int, default=600)
-    serve.add_argument("--max-concurrent", type=int, default=2)
+    serve.add_argument("--max-session-seconds", type=int, default=300)
+    serve.add_argument("--max-concurrent", type=int, default=1)
+    serve.add_argument("--max-starts-per-window", type=int, default=10)
+    serve.add_argument("--rate-window-seconds", type=int, default=3600)
     serve.add_argument("--partial-interval", type=float, default=1.0)
     serve.add_argument("--rolling-window", type=int, default=8)
     args = parser.parse_args()
@@ -79,6 +81,8 @@ async def _run_service(args: argparse.Namespace) -> None:
         max_audio_bytes=args.max_session_seconds * 16_000 * 2,
         max_concurrent_global=args.max_concurrent,
         max_concurrent_per_user=1,
+        max_starts_per_window=args.max_starts_per_window,
+        rate_window_seconds=args.rate_window_seconds,
     )
     manager = SessionManager(worker, (profile,), device=selection.device, limits=limits)
     await serve_websocket(authenticator, manager, host=args.host, port=args.port)

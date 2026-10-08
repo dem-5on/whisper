@@ -111,6 +111,13 @@ setup). The hosted service returns both live partials and the final transcript,
 so the desktop does not run a second local or provider transcription pass.
 The selected batch provider remains available when live transcription is off.
 
+The Docker server applies CPU-friendly limits by default: one active session
+globally, up to 300 seconds of audio per session, and ten session starts per
+authenticated user per rolling hour. These are enforced server-side. Operators
+can tune them in the Compose environment (for example, in a local `.env` file):
+`WHISPER_MAX_SESSION_SECONDS`, `WHISPER_MAX_CONCURRENT`,
+`WHISPER_MAX_STARTS_PER_WINDOW`, and `WHISPER_RATE_WINDOW_SECONDS`.
+
 The local model is loaded once at daemon startup (warmed with silence),
 not per recording. Event types are `partial`, `committed`, `final`,
 `speech_started`, and `speech_ended`, each with a session ID and revision:
