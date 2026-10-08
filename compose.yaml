@@ -1,0 +1,32 @@
+services:
+  whisper-server:
+    image: whisper-server:cpu
+    build:
+      context: .
+      args:
+        WHISPER_CUDA: "0"
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${WHISPER_BIND:-127.0.0.1}:${WHISPER_PORT:-8765}:8765"
+    environment:
+      HF_HOME: /data/huggingface
+      WHISPER_TOKENS_FILE: /data/tokens.json
+    command:
+      - whisper-server
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --device
+      - "${WHISPER_DEVICE:-auto}"
+      - --model
+      - "${WHISPER_MODEL:-base}"
+      - --token-file
+      - /data/tokens.json
+    volumes:
+      - whisper_data:/data
+
+volumes:
+  whisper_data:

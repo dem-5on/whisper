@@ -64,8 +64,8 @@ class SessionLimits:
     max_chunk_bytes: int = PCM_BYTES_PER_SECOND // 10  # 100 ms
 
     def __post_init__(self) -> None:
-        if self.max_audio_seconds < 1 or self.max_audio_bytes < 2:
-            raise ValueError("audio limits must be positive")
+        if self.max_audio_seconds < 1 or self.max_audio_seconds > 3600 or self.max_audio_bytes < 2:
+            raise ValueError("audio duration must be between 1 and 3600 seconds, with a positive byte limit")
         if self.max_concurrent_global < 1 or self.max_concurrent_per_user < 1:
             raise ValueError("concurrency limits must be positive")
         if self.max_chunk_bytes < 2 or self.max_chunk_bytes % 2:
@@ -89,6 +89,10 @@ class SessionManager:
         self._sessions: dict[str, LiveSession] = {}
         self._starting_by_user: dict[str, int] = {}
         self._starting_total = 0
+
+    @property
+    def limits(self) -> SessionLimits:
+        return self._limits
 
     async def start(self, user_id: str, profile_id: str, language: str | None = None) -> "LiveSession":
         if not user_id:
@@ -189,9 +193,16 @@ class LiveSession:
             self._state = "finishing"
             try:
                 transcript = await self._worker.finish()
-            except Exception as exc:
+            except BaseException as exc:
                 self._state = "closed"
-                await self._release(self.session_id)
+                try:
+                    await asyncio.shield(self._worker.cancel())
+                except BaseException:
+                    pass
+                finally:
+                    await self._release(self.session_id)
+                if not isinstance(exc, Exception):
+                    raise
                 raise ServiceError("inference_failed", "Final transcription failed.", retryable=True) from exc
             self._state = "closed"
             await self._release(self.session_id)
@@ -216,8 +227,8 @@ class LiveSession:
             return
         self._state = "closed"
         try:
-            await self._worker.cancel()
-        except Exception:
+            await asyncio.shield(self._worker.cancel())
+        except BaseException:
             # Cleanup is best-effort; do not retain a service slot if the
             # inference runtime itself fails while disposing session state.
             pass

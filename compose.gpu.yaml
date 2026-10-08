@@ -1,0 +1,13 @@
+services:
+  whisper-server:
+    image: whisper-server:cuda
+    build:
+      args:
+        WHISPER_CUDA: "1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

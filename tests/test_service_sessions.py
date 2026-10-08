@@ -12,6 +12,7 @@ class FakeWorkerSession:
         self.audio: list[bytes] = []
         self.cancelled = False
         self.finished = False
+        self.fail_finish = False
 
     async def submit_audio(self, pcm_s16le: bytes) -> str | None:
         self.audio.append(pcm_s16le)
@@ -19,6 +20,8 @@ class FakeWorkerSession:
 
     async def finish(self) -> str:
         self.finished = True
+        if self.fail_finish:
+            raise RuntimeError("private inference failure")
         return self.final_text
 
     async def cancel(self) -> None:
@@ -120,6 +123,16 @@ class SessionManagerTests(unittest.IsolatedAsyncioTestCase):
         self.worker.fail_open = False
         session = await self.manager.start("user-a", "default")
         await session.cancel()
+
+    async def test_final_worker_error_discards_worker_and_releases_capacity(self) -> None:
+        session = await self.manager.start("user-a", "default")
+        worker_session = self.worker.opened[0]
+        worker_session.fail_finish = True
+        with self.assertRaisesRegex(ServiceError, "Final transcription failed") as raised:
+            await session.finish()
+        self.assertNotIn("private inference failure", str(raised.exception))
+        self.assertTrue(worker_session.cancelled)
+        self.assertEqual(await self.manager.active_count(), 0)
 
 
 if __name__ == "__main__":
