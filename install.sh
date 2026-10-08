@@ -5,11 +5,11 @@ REPO_URL="https://github.com/dem-5on/whisper"
 SOURCE_DIR=""
 DOWNLOAD_DIR=""
 
-# When invoked as `curl ... | bash`, Bash reads this script from stdin and
-# BASH_SOURCE[0] is empty (or names a non-file such as /dev/stdin). In that
-# case, bootstrap from the published source archive below.
-if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
-    SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# When invoked as `curl ... | bash`, $0 is the shell name, not a script path.
+# Checking $0 avoids relying on empty-array behavior that differs across Bash
+# versions; piped installs bootstrap from the published source archive below.
+if [[ -f "$0" ]]; then
+    SOURCE_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
 fi
 
 if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/pyproject.toml" || ! -d "$SOURCE_DIR/extension" ]]; then
