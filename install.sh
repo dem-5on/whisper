@@ -2,10 +2,17 @@
 set -euo pipefail
 
 REPO_URL="https://github.com/dem-5on/whisper"
-SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR=""
 DOWNLOAD_DIR=""
 
-if [[ ! -f "$SOURCE_DIR/pyproject.toml" || ! -d "$SOURCE_DIR/extension" ]]; then
+# When invoked as `curl ... | bash`, Bash reads this script from stdin and
+# BASH_SOURCE[0] is empty (or names a non-file such as /dev/stdin). In that
+# case, bootstrap from the published source archive below.
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/pyproject.toml" || ! -d "$SOURCE_DIR/extension" ]]; then
     for command in curl tar; do
         command -v "$command" >/dev/null || { echo "Please install $command and try again." >&2; exit 1; }
     done
