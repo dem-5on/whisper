@@ -300,7 +300,14 @@ class StreamingRecorder:
 
 def make_recorder(config: AudioConfig, streaming_enabled: bool = True, frame_ms: int = 20,
                    max_queue_seconds: int = 30, rolling_seconds: int = 30):  # type: ignore[no-untyped-def]
-    """Default capture backend: streaming PCM frames, file-only fallback."""
+    """Select the native capture implementation for the current platform."""
+    if os.name == "nt":
+        from .platforms.windows.audio import WindowsRecorder
+
+        return WindowsRecorder(
+            config, frame_ms=frame_ms, max_queue_seconds=max_queue_seconds,
+            rolling_seconds=rolling_seconds,
+        )
     if streaming_enabled:
         return StreamingRecorder(
             config, frame_ms=frame_ms, max_queue_seconds=max_queue_seconds,
@@ -310,7 +317,11 @@ def make_recorder(config: AudioConfig, streaming_enabled: bool = True, frame_ms:
 
 
 def list_sources() -> list[AudioSource]:
-    """Best-effort input enumeration: wpctl, then pactl, then arecord."""
+    """Enumerate microphones using the current platform's audio API."""
+    if os.name == "nt":
+        from .platforms.windows.audio import list_sources as windows_sources
+
+        return windows_sources()
     for probe in (_wpctl_sources, _pactl_sources, _arecord_sources):
         try:
             sources = probe()

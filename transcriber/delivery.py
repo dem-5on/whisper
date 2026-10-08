@@ -90,4 +90,8 @@ def _detect_wayland() -> bool:
 
 
 def make_delivery(config: DeliveryConfig) -> DeliveryBackend:
+    if os.name == "nt":
+        from .platforms.windows.delivery import make_delivery as make_windows_delivery
+
+        return make_windows_delivery(config)
     return KeyboardDelivery() if config.backend == "keyboard" else ClipboardDelivery()
