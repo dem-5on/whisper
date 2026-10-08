@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "universal-transcriber"
 version = "0.1.0"
-description = "Linux-first, application-agnostic push-to-talk transcription daemon"
+description = "Whisper: a Linux-first push-to-talk transcription daemon"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6.0"]
@@ -16,6 +16,9 @@ realtime = ["websockets>=14", "numpy>=1.24"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
+whisper = "transcriber.cli:main"
+whisper-daemon = "transcriber.daemon:main"
+# Compatibility aliases for existing shortcuts and service installations.
 transcriber = "transcriber.cli:main"
 transcriber-daemon = "transcriber.daemon:main"
 

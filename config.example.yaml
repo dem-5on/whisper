@@ -3,7 +3,7 @@ audio:
   channels: 1
   format: wav
   max_duration_seconds: 120
-  # Pulse/PipeWire source name (see `transcriber mics`); null uses the default.
+  # Pulse/PipeWire source name (see `whisper mics`); null uses the default.
   input_device: null
 
 transcription:

@@ -1,4 +1,4 @@
-# Universal Voice-to-Agent Transcriber
+# Whisper — Voice-to-Agent Transcription
 
 A Linux-first, application-agnostic voice-input daemon. Your desktop environment owns the global shortcut; this project records, transcribes, and inserts text into whichever application currently has focus. It never talks to an editor or coding agent directly.
 
@@ -21,7 +21,7 @@ The default local engine needs `faster-whisper`. Audio capture uses SoX's `rec`;
 Start the daemon once, for example from a user service:
 
 ```bash
-transcriber-daemon
+whisper-daemon
 ```
 
 For systemd user sessions, install `systemd/transcriber.service` as
@@ -29,27 +29,29 @@ For systemd user sessions, install `systemd/transcriber.service` as
 is not in `~/.local/bin`, then run `systemctl --user daemon-reload` and
 `systemctl --user enable --now transcriber`.
 
-Bind a desktop/compositor shortcut to `transcriber toggle`; bind a second shortcut to `transcriber cancel` if desired. The desktop environment—not this application—handles global shortcut detection, which makes this compatible with GNOME, KDE, Sway, Hyprland, and similar systems.
+Bind a desktop/compositor shortcut to `whisper toggle`; bind a second shortcut to `whisper cancel` if desired. The desktop environment—not this application—handles global shortcut detection, which makes this compatible with GNOME, KDE, Sway, Hyprland, and similar systems.
 
 ```bash
-transcriber toggle
-transcriber cancel
-transcriber status [--json]
-transcriber retry            # re-transcribe the preserved last recording
-transcriber last             # print the last transcript (for copy/recovery)
-transcriber mics [--json]    # list PipeWire/Pulse capture sources
-transcriber events [--since N] [--json]  # live partial/committed/final events
-transcriber subscribe        # persistent event stream (Ctrl-C to stop)
-transcriber set-provider --provider local|groq|openrouter
-transcriber set-model --model <id>   # local preset or provider model id; `models` lists valid ids
-transcriber set-live-engine --live-engine local|openai-realtime
-transcriber set-live-model --model <id>  # independent live model
-transcriber set-mic --device default|<source-id>
-transcriber set-streaming [--enabled true|false]  # live partials + VAD auto-stop; omit to flip
-transcriber models [--json]          # transcription-capable models for the current backend
-transcriber set-key --provider groq|openrouter|openai [--key ...]  # hidden-prompt key store (0600)
-transcriber set-key --provider groq|openrouter|openai --clear      # remove the stored key
+whisper toggle
+whisper cancel
+whisper status [--json]
+whisper retry            # re-transcribe the preserved last recording
+whisper last             # print the last transcript (for copy/recovery)
+whisper mics [--json]    # list PipeWire/Pulse capture sources
+whisper events [--since N] [--json]  # live partial/committed/final events
+whisper subscribe        # persistent event stream (Ctrl-C to stop)
+whisper set-provider --provider local|groq|openrouter
+whisper set-model --model <id>   # local preset or provider model id; `models` lists valid ids
+whisper set-live-engine --live-engine local|openai-realtime
+whisper set-live-model --model <id>  # independent live model
+whisper set-mic --device default|<source-id>
+whisper set-streaming [--enabled true|false]  # live partials + VAD auto-stop; omit to flip
+whisper models [--json]          # transcription-capable models for the current backend
+whisper set-key --provider groq|openrouter|openai [--key ...]  # hidden-prompt key store (0600)
+whisper set-key --provider groq|openrouter|openai --clear      # remove the stored key
 ```
+
+`transcriber` and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.
 
 Provider, model, and mic switches are written through to `~/.config/transcriber/config.yaml`,
 so they survive daemon restarts. API keys are stored separately in `~/.config/transcriber/keys.env`
@@ -85,9 +87,9 @@ OpenAI live transcription, install the optional dependency and configure its key
 
 ```bash
 python -m pip install -e '.[realtime]'
-transcriber set-key --provider openai
-transcriber set-live-engine --live-engine openai-realtime
-transcriber set-live-model --model gpt-live-transcribe
+whisper set-key --provider openai
+whisper set-live-engine --live-engine openai-realtime
+whisper set-live-model --model gpt-live-transcribe
 ```
 
 This uses OpenAI's Realtime transcription WebSocket; OpenRouter remains

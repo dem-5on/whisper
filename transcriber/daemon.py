@@ -1172,7 +1172,7 @@ def run_server(config: Config, socket_path: Path, config_path: Path | None = Non
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Universal Transcriber daemon")
+    parser = argparse.ArgumentParser(description="Run the Whisper transcription daemon")
     parser.add_argument("--config")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
     parser.add_argument("--verbose", action="store_true")

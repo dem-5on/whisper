@@ -1,11 +1,11 @@
-/* Transcriber GNOME panel: idle / recording + timer + live partial /
+/* Whisper GNOME panel: idle / recording + timer + live partial /
  * processing spinner / error + retry. Daemon owns the work; this only
- * displays status (from `transcriber status --json`) and sends commands
+ * displays status (from `whisper status --json`) and sends commands
  * (`toggle`, `cancel`, `retry`, `set-provider`, `set-model`, `set-mic`).
  * The transcript switch shows/hides the full completed transcript (fetched
- * via `transcriber last`); while recording, the daemon's rolling-window
+ * via `whisper last`); while recording, the daemon's rolling-window
  * decode streams partial/committed text via status.live_text (polled here)
- * or `transcriber subscribe` for push clients. Partials stay in the panel:
+ * or `whisper subscribe` for push clients. Partials stay in the panel:
  * only the finalized transcript is typed into the focused app.
  */
 
@@ -34,7 +34,7 @@ function runTranscriber(argv) {
     return new Promise(resolve => {
         try {
             const proc = Gio.Subprocess.new(
-                ['transcriber', ...argv],
+                ['whisper', ...argv],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
             proc.communicate_utf8_async(null, null, (p, res) => {
@@ -321,7 +321,7 @@ class TranscriberIndicator extends PanelMenu.Button {
             );
         } catch {
             try {
-                Gio.Subprocess.new(['transcriber-daemon'], Gio.SubprocessFlags.NONE);
+                Gio.Subprocess.new(['whisper-daemon'], Gio.SubprocessFlags.NONE);
             } catch (e) {
                 Main.notify('Transcriber', 'Could not start daemon');
             }
@@ -449,7 +449,7 @@ class TranscriberIndicator extends PanelMenu.Button {
 
     async _fetchFullTranscript(key) {
         // Fetch once per completed run; polling every second must not spawn
-        // `transcriber last` on every tick.
+        // `whisper last` on every tick.
         if (this._lastKey === key)
             return;
         this._lastKey = key;
@@ -747,7 +747,7 @@ class TranscriberIndicator extends PanelMenu.Button {
         if (missing) {
             this._keyItem.visible = true;
             const provider = s.backend;
-            this._keyItem.label.text = `${provider} key missing — run: transcriber set-key --provider ${provider}`;
+            this._keyItem.label.text = `${provider} key missing — run: whisper set-key --provider ${provider}`;
         } else {
             this._keyItem.visible = false;
         }
