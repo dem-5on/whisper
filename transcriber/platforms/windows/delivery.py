@@ -117,7 +117,9 @@ class WindowsClipboardDelivery(WindowsKeyboardDelivery):
             self.kernel32.GlobalLock.argtypes = (wintypes.HGLOBAL,)
             self.kernel32.GlobalLock.restype = ctypes.c_void_p
             self.kernel32.GlobalUnlock.argtypes = (wintypes.HGLOBAL,)
+            self.kernel32.GlobalUnlock.restype = wintypes.BOOL
             self.kernel32.GlobalFree.argtypes = (wintypes.HGLOBAL,)
+            self.kernel32.GlobalFree.restype = wintypes.HGLOBAL
         except (AttributeError, OSError) as exc:
             raise DeliveryError("Windows clipboard APIs are unavailable") from exc
 
@@ -142,13 +144,17 @@ class WindowsClipboardDelivery(WindowsKeyboardDelivery):
         if not opened:
             self.kernel32.GlobalFree(handle)
             raise DeliveryError("Could not open the Windows clipboard")
+        transferred = False
         try:
-            self.user32.EmptyClipboard()
+            if not self.user32.EmptyClipboard():
+                raise DeliveryError("Could not clear the Windows clipboard")
             if not self.user32.SetClipboardData(CF_UNICODETEXT, handle):
-                self.kernel32.GlobalFree(handle)
                 raise DeliveryError("Could not write to the Windows clipboard")
+            transferred = True
         finally:
             self.user32.CloseClipboard()
+            if not transferred:
+                self.kernel32.GlobalFree(handle)
         self._send([
             _INPUT(type=INPUT_KEYBOARD, ki=_KEYBDINPUT(VK_CONTROL, 0, 0, 0, 0)),
             _INPUT(type=INPUT_KEYBOARD, ki=_KEYBDINPUT(VK_V, 0, 0, 0, 0)),

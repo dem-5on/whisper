@@ -371,6 +371,7 @@ class DeliveryChunkingTests(unittest.TestCase):
             self.assertEqual(run.call_count, 1)
 
 
+@unittest.skipIf(os.name == "nt", "Wayland detection is Linux-specific")
 class WaylandDetectionTests(unittest.TestCase):
     def test_env_vars_select_ydotool(self) -> None:
         from transcriber.delivery import _detect_wayland

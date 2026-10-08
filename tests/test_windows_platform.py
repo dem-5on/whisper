@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from transcriber.daemon import _schedule_server_shutdown
 from transcriber.platforms.windows.paths import config_dir, data_dir, socket_path
+from transcriber.platforms.windows import lifecycle
 
 
 class WindowsPathsTests(unittest.TestCase):
@@ -30,3 +31,25 @@ class WindowsPathsTests(unittest.TestCase):
             daemon=True,
         )
         thread.return_value.start.assert_called_once_with()
+
+    def test_start_daemon_launches_hidden_child_and_waits_for_socket(self) -> None:
+        with patch.object(lifecycle, "is_running", side_effect=(False, True)), patch.object(
+            lifecycle.subprocess, "Popen"
+        ) as popen:
+            lifecycle.start_daemon()
+        self.assertEqual(popen.call_args.args[0][1:], ["-m", "transcriber.daemon"])
+        self.assertEqual(popen.call_args.kwargs["stdin"], lifecycle.subprocess.DEVNULL)
+        self.assertEqual(popen.call_args.kwargs["stdout"], lifecycle.subprocess.DEVNULL)
+
+    def test_stop_daemon_requests_shutdown_and_waits_for_exit(self) -> None:
+        with patch.object(lifecycle, "is_running", side_effect=(True, False)), patch.object(
+            lifecycle, "request", return_value={"ok": "true"}
+        ) as request:
+            lifecycle.stop_daemon()
+        request.assert_called_once_with("shutdown")
+
+    def test_restart_stops_before_starting(self) -> None:
+        with patch.object(lifecycle, "stop_daemon") as stop, patch.object(lifecycle, "start_daemon") as start:
+            lifecycle.restart_daemon()
+        stop.assert_called_once_with()
+        start.assert_called_once_with()

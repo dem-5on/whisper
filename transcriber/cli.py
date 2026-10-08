@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -172,6 +173,15 @@ def _set_key(args: argparse.Namespace) -> int:
 
 
 def _restart_daemon() -> int:
+    if os.name == "nt":
+        from .platforms.windows.lifecycle import restart_daemon
+
+        try:
+            restart_daemon()
+        except (OSError, RuntimeError) as exc:
+            print(f"whisper: could not restart the daemon: {exc}", file=sys.stderr)
+            return 1
+        return 0
     try:
         subprocess.run(
             ["systemctl", "--user", "restart", "transcriber"],

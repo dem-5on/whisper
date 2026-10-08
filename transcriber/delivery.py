@@ -80,6 +80,8 @@ def _detect_wayland() -> bool:
     WAYLAND_DISPLAY in its own env). The compositor socket existing in the
     runtime dir is the fallback signal; plain X11 sessions have no such
     socket, so xdotool stays the choice there."""
+    if os.name == "nt":
+        return False
     if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
         return True
     if os.environ.get("WAYLAND_DISPLAY"):

@@ -148,14 +148,24 @@ class WindowsRecorder:
             raise AudioError("No recording is active")
         stream, self._stream = self._stream, None
         path = self._path
+        stop_error: Exception | None = None
         try:
             stream.stop()
+        except Exception as exc:
+            stop_error = exc
+            try:
+                stream.abort()
+            except Exception:
+                pass
+        try:
             stream.close()
         except Exception as exc:
-            self._discard()
-            raise AudioError("Windows microphone did not stop cleanly") from exc
+            stop_error = stop_error or exc
         self._stop_writer()
         self._close_wav()
+        if stop_error:
+            self._discard()
+            raise AudioError("Windows microphone did not stop cleanly") from stop_error
         if self._capture_error:
             self._discard()
             raise AudioError(f"Windows audio capture failed: {self._capture_error}")

@@ -1,0 +1,39 @@
+name: Windows backend checks
+
+on:
+  push:
+    paths:
+      - "transcriber/**"
+      - "tests/test_windows_*.py"
+      - "tests/test_config_and_processing.py"
+      - "tests/test_transcription.py"
+      - "tests/test_daemon.py"
+      - "pyproject.toml"
+      - ".github/workflows/windows-backend.yml"
+  pull_request:
+    paths:
+      - "transcriber/**"
+      - "tests/test_windows_*.py"
+      - "tests/test_config_and_processing.py"
+      - "tests/test_transcription.py"
+      - "tests/test_daemon.py"
+      - "pyproject.toml"
+      - ".github/workflows/windows-backend.yml"
+  workflow_dispatch:
+
+jobs:
+  windows-backend:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install Windows backend and test dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[windows,local,dev]"
+      - name: Run Windows backend and IPC checks
+        run: python -m pytest -q tests/test_windows_backends.py tests/test_windows_platform.py tests/test_config_and_processing.py tests/test_transcription.py tests/test_daemon.py

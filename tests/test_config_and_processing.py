@@ -68,13 +68,16 @@ class ConfigPersistenceTests(unittest.TestCase):
 
     def test_resolve_config_path_defaults(self) -> None:
         self.assertEqual(resolve_config_path(self.path), self.path)
-        self.assertTrue(str(resolve_config_path()).endswith("transcriber/config.yaml"))
+        config_folder = "Whisper" if os.name == "nt" else "transcriber"
+        self.assertEqual(resolve_config_path().name, "config.yaml")
+        self.assertEqual(resolve_config_path().parent.name, config_folder)
 
     def test_write_key_stores_0600_and_removes(self) -> None:
         write_key(self.keys, "OPENROUTER_API_KEY", "sk-or-secret")
         text = self.keys.read_text()
         self.assertIn("OPENROUTER_API_KEY=sk-or-secret", text)
-        self.assertEqual(oct(self.keys.stat().st_mode & 0o777), "0o600")
+        if os.name != "nt":
+            self.assertEqual(oct(self.keys.stat().st_mode & 0o777), "0o600")
         write_key(self.keys, "GROQ_API_KEY", "gsk-secret")
         write_key(self.keys, "OPENROUTER_API_KEY", None)
         text = self.keys.read_text()
@@ -94,4 +97,6 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(load_keys_env(self.keys), {})
 
     def test_default_keys_path(self) -> None:
-        self.assertTrue(str(default_keys_path()).endswith("transcriber/keys.env"))
+        config_folder = "Whisper" if os.name == "nt" else "transcriber"
+        self.assertEqual(default_keys_path().name, "keys.env")
+        self.assertEqual(default_keys_path().parent.name, config_folder)

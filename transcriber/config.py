@@ -176,10 +176,11 @@ def write_key(keys_path: str | Path | None, name: str, value: str | None) -> Non
             order.append(name)
         entries[name] = value
     location.write_text("".join(f"{key}={entries[key]}\n" for key in order))
-    try:
-        os.chmod(location, 0o600)
-    except OSError:
-        pass
+    if os.name != "nt":
+        try:
+            os.chmod(location, 0o600)
+        except OSError:
+            pass
 
 
 def load_config(path: str | Path | None = None) -> Config:

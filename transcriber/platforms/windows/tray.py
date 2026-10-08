@@ -2,51 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
-import socket
-import subprocess
-import sys
 import threading
 import time
 from typing import Any
 
-from ...daemon import default_socket_path
-
-
-def _request(command: str, timeout: float = 2.0) -> dict[str, Any]:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(timeout)
-        client.connect(str(default_socket_path()))
-        client.sendall((json.dumps({"command": command}) + "\n").encode("utf-8"))
-        line = client.makefile("rb").readline(65536)
-    return json.loads(line)
-
-
-def _ensure_daemon() -> None:
-    try:
-        _request("status")
-        return
-    except (OSError, json.JSONDecodeError):
-        pass
-
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen(
-        [sys.executable, "-m", "transcriber.daemon"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=flags,
-        close_fds=True,
-    )
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline:
-        try:
-            _request("status")
-            return
-        except (OSError, json.JSONDecodeError):
-            time.sleep(0.25)
-    raise RuntimeError("Whisper daemon did not start. Run 'whisper status' for details.")
+from .lifecycle import request, start_daemon
 
 
 def _icon_image() -> Any:
@@ -71,7 +32,7 @@ def main() -> None:
         raise SystemExit("Install Whisper with the Windows extra to use its tray controller.") from exc
 
     try:
-        _ensure_daemon()
+        start_daemon()
     except (OSError, RuntimeError) as exc:
         raise SystemExit(str(exc)) from None
 
@@ -80,11 +41,11 @@ def main() -> None:
 
     def run_command(command: str) -> None:
         try:
-            response = _request(command)
+            response = request(command)
             if icon is not None:
                 state = response.get("state", "unknown").replace("_", " ").title()
                 icon.notify(f"Whisper: {state}", "Whisper")
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError):
             if icon is not None:
                 icon.notify("The Whisper daemon is unavailable.", "Whisper")
 
@@ -135,9 +96,9 @@ def main() -> None:
     def update_tooltip() -> None:
         while not stopped.is_set():
             try:
-                status = _request("status", timeout=1.0)
+                status = request("status", timeout=1.0)
                 icon.title = f"Whisper — {status.get('state', 'unknown').replace('_', ' ').title()}"
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError):
                 icon.title = "Whisper — daemon unavailable"
             time.sleep(2)
 
