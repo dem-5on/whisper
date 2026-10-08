@@ -86,7 +86,7 @@ try {
 }
 catch {
     Write-Host $_ -ForegroundColor Red
-    exit 1
+    throw
 }
 finally {
     if (Test-Path $TemporaryRoot) {
