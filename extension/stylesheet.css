@@ -38,6 +38,10 @@
   max-width: 460px;
 }
 
+.transcriber-popup-content {
+  max-width: 630px;
+}
+
 .transcriber-key-label,
 .transcriber-live-info-label {
   max-width: 460px;
@@ -141,6 +145,7 @@
 }
 
 .transcriber-choice-value {
+  min-width: 0;
   max-width: 190px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.88);

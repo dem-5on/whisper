@@ -95,6 +95,9 @@ class TranscriberIndicator extends PanelMenu.Button {
         this.add_child(box);
 
         // Menu skeleton; items are rebuilt on each poll to reflect daemon state.
+        // Keep the popup at its regular desktop width; remote model IDs can be
+        // arbitrarily long and must not determine the menu's natural width.
+        this.menu.box.add_style_class_name('transcriber-popup-content');
         this._statusItem = new PopupMenu.PopupMenuItem('', { reactive: false });
         this._statusItem.label.add_style_class_name('transcriber-status-label');
         this._statusItem.label.get_clutter_text().set_ellipsize(Pango.EllipsizeMode.END);
@@ -551,6 +554,7 @@ class TranscriberIndicator extends PanelMenu.Button {
         const tileLabels = new St.BoxLayout({ vertical: true, style_class: 'transcriber-choice-labels', x_expand: true });
         const titleLabel = new St.Label({ text: label, style_class: 'transcriber-choice-title' });
         const valueLabel = new St.Label({ text: '', style_class: 'transcriber-choice-value' });
+        valueLabel.set_width(190);
         valueLabel.get_clutter_text().set_single_line_mode(true);
         valueLabel.get_clutter_text().set_ellipsize(3);
         tileLabels.add_child(titleLabel);
@@ -614,6 +618,7 @@ class TranscriberIndicator extends PanelMenu.Button {
                 x_expand: true,
                 y_align: Clutter.ActorAlign.CENTER,
             });
+            label.set_width(420);
             label.get_clutter_text().set_single_line_mode(true);
             label.get_clutter_text().set_ellipsize(3);
             const check = new St.Icon({
