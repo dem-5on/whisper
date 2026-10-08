@@ -140,7 +140,13 @@ status "Setting up the desktop extension and background service..."
 run_quiet systemctl --user daemon-reload
 run_quiet systemctl --user enable --now transcriber.service
 if command -v gnome-extensions >/dev/null; then
-    gnome-extensions enable transcriber@local >/dev/null 2>&1 || true
+    if ! gnome-extensions enable transcriber@local >/dev/null; then
+        echo "Whisper installed, but GNOME could not enable the panel extension." >&2
+        echo "Try enabling it manually with: gnome-extensions enable transcriber@local" >&2
+    fi
+else
+    echo "Whisper installed, but gnome-extensions was not found." >&2
+    echo "Open the Extensions app and enable 'Transcriber' manually." >&2
 fi
 
 status "Whisper is ready."
