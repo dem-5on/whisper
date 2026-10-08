@@ -115,16 +115,36 @@
   <script>
     const platformButtons = [...document.querySelectorAll('[data-platform]')];
     const panels = [...document.querySelectorAll('.details')];
+    function selectPlatform(selected, scroll = false) {
+      const button = platformButtons.find(option => option.dataset.platform === selected);
+      if (!button)
+        return;
+      for (const option of platformButtons)
+        option.setAttribute('aria-pressed', String(option === button));
+      for (const panel of panels)
+        panel.hidden = panel.id !== `${selected}-details`;
+      if (scroll)
+        document.getElementById(`${selected}-heading`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function detectPlatform() {
+      const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent;
+      if (/win/i.test(platform))
+        return 'windows';
+      if (/mac|iphone|ipad|ipod/i.test(platform))
+        return 'macos';
+      if (/linux|x11/i.test(platform))
+        return 'linux';
+      return null;
+    }
+
     for (const button of platformButtons) {
       button.addEventListener('click', () => {
-        const selected = button.dataset.platform;
-        for (const option of platformButtons)
-          option.setAttribute('aria-pressed', String(option === button));
-        for (const panel of panels)
-          panel.hidden = panel.id !== `${selected}-details`;
-        document.getElementById(`${selected}-heading`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+        selectPlatform(button.dataset.platform, true);
       });
     }
+    selectPlatform(detectPlatform());
+
     document.getElementById('copy-command').addEventListener('click', async event => {
       const command = document.getElementById('install-command').textContent;
       try {
