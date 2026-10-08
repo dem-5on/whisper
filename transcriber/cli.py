@@ -18,7 +18,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Whisper transcription daemon")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -107,6 +107,8 @@ def main() -> None:
             print("(cached list)", file=sys.stderr)
     elif args.command == "events":
         print(json.dumps(response.get("events", []), indent=2 if args.json else None))
+    elif args.command == "shutdown":
+        print("Whisper daemon is stopping")
     else:
         print(response.get("state", "unknown"))
 

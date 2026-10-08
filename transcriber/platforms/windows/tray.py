@@ -95,6 +95,7 @@ def main() -> None:
         run_command("cancel")
 
     def quit_tray(_icon: Any, _item: Any) -> None:
+        run_command("shutdown")
         stopped.set()
         if hotkey_thread_id[0]:
             import ctypes

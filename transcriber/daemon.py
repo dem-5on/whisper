@@ -1163,6 +1163,10 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             if command == "subscribe":
                 self._handle_subscribe(request)
                 return
+            if command == "shutdown":
+                self.wfile.write(b'{"ok":"true","state":"STOPPING"}\n')
+                _schedule_server_shutdown(self.server)
+                return
             params = {key: value for key, value in request.items() if key != "command"}
             response = self.server.daemon.command(command, params)  # type: ignore[attr-defined]
         except (ValueError, json.JSONDecodeError):
@@ -1204,6 +1208,15 @@ class _RequestHandler(socketserver.StreamRequestHandler):
 class UnixServer(socketserver.ThreadingUnixStreamServer):
     daemon: TranscriberDaemon
     daemon_threads = True
+
+
+def _schedule_server_shutdown(server: UnixServer) -> None:
+    """Stop serving from another thread to avoid socketserver's deadlock."""
+    threading.Thread(
+        target=server.shutdown,
+        name="transcriber-shutdown-request",
+        daemon=True,
+    ).start()
 
 
 def run_server(config: Config, socket_path: Path, config_path: Path | None = None) -> None:
