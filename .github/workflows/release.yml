@@ -3,7 +3,13 @@ name: Build desktop release
 on:
   push:
     tags:
-      - "??????"
+      - "[0-9][0-9][0-9][0-9][0-9][0-9]"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Six-digit release date in DDMMYY format
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,32 +23,9 @@ jobs:
       - name: Validate date tag and package version
         id: release
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          from datetime import date
-          import re
-          import os
-          import tomllib
-          from pathlib import Path
-
-          tag = os.environ["RELEASE_TAG"]
-          if not re.fullmatch(r"[0-9]{6}", tag):
-              raise SystemExit("Release tags must be six digits in DDMMYY format, e.g. 300826.")
-          day, month, short_year = int(tag[:2]), int(tag[2:4]), int(tag[4:])
-          release_date = date(2000 + short_year, month, day)
-          expected = f"{release_date.year}.{release_date.month}.{release_date.day}"
-          project = tomllib.loads(Path("pyproject.toml").read_text())
-          package_version = project["project"]["version"]
-          runtime_version = Path("transcriber/__init__.py").read_text()
-          if package_version != expected or f'__version__ = "{expected}"' not in runtime_version:
-              raise SystemExit(
-                  f"Set pyproject.toml and transcriber/__init__.py to {expected} before tagging {tag}."
-              )
-          print(f"tag={tag}")
-          print(f"display={tag[:2]}/{tag[2:4]}/{tag[4:]}")
-          print(f"version={expected}")
-          PY
+          python3 scripts/validate_release.py "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build install and extension packages
         env:
@@ -52,11 +35,13 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_DISPLAY: ${{ steps.release.outputs.display }}
         run: >-
-          gh release create "$GITHUB_REF_NAME"
-          "dist/whisper-$GITHUB_REF_NAME-linux-gnome.tar.gz"
-          "dist/transcriber-gnome-extension-$GITHUB_REF_NAME.zip"
+          gh release create "$RELEASE_TAG"
+          "dist/whisper-$RELEASE_TAG-linux-gnome.tar.gz"
+          "dist/transcriber-gnome-extension-$RELEASE_TAG.zip"
           dist/whisper-linux-gnome.tar.gz
           dist/transcriber-gnome-extension.zip
-          --title "Whisper ${{ steps.release.outputs.display }}"
+          --title "Whisper $RELEASE_DISPLAY"
           --generate-notes
