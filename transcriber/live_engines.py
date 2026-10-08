@@ -48,6 +48,7 @@ class LocalEngineCallbacks:
 @dataclass(frozen=True)
 class RemoteLiveCallbacks:
     publish_partial: Callable[[str, str, int], None]
+    publish_final: Callable[[str, str, int], None]
     report_metrics: Callable[[float, float, str], None]
 
 
@@ -132,7 +133,7 @@ def make_live_engine(transcription: TranscriptionConfig, streaming: StreamingCon
     """Select the live engine independently from batch transcription.
 
     Batch providers are intentionally not implicitly adapted into streaming
-    providers. OpenAI Realtime has its own module and transport implementation.
+    providers. Each remote live transport has its own module.
     """
     # Selection is by provider/engine identity, while the chosen model and
     # its runtime settings are passed into that engine without changing batch routing.
@@ -151,4 +152,18 @@ def make_live_engine(transcription: TranscriptionConfig, streaming: StreamingCon
         return OpenAIRealtimeEngine(streaming.model, transcription.language, OpenAIRealtimeCallbacks(
             remote_callbacks.publish_partial, remote_callbacks.report_metrics,
         ))
+    if streaming.engine == "hosted-whisper":
+        import os
+        from .hosted_whisper import HostedWhisperEngine
+
+        if not streaming.server_url:
+            raise LiveEngineUnavailable("Set the hosted server URL with whisper set-live-engine --url")
+        token = os.environ.get("WHISPER_SERVICE_TOKEN")
+        if not token:
+            raise LiveEngineUnavailable("WHISPER_SERVICE_TOKEN is not configured")
+        return HostedWhisperEngine(
+            streaming.server_url, token, streaming.model, transcription.language,
+            remote_callbacks.publish_partial, remote_callbacks.publish_final,
+            remote_callbacks.report_metrics,
+        )
     raise LiveEngineUnavailable("Unknown live transcription engine")

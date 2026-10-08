@@ -169,6 +169,21 @@ class StreamingConfigTests(unittest.TestCase):
         self.assertEqual(config.streaming.engine, "openai-realtime")
         self.assertEqual(config.streaming.model, "gpt-live-transcribe")
 
+    def test_hosted_whisper_config_requires_secure_remote_url(self) -> None:
+        config = _parse({"streaming": {
+            "engine": "hosted-whisper", "model": "default",
+            "server_url": "wss://api.example.test/v1/live",
+        }})
+        self.assertEqual(config.streaming.server_url, "wss://api.example.test/v1/live")
+        with self.assertRaises(ConfigurationError):
+            _parse({"streaming": {
+                "engine": "hosted-whisper", "server_url": "ws://api.example.test/v1/live",
+            }})
+        with self.assertRaises(ConfigurationError):
+            _parse({"streaming": {
+                "engine": "hosted-whisper", "server_url": "wss://api.example.test/other",
+            }})
+
     def test_invalid_live_engine_model_pair_rejected(self) -> None:
         with self.assertRaises(ConfigurationError):
             _parse({"streaming": {"engine": "openai-realtime", "model": "base"}})
@@ -448,6 +463,29 @@ class DaemonStreamingSwitchTests(unittest.TestCase):
         self.assertEqual(saved.transcription.backend, "local")
         self.assertEqual(saved.streaming.model, "gpt-transcribe")
         self.assertEqual(self.daemon.command("set_live_model", {"model": "base"})["ok"], "false")
+
+    def test_hosted_engine_configures_url_profile_and_survives_batch_provider_switch(self) -> None:
+        response = self.daemon.command("set_live_engine", {
+            "engine": "hosted-whisper", "server_url": "wss://api.example.test/v1/live",
+        })
+        self.assertEqual(response["ok"], "true")
+        self.assertEqual(response["live_engine"], "hosted-whisper")
+        self.assertEqual(response["live_model"], "default")
+        self.assertEqual(self.daemon.config.streaming.server_url, "wss://api.example.test/v1/live")
+
+        self.daemon.command("set_backend", {"backend": "openrouter"})
+        status = self.daemon.command("status")
+        self.assertEqual(status["live_engine"], "hosted-whisper")
+        self.assertEqual(status["model"], "openai/whisper-large-v3-turbo")
+        self.assertTrue(status["streaming"])
+        self.assertTrue(self.daemon.command("set_streaming", {"enabled": True})["streaming"])
+
+    def test_hosted_engine_rejects_insecure_nonlocal_url(self) -> None:
+        response = self.daemon.command("set_live_engine", {
+            "engine": "hosted-whisper", "server_url": "ws://api.example.test/v1/live",
+        })
+        self.assertEqual(response["ok"], "false")
+        self.assertIn("wss://", response["error"])
 
     def test_set_streaming_without_value_flips(self) -> None:
         self.assertFalse(self.daemon.command("set_streaming")["streaming"])

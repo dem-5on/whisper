@@ -34,8 +34,10 @@ streaming:
   # record-to-WAV-then-transcribe path (also loses VAD auto-stop/partials).
   enabled: true
   # Independent live engine/model; final batch provider/model remain separate.
-  engine: local # local | openai-realtime
-  model: base # local preset or gpt-live-transcribe/gpt-transcribe
+  engine: local # local | openai-realtime | hosted-whisper
+  model: base # local preset, OpenAI model, or server profile ID (usually default)
+  # Hosted service URL; set with `whisper set-live-engine --url ...`.
+  server_url: ""
   # Capture frame size in ms (20-100). Smaller = lower VAD latency.
   frame_ms: 20
   # Rolling-window re-decode interval in ms (200-2000). ~500 gives

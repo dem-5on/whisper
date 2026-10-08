@@ -21,8 +21,9 @@ def main() -> None:
         choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe"),
     )
     parser.add_argument("--socket", type=Path, default=default_socket_path())
-    parser.add_argument("--provider", choices=("local", "groq", "openrouter", "openai"), default=None)
-    parser.add_argument("--live-engine", choices=("local", "openai-realtime"), default=None)
+    parser.add_argument("--provider", choices=("local", "groq", "openrouter", "openai", "hosted-whisper"), default=None)
+    parser.add_argument("--live-engine", choices=("local", "openai-realtime", "hosted-whisper"), default=None)
+    parser.add_argument("--url", default=None, help="Hosted Whisper WebSocket URL (wss://host/v1/live)")
     parser.add_argument("--model", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--enabled", default=None, help="true/false for set-streaming (omit to flip)")
@@ -53,9 +54,11 @@ def main() -> None:
         payload["model"] = args.model
     if payload["command"] == "set_live_engine":
         if not args.live_engine:
-            print("whisper: --live-engine is required (local or openai-realtime)", file=sys.stderr)
+            print("whisper: --live-engine is required (local, openai-realtime, or hosted-whisper)", file=sys.stderr)
             raise SystemExit(2)
         payload["engine"] = args.live_engine
+        if args.url is not None:
+            payload["server_url"] = args.url
     if payload["command"] == "set_live_model":
         if not args.model:
             print("whisper: --model is required", file=sys.stderr)
@@ -132,7 +135,7 @@ def _stream_events(args: argparse.Namespace) -> int:
 def _set_key(args: argparse.Namespace) -> int:
     """Store or remove a provider API key locally, then reload the daemon."""
     if not args.provider or args.provider == "local":
-        print("whisper: --provider is required (groq, openrouter, or openai)", file=sys.stderr)
+        print("whisper: --provider is required (groq, openrouter, openai, or hosted-whisper)", file=sys.stderr)
         return 2
     name = KEY_ENV[args.provider]
     if args.clear:

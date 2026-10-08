@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -15,7 +16,12 @@ class ConfigurationError(ValueError):
 
 
 #: Provider name -> environment variable holding its API key.
-KEY_ENV = {"groq": "GROQ_API_KEY", "openrouter": "OPENROUTER_API_KEY", "openai": "OPENAI_API_KEY"}
+KEY_ENV = {
+    "groq": "GROQ_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "hosted-whisper": "WHISPER_SERVICE_TOKEN",
+}
 
 
 @dataclass(frozen=True)
@@ -65,6 +71,7 @@ class StreamingConfig:
     # provider and model (e.g. OpenAI live captions + OpenRouter final pass).
     engine: str = "local"
     model: str = "base"
+    server_url: str = ""
     # PCM frame size emitted by the capture stream (20-100 ms). Twenty ms is
     # also a native WebRTC-VAD frame duration.
     frame_ms: int = 20
@@ -250,14 +257,31 @@ def _parse(raw: dict[str, Any]) -> Config:
     if not isinstance(stream.enabled, bool) or not isinstance(stream.show_partials, bool) \
             or not isinstance(stream.preload_model, bool) or not isinstance(stream.live_insert_experimental, bool):
         raise ConfigurationError("streaming enabled/show_partials/preload_model/live_insert_experimental must be booleans")
-    if stream.engine not in {"local", "openai-realtime"}:
-        raise ConfigurationError("streaming.engine must be local or openai-realtime")
+    if stream.engine not in {"local", "openai-realtime", "hosted-whisper"}:
+        raise ConfigurationError("streaming.engine must be local, openai-realtime, or hosted-whisper")
     if not isinstance(stream.model, str) or not stream.model or len(stream.model) > 120:
         raise ConfigurationError("streaming.model must be a non-empty model id (max 120 characters)")
+    if not isinstance(stream.server_url, str):
+        raise ConfigurationError("streaming.server_url must be a WebSocket URL")
+    if stream.server_url:
+        try:
+            parsed_url = urlsplit(stream.server_url)
+            valid_scheme = parsed_url.scheme == "wss" or (
+                parsed_url.scheme == "ws" and parsed_url.hostname in {"localhost", "127.0.0.1", "::1"}
+            )
+            _ = parsed_url.port  # Force malformed ports to fail validation.
+            valid_url = valid_scheme and bool(parsed_url.hostname) and parsed_url.path == "/v1/live" \
+                and not parsed_url.username and not parsed_url.password and not parsed_url.query and not parsed_url.fragment
+        except ValueError:
+            valid_url = False
+        if not valid_url:
+            raise ConfigurationError("streaming.server_url must be wss://host/v1/live (ws is allowed only on localhost)")
     if stream.engine == "openai-realtime" and stream.model not in {"gpt-live-transcribe", "gpt-transcribe"}:
         raise ConfigurationError("OpenAI Realtime model must be gpt-live-transcribe or gpt-transcribe")
     if stream.engine == "local" and stream.model not in {"tiny", "base", "small", "medium", "large-v3", "turbo"}:
         raise ConfigurationError("Local live model must be tiny, base, small, medium, large-v3, or turbo")
+    if stream.engine == "hosted-whisper" and (not stream.model.strip() or any(ch.isspace() for ch in stream.model)):
+        raise ConfigurationError("Hosted Whisper profile must be a non-empty profile ID without spaces")
     if (not isinstance(stream.frame_ms, int) or isinstance(stream.frame_ms, bool)
             or stream.frame_ms < 20 or stream.frame_ms > 100):
         raise ConfigurationError("streaming.frame_ms must be an integer in 20..100")

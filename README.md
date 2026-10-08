@@ -42,13 +42,13 @@ whisper events [--since N] [--json]  # live partial/committed/final events
 whisper subscribe        # persistent event stream (Ctrl-C to stop)
 whisper set-provider --provider local|groq|openrouter
 whisper set-model --model <id>   # local preset or provider model id; `models` lists valid ids
-whisper set-live-engine --live-engine local|openai-realtime
+whisper set-live-engine --live-engine local|openai-realtime|hosted-whisper [--url wss://host/v1/live]
 whisper set-live-model --model <id>  # independent live model
 whisper set-mic --device default|<source-id>
 whisper set-streaming [--enabled true|false]  # live partials + VAD auto-stop; omit to flip
 whisper models [--json]          # transcription-capable models for the current backend
-whisper set-key --provider groq|openrouter|openai [--key ...]  # hidden-prompt key store (0600)
-whisper set-key --provider groq|openrouter|openai --clear      # remove the stored key
+whisper set-key --provider groq|openrouter|openai|hosted-whisper [--key ...]  # hidden-prompt secret store (0600)
+whisper set-key --provider groq|openrouter|openai|hosted-whisper --clear      # remove the stored key
 ```
 
 `transcriber` and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.
@@ -56,7 +56,7 @@ whisper set-key --provider groq|openrouter|openai --clear      # remove the stor
 Provider, model, and mic switches are written through to `~/.config/transcriber/config.yaml`,
 so they survive daemon restarts. API keys are stored separately in `~/.config/transcriber/keys.env`
 (mode 0600, loaded at daemon startup, never logged); `status --json` only reports key *presence*
-(`has_groq_key`, `has_openrouter_key`, `has_openai_key`) so the panel can warn when a remote backend has no key.
+(`has_groq_key`, `has_openrouter_key`, `has_openai_key`, `has_whisper_service_token`) so the panel can warn when a remote backend has no key.
 
 The socket defaults to `$XDG_RUNTIME_DIR/transcriber.sock` (or `/tmp/transcriber-<uid>.sock`). Set `TRANSCRIBER_CONFIG` or pass `--config` to choose another config file.
 
@@ -95,6 +95,21 @@ whisper set-live-model --model gpt-live-transcribe
 This uses OpenAI's Realtime transcription WebSocket; OpenRouter remains
 unchanged and can still handle final transcription. See the
 [OpenAI Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription).
+
+To stream audio to your own Whisper service, install the WebSocket extra and
+configure its TLS endpoint and invite token on the desktop:
+
+```bash
+python -m pip install -e '.[realtime]'
+whisper set-live-engine --live-engine hosted-whisper --url wss://api.example.com/v1/live
+whisper set-key --provider hosted-whisper
+whisper set-streaming --enabled true
+```
+
+The default server profile is `default` (faster-whisper `base` in the Docker
+setup). The hosted service returns both live partials and the final transcript,
+so the desktop does not run a second local or provider transcription pass.
+The selected batch provider remains available when live transcription is off.
 
 The local model is loaded once at daemon startup (warmed with silence),
 not per recording. Event types are `partial`, `committed`, `final`,

@@ -725,7 +725,8 @@ class TranscriberIndicator extends PanelMenu.Button {
     _renderStreamingSwitch(s) {
         // Daemon truth wins every poll; setToggleState emits no signal, so
         // this never loops back into set-streaming by itself.
-        const providerBlocksLive = ['groq', 'openrouter'].includes(s.backend);
+        const providerBlocksLive = ['groq', 'openrouter'].includes(s.backend)
+            && s.live_engine !== 'hosted-whisper';
         const providerName = s.backend === 'groq' ? 'Groq' : 'OpenRouter';
         this._streamingSwitch.setToggleState(!providerBlocksLive && s.streaming !== false);
         this._streamingSwitch.label.text = providerBlocksLive || (s.streaming !== false && !s.live_available)
@@ -741,6 +742,17 @@ class TranscriberIndicator extends PanelMenu.Button {
 
     _renderKeyHint(s) {
         // Presence only; values never leave the daemon.
+        if (s.live_engine === 'hosted-whisper' && !s.has_whisper_service_token) {
+            this._keyItem.visible = true;
+            this._keyItem.label.text = 'Hosted Whisper token missing — run: whisper set-key --provider hosted-whisper';
+            return;
+        }
+        if (s.live_engine === 'hosted-whisper' && !s.live_available
+                && s.live_unavailable_reason === 'Hosted Whisper URL is not configured') {
+            this._keyItem.visible = true;
+            this._keyItem.label.text = 'Set server URL: whisper set-live-engine --live-engine hosted-whisper --url wss://<host>/v1/live';
+            return;
+        }
         const missing = (s.backend === 'groq' && !s.has_groq_key)
             || (s.backend === 'openrouter' && !s.has_openrouter_key)
             || (s.backend === 'openai' && !s.has_openai_key);

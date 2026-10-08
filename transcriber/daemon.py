@@ -100,6 +100,10 @@ class TranscriberDaemon:
         self._live_stop = threading.Event()
         self._live_threads: list[threading.Thread] = []
         self._live_engine: LiveEngine | None = None
+        self._hosted_live_session = False
+        self._hosted_final_text: str | None = None
+        self._hosted_live_error: str | None = None
+        self._hosted_final_event = threading.Event()
         self._vad_endpoint = SpeechEndpoint(config.streaming.silence_timeout_seconds)
         self._live_decode_ms = 0.0
         self._live_decode_lag_ms = 0.0
@@ -138,7 +142,7 @@ class TranscriberDaemon:
         if command == "set_model":
             return self._set_model(str(params.get("model", "")))
         if command == "set_live_engine":
-            return self._set_live_engine(str(params.get("engine", "")))
+            return self._set_live_engine(str(params.get("engine", "")), params.get("server_url"))
         if command == "set_live_model":
             return self._set_live_model(str(params.get("model", "")))
         if command in {"set_mic", "set_input"}:
@@ -253,6 +257,7 @@ class TranscriberDaemon:
             preserved = self.last_audio_path
             if not preserved.exists() or preserved.stat().st_size == 0:
                 return {**self._status_locked(), "ok": "false", "error": "No previous recording to retry"}
+            self._hosted_live_session = False
             self._error = None
             self._processing_started = time.monotonic()
             self._set_state(State.PROCESSING)
@@ -335,18 +340,23 @@ class TranscriberDaemon:
             if backend != self.config.transcription.backend:
                 old = self.config.transcription
                 model = old.model
-                if backend == "local":
-                    if model not in _LOCAL_MODEL_PRESETS:
-                        model = "base"
+                if backend == "local" and model not in _LOCAL_MODEL_PRESETS:
+                    model = "base"
+                elif backend == "openai" and model not in _OPENAI_MODEL_PRESETS:
+                    model = "gpt-transcribe"
+                elif backend in {"groq", "openrouter"} and (model in _LOCAL_MODEL_PRESETS or model in _OPENAI_MODEL_PRESETS):
+                    model = _GROQ_MODEL_FALLBACK[0] if backend == "groq" else _OPENROUTER_MODEL_FALLBACK[0]
+
+                if self.config.streaming.engine == "hosted-whisper":
+                    # The live transport is independent from the batch
+                    # provider, so changing batch provider must preserve it.
+                    streaming = self.config.streaming
+                elif backend == "local":
                     streaming = dataclasses.replace(self.config.streaming, engine="local", model=model)
                 elif backend == "openai":
-                    if model not in _OPENAI_MODEL_PRESETS:
-                        model = "gpt-transcribe"
                     streaming = dataclasses.replace(self.config.streaming, engine="openai-realtime", model="gpt-live-transcribe")
                 else:
-                    if model in _LOCAL_MODEL_PRESETS or model in _OPENAI_MODEL_PRESETS:
-                        model = (_GROQ_MODEL_FALLBACK[0] if backend == "groq" else _OPENROUTER_MODEL_FALLBACK[0])
-                    streaming = dataclasses.replace(self.config.streaming, enabled=False)
+                    streaming = self.config.streaming if self.config.streaming.engine == "hosted-whisper" else dataclasses.replace(self.config.streaming, enabled=False)
                 new_transcription = dataclasses.replace(old, backend=backend, model=model)
                 recreate_recorder = streaming.enabled != self.config.streaming.enabled
                 self.config = dataclasses.replace(self.config, transcription=new_transcription, streaming=streaming)
@@ -440,7 +450,8 @@ class TranscriberDaemon:
             if self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING):
                 return {**self._status_locked(), "ok": "false", "error": "Cannot switch streaming mid-run"}
             target = (not self.config.streaming.enabled) if enabled is None else enabled
-            if target and self.config.transcription.backend in {"groq", "openrouter"}:
+            if target and self.config.transcription.backend in {"groq", "openrouter"} \
+                    and self.config.streaming.engine != "hosted-whisper":
                 provider = "Groq" if self.config.transcription.backend == "groq" else "OpenRouter"
                 return {
                     **self._status_locked(),
@@ -463,20 +474,31 @@ class TranscriberDaemon:
                 LOG.info("Streaming %s", "enabled" if target else "disabled")
             return self._ok_locked()
 
-    def _set_live_engine(self, engine: str) -> dict[str, Any]:
+    def _set_live_engine(self, engine: str, server_url: Any = None) -> dict[str, Any]:
         engine = engine.strip().lower()
-        if engine not in {"local", "openai-realtime"}:
+        if engine not in {"local", "openai-realtime", "hosted-whisper"}:
             with self._lock:
-                return {**self._status_locked(), "ok": "false", "error": "Live engine must be local or openai-realtime"}
+                return {**self._status_locked(), "ok": "false", "error": "Live engine must be local, openai-realtime, or hosted-whisper"}
         with self._lock:
             if self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING):
                 return {**self._status_locked(), "ok": "false", "error": "Cannot switch live engine mid-run"}
             old = self.config.streaming
             model = old.model
-            if engine != old.engine and ((engine == "local" and model not in _LOCAL_MODEL_PRESETS)
-                                         or (engine == "openai-realtime" and model not in {"gpt-live-transcribe", "gpt-transcribe"})):
+            endpoint = old.server_url if server_url is None else str(server_url).strip()
+            if engine == "hosted-whisper" and engine != old.engine:
+                model = "default"
+            elif engine != old.engine and ((engine == "local" and model not in _LOCAL_MODEL_PRESETS)
+                                         or (engine == "openai-realtime" and model not in {"gpt-live-transcribe", "gpt-transcribe"})
+                                         or (engine == "hosted-whisper" and not model.strip())):
                 model = "base" if engine == "local" else "gpt-live-transcribe"
-            self.config = dataclasses.replace(self.config, streaming=dataclasses.replace(old, engine=engine, model=model))
+            try:
+                new_streaming = dataclasses.replace(old, engine=engine, model=model, server_url=endpoint)
+                # Reuse config validation for endpoint safety before persisting.
+                from .config import _parse
+                _parse({"streaming": dataclasses.asdict(new_streaming)})
+            except (TypeError, ValueError) as exc:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+            self.config = dataclasses.replace(self.config, streaming=new_streaming)
             self._persist_config_locked()
             result = self._ok_locked()
         if engine == "local":
@@ -486,9 +508,12 @@ class TranscriberDaemon:
     def _set_live_model(self, model: str) -> dict[str, Any]:
         model = model.strip()
         with self._lock:
-            allowed = _LOCAL_MODEL_PRESETS if self.config.streaming.engine == "local" else ("gpt-live-transcribe", "gpt-transcribe")
-            if model not in allowed:
+            engine = self.config.streaming.engine
+            allowed = _LOCAL_MODEL_PRESETS if engine == "local" else ("gpt-live-transcribe", "gpt-transcribe") if engine == "openai-realtime" else None
+            if allowed is not None and model not in allowed:
                 return {**self._status_locked(), "ok": "false", "error": f"Model must be one of: {', '.join(allowed)}"}
+            if engine == "hosted-whisper" and (not model or len(model) > 120 or any(ch.isspace() for ch in model)):
+                return {**self._status_locked(), "ok": "false", "error": "Hosted Whisper profile must be a non-empty profile ID without spaces"}
             if self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING):
                 return {**self._status_locked(), "ok": "false", "error": "Cannot switch live model mid-run"}
             changed = model != self.config.streaming.model
@@ -511,7 +536,7 @@ class TranscriberDaemon:
         if transcription.local_engine != "faster-whisper":
             return
         models: set[str] = set()
-        if transcription.backend == "local":
+        if transcription.backend == "local" and not (streaming.enabled and streaming.engine == "hosted-whisper"):
             models.add(transcription.model)
         if streaming.engine == "local":
             models.add(streaming.model)
@@ -535,12 +560,20 @@ class TranscriberDaemon:
         """Whether this configuration can emit rolling partial hypotheses."""
         if not self.config.streaming.enabled:
             return False, "Live transcription is disabled"
-        if self.config.transcription.backend in {"groq", "openrouter"}:
-            provider = "Groq" if self.config.transcription.backend == "groq" else "OpenRouter"
-            return False, f"{provider} supports batch transcription only. Select Local or OpenAI for live transcription."
         if not hasattr(self.recorder, "read_frame"):
             return False, "The selected recorder does not support streaming audio"
-        if self.config.streaming.engine == "local":
+        if self.config.streaming.engine == "hosted-whisper":
+            if not self.config.streaming.server_url:
+                return False, "Hosted Whisper URL is not configured"
+            if not os.environ.get("WHISPER_SERVICE_TOKEN"):
+                return False, "WHISPER_SERVICE_TOKEN is not configured"
+            from .hosted_whisper import hosted_dependency_available
+            if not hosted_dependency_available():
+                return False, "Install universal-transcriber[realtime] for hosted Whisper"
+        elif self.config.transcription.backend in {"groq", "openrouter"}:
+            provider = "Groq" if self.config.transcription.backend == "groq" else "OpenRouter"
+            return False, f"{provider} supports batch transcription only. Select Local or OpenAI for live transcription."
+        elif self.config.streaming.engine == "local":
             if self.config.transcription.local_engine != "faster-whisper":
                 return False, "Live partials require the faster-whisper engine"
         elif self.config.streaming.engine == "openai-realtime":
@@ -562,6 +595,10 @@ class TranscriberDaemon:
         self._live_stop.clear()
         self._live_threads = []
         self._live_engine = None
+        self._hosted_live_session = False
+        self._hosted_final_text = None
+        self._hosted_live_error = None
+        self._hosted_final_event.clear()
         if not self._recorder_is_streaming():
             return
         capable, reason = self._live_capability_locked()
@@ -582,6 +619,7 @@ class TranscriberDaemon:
         )
         remote_callbacks = RemoteLiveCallbacks(
             publish_partial=self._publish_live_partial,
+            publish_final=self._publish_hosted_final,
             report_metrics=self._report_live_metrics,
         )
         try:
@@ -589,6 +627,7 @@ class TranscriberDaemon:
         except LiveEngineUnavailable as exc:
             LOG.info("Live partials unavailable: %s", exc)
             return
+        self._hosted_live_session = self.config.streaming.engine == "hosted-whisper"
         vad_thread = threading.Thread(
             target=self._live_vad_loop, args=(generation, session_id),
             name="transcriber-vad", daemon=True,
@@ -736,11 +775,22 @@ class TranscriberDaemon:
     def _publish_live_partial(self, session_id: str, text: str, generation: int) -> None:
         self._push_live_event(session_id, "partial", text, generation)
 
+    def _publish_hosted_final(self, session_id: str, text: str, generation: int) -> None:
+        with self._lock:
+            if self._session is None or self._session.session_id != session_id:
+                return
+            self._hosted_final_text = text
+            self._hosted_final_event.set()
+        self._push_live_event(session_id, "final", text, generation)
+
     def _report_live_metrics(self, elapsed: float, lag: float, error: str) -> None:
         with self._lock:
             self._live_decode_ms = elapsed * 1000
             self._live_decode_lag_ms = lag * 1000
             self._live_decode_error = error
+            if self._hosted_live_session and error and self._hosted_final_text is None:
+                self._hosted_live_error = error
+                self._hosted_final_event.set()
 
     def _finalize_live(self, text: str) -> None:
         with self._lock:
@@ -795,8 +845,20 @@ class TranscriberDaemon:
             if not is_preserved:
                 self._preserve_audio(audio)
             try:
-                with self._inference_lock:
-                    transcript = make_backend(self.config.transcription).transcribe(audio)
+                with self._lock:
+                    use_hosted_final = self._hosted_live_session and not is_preserved
+                if use_hosted_final:
+                    if not self._hosted_final_event.wait(timeout=180.0):
+                        raise TranscriptionError("Hosted Whisper did not return a final transcript in time")
+                    with self._lock:
+                        transcript = self._hosted_final_text
+                        hosted_error = self._hosted_live_error
+                    if transcript is None:
+                        raise TranscriptionError(hosted_error or "Hosted Whisper did not return a final transcript")
+                    backend_name = "hosted-whisper"
+                else:
+                    with self._inference_lock:
+                        transcript = make_backend(self.config.transcription).transcribe(audio)
             except Exception as exc:
                 LOG.error("Transcription failed: %s", _safe_error(exc))
                 self._fail(f"Transcription failed ({_short_reason(exc)})")
@@ -820,7 +882,8 @@ class TranscriberDaemon:
                 self._set_state(State.DELIVERING)
             # The live session reconciles to the final transcript; only this
             # finalized text is delivered to the focused app.
-            self._finalize_live(text)
+            if not use_hosted_final:
+                self._finalize_live(text)
             try:
                 delivery = make_delivery(self.config.delivery)
                 delivery.insert(text)
@@ -903,6 +966,7 @@ class TranscriberDaemon:
             "has_groq_key": bool(os.environ.get("GROQ_API_KEY")),
             "has_openrouter_key": bool(os.environ.get("OPENROUTER_API_KEY")),
             "has_openai_key": bool(os.environ.get("OPENAI_API_KEY")),
+            "has_whisper_service_token": bool(os.environ.get("WHISPER_SERVICE_TOKEN")),
             "version": __version__,
             "session_id": session.session_id if session else "",
             "live_revision": session.revision if live_active and session else 0,

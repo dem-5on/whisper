@@ -90,6 +90,20 @@ class DaemonTests(unittest.TestCase):
         self.assertTrue((self.data / "last.wav").exists())
         self.assertEqual((self.data / "last.txt").read_text(), " kubectl get pods ")
 
+    def test_hosted_final_is_delivered_without_a_second_batch_transcription(self) -> None:
+        delivery = FakeDelivery()
+        self.daemon.command("toggle")
+        self.daemon._hosted_live_session = True
+        self.daemon._hosted_final_text = "Remote final transcript"
+        self.daemon._hosted_final_event.set()
+        with patch("transcriber.daemon.make_backend", side_effect=AssertionError("must use hosted final")), patch(
+            "transcriber.daemon.make_delivery", return_value=delivery
+        ):
+            self.daemon.command("toggle")
+            self.wait_for(State.IDLE)
+        self.assertEqual(delivery.inserted, ["Remote final transcript"])
+        self.assertEqual(self.daemon.command("status")["last_backend"], "hosted-whisper")
+
     def test_cancel_discards_recording_without_transcribing(self) -> None:
         with patch("transcriber.daemon.make_backend") as backend:
             self.daemon.command("toggle")
