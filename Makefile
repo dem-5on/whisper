@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 GPU_COMPOSE = $(COMPOSE) -f compose.yaml -f compose.gpu.yaml
 
-.PHONY: up up-gpu down logs status token-add token-revoke package install uninstall
+.PHONY: up up-gpu down logs ps status token-add token-revoke package install uninstall
 
 up:
 	$(COMPOSE) up -d --build
@@ -14,6 +14,9 @@ down:
 
 logs:
 	$(COMPOSE) logs -f whisper-server
+
+ps:
+	$(COMPOSE) ps
 
 status:
 	$(COMPOSE) ps
