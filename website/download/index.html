@@ -46,6 +46,9 @@
     .command { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #101713; margin: 16px 0; }
     .command code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: #e1e9df; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .copy { background: transparent; border: 1px solid #59655d; color: #f4f4ec; border-radius: 7px; padding: 7px 10px; cursor: pointer; }
+    .toast { position: fixed; z-index: 10; left: 50%; bottom: 24px; transform: translate(-50%, 12px); max-width: calc(100% - 32px); padding: 12px 18px; border: 1px solid #59655d; border-radius: 999px; background: #253129; color: #f4f4ec; box-shadow: 0 8px 28px #0006; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; font-size: 14px; text-align: center; }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+    .toast.error { border-color: #e58b7b; background: #382522; }
     .requirements { border-top: 1px solid var(--line); margin-top: 25px; padding-top: 20px; }
     .requirements h3 { font-size: 14px; margin: 0 0 9px; }
     .requirements p, .requirements li { font-size: 13px; }
@@ -112,6 +115,7 @@
     </main>
     <footer>Whisper · Free and open source · Windows and macOS builds are not available yet.</footer>
   </div>
+  <div class="toast" id="copy-toast" role="status" aria-live="polite"></div>
   <script>
     const platformButtons = [...document.querySelectorAll('[data-platform]')];
     const panels = [...document.querySelectorAll('.details')];
@@ -145,14 +149,49 @@
     }
     selectPlatform(detectPlatform());
 
+    let toastTimeout;
+    function showToast(message, failed = false) {
+      const toast = document.getElementById('copy-toast');
+      toast.textContent = message;
+      toast.classList.toggle('error', failed);
+      toast.classList.add('visible');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => toast.classList.remove('visible'), 2600);
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch {
+          // Try the legacy copy command below when clipboard permission is denied.
+        }
+      }
+      const field = document.createElement('textarea');
+      field.value = text;
+      field.setAttribute('readonly', '');
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      let copied = false;
+      try {
+        copied = document.execCommand('copy');
+      } catch {
+        copied = false;
+      }
+      field.remove();
+      return copied;
+    }
+
     document.getElementById('copy-command').addEventListener('click', async event => {
       const command = document.getElementById('install-command').textContent;
-      try {
-        await navigator.clipboard.writeText(command);
-        event.currentTarget.textContent = 'Copied';
-      } catch {
-        event.currentTarget.textContent = 'Select and copy';
-      }
+      const button = event.currentTarget;
+      const copied = await copyText(command);
+      button.textContent = copied ? 'Copied' : 'Copy';
+      showToast(copied ? 'Installer command copied to clipboard.' : 'Could not copy. Please select and copy the command manually.', !copied);
+      setTimeout(() => { button.textContent = 'Copy'; }, 2600);
     });
   </script>
 </body>
