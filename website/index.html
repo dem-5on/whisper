@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111813">
+  <meta name="description" content="Whisper is private, push-to-talk transcription for GNOME on Linux. Runs locally or with your own hosted Whisper service.">
+  <title>Whisper — voice, straight to text</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      background: #111813;
+      color: #f4f4ec;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      --muted: #a8b1a9;
+      --line: #344039;
+      --green: #b7f36a;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    a { color: inherit; }
+    .page { width: min(1060px, calc(100% - 40px)); margin: 0 auto; }
+    header { height: 82px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; gap: 11px; align-items: center; text-decoration: none; font-size: 20px; font-weight: 720; letter-spacing: -.04em; }
+    .mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; background: var(--green); color: #172111; font-size: 17px; }
+    .nav { display: flex; gap: 25px; color: var(--muted); font-size: 14px; }
+    .nav a { text-decoration: none; }
+    .hero { display: grid; grid-template-columns: 1.15fr .85fr; gap: 55px; align-items: center; padding: 96px 0 88px; }
+    .eyebrow { color: var(--green); text-transform: uppercase; letter-spacing: .14em; font-size: 12px; font-weight: 700; }
+    h1 { font-size: clamp(48px, 7vw, 78px); line-height: .99; letter-spacing: -.075em; margin: 20px 0; max-width: 630px; }
+    .intro { color: var(--muted); font-size: 18px; line-height: 1.65; max-width: 570px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    .button { border: 1px solid transparent; border-radius: 999px; padding: 14px 21px; min-height: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; text-decoration: none; font-size: 14px; font-weight: 700; cursor: pointer; }
+    .primary { background: var(--green); color: #182112; }
+    .secondary { border-color: #59655d; background: #1c251f; color: #f4f4ec; }
+    .fineprint { color: #849087; font-size: 12px; margin-top: 15px; }
+    .terminal { border: 1px solid #3a473e; border-radius: 18px; background: #18211b; padding: 23px; box-shadow: 0 24px 70px #0005; }
+    .terminal-top { display: flex; gap: 7px; border-bottom: 1px solid #354138; padding-bottom: 17px; margin-bottom: 18px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: #59665d; }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #e1e9df; font: 13px/1.8 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .prompt { color: var(--green); }
+    .features { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); display: grid; grid-template-columns: repeat(3, 1fr); gap: 25px; padding: 28px 0; }
+    .feature strong { display: block; margin-bottom: 7px; font-size: 14px; }
+    .feature span { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .install { padding: 66px 0 86px; }
+    h2 { font-size: 30px; letter-spacing: -.05em; margin: 0 0 10px; }
+    .install p { color: var(--muted); line-height: 1.7; max-width: 680px; }
+    .command { margin: 22px 0; display: flex; align-items: center; gap: 14px; padding: 13px 14px 13px 18px; border: 1px solid var(--line); border-radius: 12px; background: #18211b; }
+    .command code { min-width: 0; flex: 1; overflow-wrap: anywhere; color: #e1e9df; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .copy { background: transparent; border: 1px solid #59655d; color: #f4f4ec; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+    footer { border-top: 1px solid var(--line); padding: 23px 0 35px; display: flex; justify-content: space-between; gap: 20px; color: #849087; font-size: 12px; }
+    @media (max-width: 740px) {
+      .hero { grid-template-columns: 1fr; padding: 64px 0; gap: 35px; }
+      .features { grid-template-columns: 1fr; gap: 20px; }
+      header { height: 70px; }
+      .nav { gap: 14px; font-size: 12px; }
+      footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <a class="brand" href="#top"><span class="mark" aria-hidden="true">◖</span> Whisper</a>
+      <nav class="nav" aria-label="Main navigation">
+        <a href="#install">Install</a>
+        <a href="https://github.com/dem-5on/whisper/releases/latest">Releases</a>
+        <a href="https://github.com/dem-5on/whisper">Source</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Voice input for GNOME</div>
+          <h1>Speak.<br>Keep moving.</h1>
+          <p class="intro">A small push-to-talk transcription tool that puts your words into the app you’re already using. Run Whisper locally, or connect to a hosted service.</p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/dem-5on/whisper/releases/latest/download/whisper-linux-gnome.tar.gz">↓&nbsp; Download for GNOME</a>
+            <a class="button secondary" href="https://github.com/dem-5on/whisper/releases/latest">Release notes</a>
+          </div>
+          <p class="fineprint">Linux · GNOME on Wayland · Debian/Ubuntu installer · Free and open source</p>
+        </div>
+        <div class="terminal" aria-label="Example install command">
+          <div class="terminal-top"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          <pre><span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/dem-5on/whisper/main/install.sh | bash
+
+Installing Whisper…
+The installer will ask before installing system packages.</pre>
+        </div>
+      </section>
+
+      <section class="features" aria-label="Features">
+        <div class="feature"><strong>Speak naturally</strong><span>Start and stop with a keyboard shortcut or the GNOME panel. Final text goes to your focused app.</span></div>
+        <div class="feature"><strong>Choose where it runs</strong><span>Transcribe on your own computer or connect to a Whisper server you control.</span></div>
+        <div class="feature"><strong>Keep control</strong><span>Local transcription is available. Remote providers are optional and configured by you.</span></div>
+      </section>
+
+      <section class="install" id="install">
+        <div class="eyebrow">Getting started</div>
+        <h2>Up and speaking in a few minutes.</h2>
+        <p>The guided installer is for GNOME on Wayland on Debian/Ubuntu-based Linux. It installs the app, user service, and panel extension. The local base model downloads the first time it starts, so the initial setup needs internet access.</p>
+        <div class="command">
+          <code id="install-command">curl -fsSL https://raw.githubusercontent.com/dem-5on/whisper/main/install.sh | bash</code>
+          <button class="copy" id="copy-command" type="button">Copy</button>
+        </div>
+        <p>Review the <a href="https://github.com/dem-5on/whisper#install">full installation notes</a> and the <a href="https://github.com/dem-5on/whisper/releases/latest">latest release</a>. Wayland text insertion may need a one-time `ydotool` permission setup depending on your Linux distribution.</p>
+      </section>
+    </main>
+
+    <footer>
+      <span>Whisper · Voice, straight to text.</span>
+      <span>Currently supported: GNOME on Wayland. Other desktop platforms are not yet supported.</span>
+    </footer>
+  </div>
+  <script>
+    document.getElementById('copy-command').addEventListener('click', async event => {
+      const command = document.getElementById('install-command').textContent;
+      try {
+        await navigator.clipboard.writeText(command);
+        event.currentTarget.textContent = 'Copied';
+      } catch {
+        event.currentTarget.textContent = 'Copy failed';
+      }
+    });
+  </script>
+</body>
+</html>

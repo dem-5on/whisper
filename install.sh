@@ -12,7 +12,9 @@ if [[ ! -f "$SOURCE_DIR/pyproject.toml" || ! -d "$SOURCE_DIR/extension" ]]; then
     DOWNLOAD_DIR="$(mktemp -d)"
     trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
     echo "Downloading Whisper installer and app files..."
-    curl -fsSL "$REPO_URL/archive/refs/heads/main.tar.gz" | tar -xz -C "$DOWNLOAD_DIR" --strip-components=1
+    curl -fsSL "$REPO_URL/releases/latest/download/whisper-linux-gnome.tar.gz" \
+        | tar -xz -C "$DOWNLOAD_DIR"
+    SOURCE_DIR="$DOWNLOAD_DIR"
     bash "$DOWNLOAD_DIR/install.sh" --from-download "$@"
     exit $?
 fi

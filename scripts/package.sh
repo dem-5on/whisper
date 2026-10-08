@@ -4,11 +4,14 @@ set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/pyproject.toml" | head -n 1)"
 [[ -n "$VERSION" ]] || { echo "Could not read project version." >&2; exit 1; }
+RELEASE_TAG="${RELEASE_TAG:-$VERSION}"
 
 DIST_DIR="$ROOT/dist"
 mkdir -p "$DIST_DIR"
-ARCHIVE="$DIST_DIR/whisper-$VERSION-linux-gnome.tar.gz"
-EXTENSION="$DIST_DIR/transcriber-gnome-extension-$VERSION.zip"
+ARCHIVE="$DIST_DIR/whisper-$RELEASE_TAG-linux-gnome.tar.gz"
+EXTENSION="$DIST_DIR/transcriber-gnome-extension-$RELEASE_TAG.zip"
+LATEST_ARCHIVE="$DIST_DIR/whisper-linux-gnome.tar.gz"
+LATEST_EXTENSION="$DIST_DIR/transcriber-gnome-extension.zip"
 
 git -C "$ROOT" ls-files --cached --others --exclude-standard -z \
     | tar --create --gzip --file="$ARCHIVE" --directory="$ROOT" --null --files-from=-
@@ -25,6 +28,11 @@ with ZipFile(destination, "w", ZIP_DEFLATED) as archive:
         archive.write(root / name, f"transcriber@local/{name}")
 PY
 
+cp "$ARCHIVE" "$LATEST_ARCHIVE"
+cp "$EXTENSION" "$LATEST_EXTENSION"
+
 echo "Created:"
 echo "  $ARCHIVE"
 echo "  $EXTENSION"
+echo "  $LATEST_ARCHIVE"
+echo "  $LATEST_EXTENSION"

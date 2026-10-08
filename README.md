@@ -20,7 +20,8 @@ and keys. Sign out and back in once if GNOME doesn't show the panel icon after
 installation. The local `base` model is downloaded the first time the daemon
 starts, so the first launch needs internet access.
 
-Versioned downloads will be published on the project's
+The download page is intended for `https://whisper.intejers.com/`; it links to
+the versioned files published on the project's
 [GitHub Releases page](https://github.com/dem-5on/whisper/releases).
 
 To remove the app later while keeping settings, keys, recordings, and
@@ -34,6 +35,18 @@ For other Linux distributions, use `make package` to create a source bundle and
 a GNOME extension ZIP under `dist/`, then follow the manual setup below.
 Currently, the guided installer supports GNOME on Wayland on Debian/Ubuntu; it
 does not claim support for GNOME X11, KDE, Windows, or macOS.
+
+### Publishing a release
+
+Release tags use six digits in `DDMMYY` form with no slashes, such as
+`300826` (displayed to users as `30/08/26`). Before tagging, set the Python
+package version in both `pyproject.toml` and `transcriber/__init__.py` to the
+corresponding sortable date version `YYYY.M.D` (for that example,
+`2026.8.30`), commit and push it, then push the six-digit tag. GitHub Actions
+validates the date and version, builds the source bundle and GNOME extension
+ZIP, and publishes both versioned files and stable `latest` download names.
+The stable app download is
+`https://github.com/dem-5on/whisper/releases/latest/download/whisper-linux-gnome.tar.gz`.
 
 ### Manual setup
 
