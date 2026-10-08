@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111813">
-  <meta name="description" content="Whisper is private, push-to-talk transcription for GNOME on Linux. Runs locally or with your own hosted Whisper service.">
+  <meta name="description" content="Whisper is private, push-to-talk transcription that puts your words into the app you are using. Runs locally or with your own hosted service.">
   <title>Whisper — voice, straight to text</title>
   <style>
     :root {
@@ -65,7 +65,7 @@
     <header>
       <a class="brand" href="#top"><span class="mark" aria-hidden="true">◖</span> Whisper</a>
       <nav class="nav" aria-label="Main navigation">
-        <a href="#install">Install</a>
+        <a href="/download/">Download</a>
         <a href="https://github.com/dem-5on/whisper/releases/latest">Releases</a>
         <a href="https://github.com/dem-5on/whisper">Source</a>
       </nav>
@@ -74,14 +74,14 @@
     <main id="top">
       <section class="hero">
         <div>
-          <div class="eyebrow">Voice input for GNOME</div>
+          <div class="eyebrow">Voice input, wherever you work</div>
           <h1>Speak.<br>Keep moving.</h1>
           <p class="intro">A small push-to-talk transcription tool that puts your words into the app you’re already using. Run Whisper locally, or connect to a hosted service.</p>
           <div class="actions">
-            <a class="button primary" href="https://github.com/dem-5on/whisper/releases/latest/download/whisper-linux-gnome.tar.gz">↓&nbsp; Download for GNOME</a>
+            <a class="button primary" href="/download/">↓&nbsp; Get Whisper</a>
             <a class="button secondary" href="https://github.com/dem-5on/whisper/releases/latest">Release notes</a>
           </div>
-          <p class="fineprint">Linux · GNOME on Wayland · Debian/Ubuntu installer · Free and open source</p>
+          <p class="fineprint">Free and open source · Choose your platform to see availability</p>
         </div>
         <div class="terminal" aria-label="Example install command">
           <div class="terminal-top"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
@@ -93,38 +93,23 @@ The installer will ask before installing system packages.</pre>
       </section>
 
       <section class="features" aria-label="Features">
-        <div class="feature"><strong>Speak naturally</strong><span>Start and stop with a keyboard shortcut or the GNOME panel. Final text goes to your focused app.</span></div>
+        <div class="feature"><strong>Speak naturally</strong><span>Start and stop with a keyboard shortcut or the desktop controls. Final text goes to your focused app.</span></div>
         <div class="feature"><strong>Choose where it runs</strong><span>Transcribe on your own computer or connect to a Whisper server you control.</span></div>
         <div class="feature"><strong>Keep control</strong><span>Local transcription is available. Remote providers are optional and configured by you.</span></div>
       </section>
 
       <section class="install" id="install">
-        <div class="eyebrow">Getting started</div>
-        <h2>Up and speaking in a few minutes.</h2>
-        <p>The guided installer is for GNOME on Wayland on Debian/Ubuntu-based Linux. It installs the app, user service, and panel extension. The local base model downloads the first time it starts, so the initial setup needs internet access.</p>
-        <div class="command">
-          <code id="install-command">curl -fsSL https://raw.githubusercontent.com/dem-5on/whisper/main/install.sh | bash</code>
-          <button class="copy" id="copy-command" type="button">Copy</button>
-        </div>
-        <p>Review the <a href="https://github.com/dem-5on/whisper#install">full installation notes</a> and the <a href="https://github.com/dem-5on/whisper/releases/latest">latest release</a>. Wayland text insertion may need a one-time `ydotool` permission setup depending on your Linux distribution.</p>
+        <div class="eyebrow">Your setup, your choice</div>
+        <h2>Start with the platform you use.</h2>
+        <p>Whisper is being built to support more desktops and operating systems. Choose yours to see what’s ready today and follow the setup guide for that platform.</p>
+        <a class="button primary" href="/download/">Choose an operating system&nbsp; →</a>
       </section>
     </main>
 
     <footer>
       <span>Whisper · Voice, straight to text.</span>
-      <span>Currently supported: GNOME on Wayland. Other desktop platforms are not yet supported.</span>
+      <span>Available today on selected Linux desktop setups. More platforms are planned.</span>
     </footer>
   </div>
-  <script>
-    document.getElementById('copy-command').addEventListener('click', async event => {
-      const command = document.getElementById('install-command').textContent;
-      try {
-        await navigator.clipboard.writeText(command);
-        event.currentTarget.textContent = 'Copied';
-      } catch {
-        event.currentTarget.textContent = 'Copy failed';
-      }
-    });
-  </script>
 </body>
 </html>

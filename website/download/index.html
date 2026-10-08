@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111813">
+  <meta name="description" content="Choose your operating system and follow the Whisper download and setup walkthrough.">
+  <title>Download Whisper</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #111813; color: #f4f4ec; font-synthesis: none; --muted: #a8b1a9; --line: #344039; --green: #b7f36a; --panel: #18211b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    a { color: inherit; }
+    .page { width: min(900px, calc(100% - 40px)); margin: 0 auto; }
+    header { height: 82px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .brand { display: flex; gap: 11px; align-items: center; text-decoration: none; font-size: 20px; font-weight: 720; letter-spacing: -.04em; }
+    .mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; background: var(--green); color: #172111; font-size: 17px; }
+    .back { color: var(--muted); text-decoration: none; font-size: 14px; }
+    main { padding: 70px 0 80px; }
+    .eyebrow { color: var(--green); text-transform: uppercase; letter-spacing: .14em; font-size: 12px; font-weight: 700; }
+    h1 { font-size: clamp(38px, 6vw, 58px); line-height: 1.02; letter-spacing: -.07em; margin: 15px 0; }
+    .intro { color: var(--muted); font-size: 16px; line-height: 1.65; max-width: 650px; margin: 0 0 30px; }
+    .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 13px; }
+    .platform { text-align: left; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 19px; min-height: 128px; cursor: pointer; transition: border-color .15s, transform .15s; }
+    .platform:hover { transform: translateY(-2px); border-color: #647467; }
+    .platform[aria-pressed="true"] { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .platform .icon { font-size: 24px; line-height: 1; margin-bottom: 14px; }
+    .platform strong { display: block; font-size: 16px; margin-bottom: 6px; }
+    .platform span { color: var(--muted); font-size: 12px; }
+    .details { margin-top: 24px; border: 1px solid var(--line); border-radius: 18px; background: #151d18; padding: clamp(22px, 5vw, 38px); }
+    .details[hidden] { display: none; }
+    .details h2 { font-size: 26px; letter-spacing: -.05em; margin: 0 0 10px; }
+    .details p { color: var(--muted); line-height: 1.7; }
+    .notice { border-left: 3px solid var(--green); padding: 12px 15px; margin: 20px 0; background: #1c281e; color: #dce7d9; font-size: 14px; line-height: 1.6; }
+    .steps { display: grid; gap: 17px; margin: 26px 0; }
+    .step { display: grid; grid-template-columns: 34px 1fr; gap: 13px; align-items: start; }
+    .number { width: 30px; height: 30px; display: grid; place-items: center; background: var(--green); color: #182112; border-radius: 50%; font-size: 13px; font-weight: 750; }
+    .step h3 { margin: 2px 0 6px; font-size: 15px; }
+    .step p { margin: 0; font-size: 14px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 22px 0; }
+    .button { border: 1px solid transparent; border-radius: 999px; padding: 13px 18px; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; font-size: 13px; font-weight: 720; cursor: pointer; }
+    .primary { background: var(--green); color: #182112; }
+    .secondary { border-color: #59655d; background: #1c251f; color: #f4f4ec; }
+    .command { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #101713; margin: 16px 0; }
+    .command code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: #e1e9df; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .copy { background: transparent; border: 1px solid #59655d; color: #f4f4ec; border-radius: 7px; padding: 7px 10px; cursor: pointer; }
+    .requirements { border-top: 1px solid var(--line); margin-top: 25px; padding-top: 20px; }
+    .requirements h3 { font-size: 14px; margin: 0 0 9px; }
+    .requirements p, .requirements li { font-size: 13px; }
+    .requirements ul { padding-left: 19px; color: var(--muted); line-height: 1.8; }
+    .more { color: var(--muted); font-size: 13px; line-height: 1.7; }
+    footer { border-top: 1px solid var(--line); padding: 23px 0 35px; color: #849087; font-size: 12px; }
+    @media (max-width: 650px) { .platforms { grid-template-columns: 1fr; } .platform { min-height: 90px; display: grid; grid-template-columns: 38px 1fr; column-gap: 12px; align-items: center; } .platform .icon { grid-row: span 2; margin: 0; } .platform strong, .platform span { grid-column: 2; } main { padding-top: 48px; } }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <a class="brand" href="/"><span class="mark" aria-hidden="true">◖</span> Whisper</a>
+      <a class="back" href="/">← Back to home</a>
+    </header>
+    <main>
+      <div class="eyebrow">Download and setup</div>
+      <h1>What do you use?</h1>
+      <p class="intro">Choose your operating system to see the right download and step-by-step setup. We’ll show clearly if your platform isn’t supported yet.</p>
+
+      <section class="platforms" aria-label="Choose your operating system">
+        <button class="platform" type="button" data-platform="linux" aria-pressed="false">
+          <div class="icon" aria-hidden="true">🐧</div><strong>Linux</strong><span>Available · limited desktop support</span>
+        </button>
+        <button class="platform" type="button" data-platform="windows" aria-pressed="false">
+          <div class="icon" aria-hidden="true">▦</div><strong>Windows</strong><span>Not available yet</span>
+        </button>
+        <button class="platform" type="button" data-platform="macos" aria-pressed="false">
+          <div class="icon" aria-hidden="true">●</div><strong>macOS</strong><span>Not available yet</span>
+        </button>
+      </section>
+
+      <section class="details" id="linux-details" aria-labelledby="linux-heading" hidden>
+        <div class="eyebrow">Linux installer</div>
+        <h2 id="linux-heading">Install Whisper on Linux</h2>
+        <p>The guided installer currently supports Debian/Ubuntu-based Linux running a GNOME Wayland desktop. Other distributions and desktop environments are not supported by this one-command installer yet.</p>
+        <div class="notice"><strong>Before you begin:</strong> setup needs internet access to install dependencies and download the local speech model. Whisper asks before installing system packages. Wayland may need a one-time keyboard-input permission setup for typing transcripts into other apps.</div>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/dem-5on/whisper/releases/latest/download/whisper-linux-gnome.tar.gz">↓ Download Linux bundle</a>
+          <a class="button secondary" href="https://github.com/dem-5on/whisper/releases/latest">View release notes</a>
+        </div>
+        <h2>Guided setup</h2>
+        <div class="steps">
+          <div class="step"><div class="number">1</div><div><h3>Open Terminal</h3><p>Open the Terminal app from your Applications menu. You don’t need to download or unzip anything first if you use the guided command below.</p></div></div>
+          <div class="step"><div class="number">2</div><div><h3>Run the installer</h3><p>Copy this command, paste it into Terminal, and press Enter. Read the prompts; it may ask for your computer password to install required system packages.</p>
+            <div class="command"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/dem-5on/whisper/main/install.sh | bash</code><button class="copy" id="copy-command" type="button">Copy</button></div>
+          </div></div>
+          <div class="step"><div class="number">3</div><div><h3>Finish desktop setup</h3><p>If the Whisper panel icon doesn’t appear, sign out of GNOME and sign back in. Check that the “Transcriber” extension is enabled in Extensions.</p></div></div>
+          <div class="step"><div class="number">4</div><div><h3>Try a transcription</h3><p>Start recording from the panel or bind a keyboard shortcut. The first local-model startup downloads the model; after that, local transcription can work without internet.</p></div></div>
+        </div>
+        <div class="requirements"><h3>If it transcribes but doesn’t type into your app</h3><p>Wayland protects keyboard input. Whisper uses ydotool for typing, and your Linux distribution may require a one-time permission setup for its `ydotoold` service to access `/dev/uinput`. See the <a href="https://github.com/dem-5on/whisper#install">installation troubleshooting notes</a>; only grant this to a user you trust.</p></div>
+        <p class="more">Using another Linux setup? The app is open source, but the guided installer and desktop panel currently target GNOME on Wayland. See the <a href="https://github.com/dem-5on/whisper">source repository</a> for the manual setup path.</p>
+      </section>
+
+      <section class="details" id="windows-details" aria-labelledby="windows-heading" hidden>
+        <div class="eyebrow">Windows</div><h2 id="windows-heading">Windows support is being planned</h2>
+        <p>There isn’t a Windows installer yet. Whisper’s current desktop controls and audio integration are Linux-specific, so a Windows build needs its own implementation and testing before we can offer a reliable download.</p>
+        <p class="more">Please don’t install the Linux bundle on Windows. Follow development at the <a href="https://github.com/dem-5on/whisper">Whisper project on GitHub</a>.</p>
+      </section>
+
+      <section class="details" id="macos-details" aria-labelledby="macos-heading" hidden>
+        <div class="eyebrow">macOS</div><h2 id="macos-heading">macOS support is being planned</h2>
+        <p>There isn’t a macOS installer yet. Audio capture, shortcuts, and focused-app text insertion need a native macOS implementation and testing before we can offer a reliable download.</p>
+        <p class="more">Please don’t install the Linux bundle on macOS. Follow development at the <a href="https://github.com/dem-5on/whisper">Whisper project on GitHub</a>.</p>
+      </section>
+    </main>
+    <footer>Whisper · Free and open source · Windows and macOS builds are not available yet.</footer>
+  </div>
+  <script>
+    const platformButtons = [...document.querySelectorAll('[data-platform]')];
+    const panels = [...document.querySelectorAll('.details')];
+    for (const button of platformButtons) {
+      button.addEventListener('click', () => {
+        const selected = button.dataset.platform;
+        for (const option of platformButtons)
+          option.setAttribute('aria-pressed', String(option === button));
+        for (const panel of panels)
+          panel.hidden = panel.id !== `${selected}-details`;
+        document.getElementById(`${selected}-heading`).scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+    document.getElementById('copy-command').addEventListener('click', async event => {
+      const command = document.getElementById('install-command').textContent;
+      try {
+        await navigator.clipboard.writeText(command);
+        event.currentTarget.textContent = 'Copied';
+      } catch {
+        event.currentTarget.textContent = 'Select and copy';
+      }
+    });
+  </script>
+</body>
+</html>
