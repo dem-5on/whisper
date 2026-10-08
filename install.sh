@@ -5,6 +5,23 @@ REPO_URL="https://github.com/dem-5on/whisper"
 SOURCE_DIR=""
 DOWNLOAD_DIR=""
 
+status() {
+    printf '\nWhisper: %s\n' "$1"
+}
+
+run_quiet() {
+    local log_file exit_code
+    log_file="$(mktemp)"
+    if "$@" >"$log_file" 2>&1; then
+        rm -f "$log_file"
+    else
+        exit_code=$?
+        cat "$log_file" >&2
+        rm -f "$log_file"
+        return "$exit_code"
+    fi
+}
+
 # When invoked as `curl ... | bash`, $0 is the shell name, not a script path.
 # Checking $0 avoids relying on empty-array behavior that differs across Bash
 # versions; piped installs bootstrap from the published source archive below.
@@ -18,9 +35,9 @@ if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/pyproject.toml" || ! -d "$SOURCE_DIR
     done
     DOWNLOAD_DIR="$(mktemp -d)"
     trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
-    echo "Downloading Whisper installer and app files..."
-    curl -fsSL "$REPO_URL/releases/latest/download/whisper-linux-gnome.tar.gz" \
-        | tar -xz -C "$DOWNLOAD_DIR"
+    status "Downloading Whisper..."
+    curl -fsSL "$REPO_URL/archive/refs/heads/main.tar.gz" \
+        | tar -xz --strip-components=1 -C "$DOWNLOAD_DIR"
     SOURCE_DIR="$DOWNLOAD_DIR"
     bash "$DOWNLOAD_DIR/install.sh" --from-download "$@"
     exit $?
@@ -52,9 +69,11 @@ if ! command -v sudo >/dev/null; then
     exit 1
 fi
 
-echo "Installing required system packages (you may be asked for your password)..."
-sudo apt-get update
-sudo apt-get install -y sox ydotool pipewire-bin python3-venv curl
+status "Installing system dependencies... (sudo may ask for your password)"
+sudo -v
+run_quiet sudo apt-get -qq update
+sudo -v
+run_quiet sudo apt-get -qq install -y sox ydotool pipewire-bin python3-venv curl
 
 PYTHON=""
 for candidate in python3 python3.12 python3.11; do
@@ -78,6 +97,7 @@ EXTENSION_DIR="$USER_HOME/.local/share/gnome-shell/extensions/transcriber@local"
 UNIT_DIR="$CONFIG_HOME/systemd/user"
 
 mkdir -p "$APP_DIR" "$BIN_DIR" "$EXTENSION_DIR" "$UNIT_DIR" "$CONFIG_HOME/transcriber"
+status "Preparing Whisper..."
 cp -a "$SOURCE_DIR/transcriber" "$SOURCE_DIR/whisper_service" "$APP_DIR/"
 cp "$SOURCE_DIR/pyproject.toml" "$SOURCE_DIR/README.md" "$APP_DIR/"
 cp "$SOURCE_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
@@ -85,9 +105,10 @@ if [[ ! -f "$CONFIG_HOME/transcriber/config.yaml" ]]; then
     cp "$SOURCE_DIR/config.example.yaml" "$CONFIG_HOME/transcriber/config.yaml"
 fi
 
-"$PYTHON" -m venv "$VENV_DIR"
-"$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install "${APP_DIR}[local,realtime]"
+status "Installing Whisper and transcription dependencies..."
+run_quiet "$PYTHON" -m venv "$VENV_DIR"
+run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet --upgrade pip
+run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet "${APP_DIR}[local,realtime]"
 ln -sfn "$VENV_DIR/bin/whisper" "$BIN_DIR/whisper"
 ln -sfn "$VENV_DIR/bin/whisper-daemon" "$BIN_DIR/whisper-daemon"
 ln -sfn "$VENV_DIR/bin/transcriber" "$BIN_DIR/transcriber"
@@ -115,14 +136,16 @@ RestartSec=2
 WantedBy=default.target
 EOF
 
-systemctl --user daemon-reload
-systemctl --user enable --now transcriber.service
+status "Setting up the desktop extension and background service..."
+run_quiet systemctl --user daemon-reload
+run_quiet systemctl --user enable --now transcriber.service
 if command -v gnome-extensions >/dev/null; then
-    gnome-extensions enable transcriber@local || true
+    gnome-extensions enable transcriber@local >/dev/null 2>&1 || true
 fi
 
+status "Whisper is ready."
 echo
-echo "Whisper is installed. The local base model downloads the first time it starts."
+echo "The local base model downloads the first time it starts."
 echo "If GNOME does not show the panel icon yet, sign out and back in once."
 echo "Open Extensions and enable 'Transcriber' if it is not enabled already."
 echo "Wayland text insertion needs ydotool access to /dev/uinput. If the first recording"
