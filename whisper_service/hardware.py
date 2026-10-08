@@ -38,16 +38,18 @@ class HardwareSelection:
 def detect_hardware(mode: str = "auto", *, ctranslate2_module: Any | None = None) -> HardwareSelection:
     """Select a usable CPU or CUDA runtime, with optional CUDA auto-fallback.
 
-    ``cpu`` needs no optional runtime import. ``cuda`` is strict and raises if
-    the CUDA runtime cannot be used. ``auto`` falls back to CPU and preserves
-    a safe diagnostic reason for the operator.
+    CPU selection prefers an int8 compute type reported by CTranslate2 when it
+    is installed, with a portable int8 default if it is not. ``cuda`` is strict
+    and raises if the CUDA runtime cannot be used. ``auto`` falls back to CPU
+    and preserves a safe diagnostic reason for the operator.
     """
     if mode not in {"auto", "cpu", "cuda"}:
         raise ValueError("device mode must be one of: auto, cpu, cuda")
 
     requested: DeviceMode = mode  # validated above
     if mode == "cpu":
-        return HardwareSelection(requested, "cpu", "int8", 0, (), "CPU explicitly selected")
+        return HardwareSelection(requested, "cpu", _preferred_compute_type(_cpu_compute_types(ctranslate2_module), device="cpu"),
+                                 0, (), "CPU explicitly selected")
 
     try:
         runtime = ctranslate2_module or _load_ctranslate2()

@@ -62,14 +62,17 @@ supported.
 
 ### Current implementation slice
 
-The first server-side slice adds a standalone `whisper_service` package and an
-operator diagnostic command for device selection. It recognizes CPU and
-CTranslate2 CUDA availability; CUDA is the only GPU backend considered in this
-slice. This is runtime detection, not a guarantee that every model fits in
-device memory. Actual worker initialization must validate the chosen profile,
-and server health must surface initialization failures. The HTTP/WebSocket
-service, authentication, and inference worker are subsequent implementation
-steps.
+The current server-side foundation adds a standalone `whisper_service`
+package, an operator diagnostic command for device selection, and a
+transport-independent live-session manager. It recognizes CPU and CTranslate2
+CUDA availability; CUDA is the only GPU backend considered so far. This is
+runtime detection, not a guarantee that every model fits in device memory.
+Actual worker initialization must validate the chosen profile, and server
+health must surface initialization failures. The session manager enforces
+server-owned profile IDs, audio chunk/duration limits, and per-user/global
+concurrency, and passes audio directly to an injected worker without retaining
+it. The HTTP/WebSocket transport, authentication, and actual inference worker
+are subsequent implementation steps.
 
 ## Proposed v1 API
 
@@ -231,7 +234,9 @@ and model inference time are separate measurements.
 1. Review and approve this boundary and protocol before touching the existing
    provider pipelines.
 2. Record VPS hardware, region, domain/TLS plan, and initial user/quota policy.
-3. Implement a standalone service shell and protocol tests with a fake worker.
+3. Implement the standalone service shell and protocol tests with a fake worker
+   (hardware selection and transport-independent session management are in
+   place; the wire transport/authentication remain to be implemented).
 4. Add a model worker behind the service interface and benchmark candidate
    models on the target VPS.
 5. Implement the separate desktop hosted-service adapter and final-result reuse.
