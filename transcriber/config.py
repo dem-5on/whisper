@@ -102,6 +102,10 @@ class Config:
 
 
 def default_config_path() -> Path:
+    if os.name == "nt":
+        from .platforms.windows.paths import config_dir
+
+        return config_dir() / "config.yaml"
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "transcriber" / "config.yaml"
 
 
@@ -110,6 +114,10 @@ def resolve_config_path(path: str | Path | None = None) -> Path:
 
 
 def default_keys_path() -> Path:
+    if os.name == "nt":
+        from .platforms.windows.paths import config_dir
+
+        return config_dir() / "keys.env"
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "transcriber" / "keys.env"
 
 

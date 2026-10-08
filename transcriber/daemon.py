@@ -58,11 +58,19 @@ _MODEL_CACHE_TTL_SECONDS = 24 * 3600
 
 
 def default_socket_path() -> Path:
+    if os.name == "nt":
+        from .platforms.windows.paths import socket_path
+
+        return socket_path()
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     return Path(runtime) / "transcriber.sock" if runtime else Path(f"/tmp/transcriber-{os.getuid()}.sock")
 
 
 def default_data_dir() -> Path:
+    if os.name == "nt":
+        from .platforms.windows.paths import data_dir
+
+        return data_dir()
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "transcriber"
 
@@ -1202,7 +1210,7 @@ def run_server(config: Config, socket_path: Path, config_path: Path | None = Non
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         # Do not blindly delete a live daemon's IPC endpoint.
-        if not stat.S_ISSOCK(socket_path.stat().st_mode):
+        if os.name != "nt" and not stat.S_ISSOCK(socket_path.stat().st_mode):
             raise RuntimeError(f"Refusing to replace non-socket path {socket_path}")
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
@@ -1217,7 +1225,8 @@ def run_server(config: Config, socket_path: Path, config_path: Path | None = Non
     daemon._warm_model_async()  # preload + warm the local model for the daemon's lifetime
     server = UnixServer(str(socket_path), _RequestHandler)
     server.daemon = daemon
-    os.chmod(socket_path, 0o600)
+    if os.name != "nt":
+        os.chmod(socket_path, 0o600)
 
     def stop_server(_signal: int, _frame: Any) -> None:
         # ``shutdown`` must run from another thread than ``serve_forever``;
