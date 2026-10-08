@@ -18,8 +18,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Whisper transcription daemon")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart"),
     )
+    parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
     parser.add_argument("--provider", choices=("local", "groq", "openrouter", "openai", "hosted-whisper"), default=None)
     parser.add_argument("--live-engine", choices=("local", "openai-realtime", "hosted-whisper"), default=None)
@@ -33,6 +34,14 @@ def main() -> None:
     parser.add_argument("--clear", action="store_true", help="Remove the stored key with set-key")
     parser.add_argument("--json", action="store_true", help="Print the full daemon response")
     args = parser.parse_args()
+    if args.command == "autostart":
+        if args.autostart_action is None:
+            parser.error("autostart requires enable or disable")
+        from .platforms.windows.startup import disable, enable
+
+        ok, message = (enable if args.autostart_action == "enable" else disable)()
+        print(message, file=sys.stdout if ok else sys.stderr)
+        raise SystemExit(0 if ok else 1)
     if args.command == "set-key":
         raise SystemExit(_set_key(args))
     if args.command == "subscribe":
