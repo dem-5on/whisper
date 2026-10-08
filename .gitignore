@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Local configuration and credentials
+config.yaml
+keys.env
+.env
+
+# Local logs and retained recordings/transcripts
+stderr.txt
+last.wav
+last.txt

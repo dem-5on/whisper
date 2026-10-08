@@ -1,0 +1,60 @@
+audio:
+  sample_rate: 16000
+  channels: 1
+  format: wav
+  max_duration_seconds: 120
+  # Pulse/PipeWire source name (see `transcriber mics`); null uses the default.
+  input_device: null
+
+transcription:
+  backend: local
+  model: base
+  local_engine: faster-whisper
+  # Set this to en if you are speaking English; null enables auto-detection.
+  language: null
+  # CPU int8 is substantially faster than float32. Use device: cuda for a CUDA GPU.
+  device: cpu
+  compute_type: int8
+
+processing:
+  cleanup: false
+  replacements: {}
+
+delivery:
+  backend: keyboard
+  submit_after_insert: false
+
+ui:
+  # Show a truncated last-transcript preview in status responses (GNOME panel).
+  show_last_transcript: false
+  preview_chars: 120
+
+streaming:
+  # PCM frame stream + rolling live decode. Disable for the legacy
+  # record-to-WAV-then-transcribe path (also loses VAD auto-stop/partials).
+  enabled: true
+  # Independent live engine/model; final batch provider/model remain separate.
+  engine: local # local | openai-realtime
+  model: base # local preset or gpt-live-transcribe/gpt-transcribe
+  # Capture frame size in ms (20-100). Smaller = lower VAD latency.
+  frame_ms: 20
+  # Rolling-window re-decode interval in ms (200-2000). ~500 gives
+  # partial text within ~0.5-1 s on typical hardware.
+  chunk_ms: 500
+  # Seconds of recent audio re-decoded per chunk (4-30, with overlap).
+  window_seconds: 8
+  # Trailing silence after speech before the recording auto-stops (0.5-5.0).
+  # Fires only after speech was observed; leading silence never cuts.
+  silence_timeout_seconds: 1.8
+  # 0.0 (only loud speech) to 1.0 (very sensitive).
+  vad_sensitivity: 0.5
+  # Cap on queued VAD frames (5-120). Live decoding uses its bounded
+  # window_seconds buffer; final audio is streamed to a WAV file.
+  max_queue_seconds: 30
+  # Show rolling partials in the panel. Final delivery is unaffected.
+  show_partials: true
+  # Load the local model at daemon startup (warmed with silence).
+  preload_model: true
+  # Reserved for a future explicit live-insertion implementation. Partials
+  # are never typed; only the finalized transcript is inserted.
+  live_insert_experimental: false

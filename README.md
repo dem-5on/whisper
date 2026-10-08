@@ -1,0 +1,142 @@
+# Universal Voice-to-Agent Transcriber
+
+A Linux-first, application-agnostic voice-input daemon. Your desktop environment owns the global shortcut; this project records, transcribes, and inserts text into whichever application currently has focus. It never talks to an editor or coding agent directly.
+
+Daemon: Python. UI: GNOME Shell extension (JavaScript/GJS) in `extension/`.
+The daemon owns the work; the panel only displays state and sends commands.
+
+## Install
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -e '.[local,dev]'
+mkdir -p ~/.config/transcriber
+cp config.example.yaml ~/.config/transcriber/config.yaml
+```
+
+The default local engine needs `faster-whisper`. Audio capture uses SoX's `rec`; install it with your distribution package manager. For direct Wayland typing, install and configure `ydotool` (including access to `/dev/uinput`). X11 uses `xdotool`. Mic enumeration uses `wpctl` (PipeWire), falling back to `pactl` then `arecord -l`.
+
+## Run
+
+Start the daemon once, for example from a user service:
+
+```bash
+transcriber-daemon
+```
+
+For systemd user sessions, install `systemd/transcriber.service` as
+`~/.config/systemd/user/transcriber.service`, adjust `ExecStart` if the command
+is not in `~/.local/bin`, then run `systemctl --user daemon-reload` and
+`systemctl --user enable --now transcriber`.
+
+Bind a desktop/compositor shortcut to `transcriber toggle`; bind a second shortcut to `transcriber cancel` if desired. The desktop environment—not this application—handles global shortcut detection, which makes this compatible with GNOME, KDE, Sway, Hyprland, and similar systems.
+
+```bash
+transcriber toggle
+transcriber cancel
+transcriber status [--json]
+transcriber retry            # re-transcribe the preserved last recording
+transcriber last             # print the last transcript (for copy/recovery)
+transcriber mics [--json]    # list PipeWire/Pulse capture sources
+transcriber events [--since N] [--json]  # live partial/committed/final events
+transcriber subscribe        # persistent event stream (Ctrl-C to stop)
+transcriber set-provider --provider local|groq|openrouter
+transcriber set-model --model <id>   # local preset or provider model id; `models` lists valid ids
+transcriber set-live-engine --live-engine local|openai-realtime
+transcriber set-live-model --model <id>  # independent live model
+transcriber set-mic --device default|<source-id>
+transcriber set-streaming [--enabled true|false]  # live partials + VAD auto-stop; omit to flip
+transcriber models [--json]          # transcription-capable models for the current backend
+transcriber set-key --provider groq|openrouter|openai [--key ...]  # hidden-prompt key store (0600)
+transcriber set-key --provider groq|openrouter|openai --clear      # remove the stored key
+```
+
+Provider, model, and mic switches are written through to `~/.config/transcriber/config.yaml`,
+so they survive daemon restarts. API keys are stored separately in `~/.config/transcriber/keys.env`
+(mode 0600, loaded at daemon startup, never logged); `status --json` only reports key *presence*
+(`has_groq_key`, `has_openrouter_key`, `has_openai_key`) so the panel can warn when a remote backend has no key.
+
+The socket defaults to `$XDG_RUNTIME_DIR/transcriber.sock` (or `/tmp/transcriber-<uid>.sock`). Set `TRANSCRIBER_CONFIG` or pass `--config` to choose another config file.
+
+## Live transcription
+
+```
+SoX/PipeWire capture → PCM frame queue → VAD → rolling Whisper decode
+                                       └→ partial/final events → GNOME overlay
+final stable text → cleanup/replacements → keyboard/clipboard delivery
+```
+
+Capture streams 16 kHz PCM frames (20–100 ms) from `rec` into a bounded
+queue. The final WAV is written as frames arrive, while a separate bounded
+rolling buffer feeds inference. VAD (energy-based by default, WebRTC VAD
+when installed) detects speech and auto-stops the recording
+after `silence_timeout_seconds` of trailing silence — leading silence
+never cuts. Every `chunk_ms`, the most recent `window_seconds` are
+re-decoded. The merge retains prior committed text when the rolling window
+advances, then treats the newest words as provisional. Partials appear in
+the panel within ~0.5–1 s when local decoding can keep pace; status reports
+the most recent decode duration and lag.
+
+Live engine selection and the local rolling engine are in
+`transcriber/live_engines.py`; the OpenAI transport is isolated in
+`transcriber/openai_realtime.py`. Configure `streaming.engine` and
+`streaming.model` independently from the final batch provider/model. For
+OpenAI live transcription, install the optional dependency and configure its key:
+
+```bash
+python -m pip install -e '.[realtime]'
+transcriber set-key --provider openai
+transcriber set-live-engine --live-engine openai-realtime
+transcriber set-live-model --model gpt-live-transcribe
+```
+
+This uses OpenAI's Realtime transcription WebSocket; OpenRouter remains
+unchanged and can still handle final transcription. See the
+[OpenAI Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription).
+
+The local model is loaded once at daemon startup (warmed with silence),
+not per recording. Event types are `partial`, `committed`, `final`,
+`speech_started`, and `speech_ended`, each with a session ID and revision:
+poll `status` (`live_text`, `committed_text`, `provisional_text`,
+`speech_active`), fetch deltas with `events --since N`, or hold a push
+connection with `subscribe`. Local live partials require
+`local_engine: faster-whisper`; OpenAI live transcription requires
+`OPENAI_API_KEY` and the optional dependency. Either live engine can be paired
+with any final batch backend. Live text never reaches the focused
+app — only the finalized transcript is inserted. Tune everything under
+`streaming:` in `config.yaml`; set `streaming.enabled: false` for the
+legacy record-to-WAV-then-transcribe path. The stock VAD needs only NumPy;
+installing `webrtcvad` (optional) upgrades per-frame speech classification;
+the default 20 ms capture frame uses it directly.
+
+## GNOME panel (`extension/`)
+
+Install the `transcriber@local` extension (targets GNOME 45–50):
+
+```bash
+mkdir -p ~/.local/share/gnome-shell/extensions/transcriber@local
+cp extension/{metadata.json,extension.js,stylesheet.css} ~/.local/share/gnome-shell/extensions/transcriber@local/
+gnome-extensions enable transcriber@local
+# Wayland: log out and back in (or restart the shell on X11 with Alt+F2 `r`).
+```
+
+The panel shows idle / red pulsing + elapsed timer while recording (with
+the live partial rendered in the menu, polled every 500 ms) /
+spinner while processing (showing the last partial as “Finalizing”) /
+error with reason, plus provider, model, and mic
+submenus, `Re-transcribe last`, `Copy last transcript`, a `Show transcript`
+switch for the full completed transcript, rich done-notifications
+(backend, duration, opt-in preview), a key-missing hint when a remote backend
+has no stored key, and `Start daemon` when the socket is unreachable.
+The Model submenu lists local presets for the `local` backend and the
+provider's transcription-capable models (cached 24h) for `groq`/`openrouter`.
+Configuration lives in the daemon config file; the only UI
+display option is `ui.show_last_transcript` (default off).
+
+## Safety and privacy
+
+Local transcription is the default. Groq and OpenRouter are opt-in and read their credentials only from `GROQ_API_KEY` and `OPENROUTER_API_KEY`; credentials and transcript text are never written to logs. `submit_after_insert` defaults to `false`, so text is inserted but Enter is not pressed. The last recording (`~/.local/share/transcriber/last.wav`) and transcript (`last.txt`) are kept on disk for retry/copy recovery.
+
+## State model
+
+`IDLE → RECORDING → PROCESSING → DELIVERING → IDLE`, plus `ERROR` with a short reason on transcription/processing/delivery failure. Cancellation from `RECORDING` discards audio and returns to `IDLE`; cancellation from `ERROR` clears the error. Failures preserve the last recording so `retry` / `Re-transcribe last` can recover without re-speaking.

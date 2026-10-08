@@ -1,0 +1,279 @@
+/* Trust cues: red pulse while the mic is live, red error state. */
+
+.transcriber-recording .transcriber-icon {
+  color: #f56565;
+}
+
+.transcriber-recording .transcriber-label {
+  color: #f56565;
+  font-weight: bold;
+  margin-left: 4px;
+}
+
+.transcriber-error .transcriber-icon {
+  color: #f56565;
+}
+
+.transcriber-error .transcriber-label {
+  color: #f56565;
+  font-weight: bold;
+  margin-left: 4px;
+}
+
+.transcriber-warn .transcriber-icon {
+  color: #ed8936;
+}
+
+.transcriber-warn .transcriber-label {
+  color: #ed8936;
+  font-weight: bold;
+  margin-left: 4px;
+}
+
+.transcriber-label {
+  margin-left: 4px;
+}
+
+.transcriber-status-label {
+  max-width: 460px;
+}
+
+.transcriber-key-label,
+.transcriber-live-info-label {
+  max-width: 460px;
+}
+
+.transcriber-transcript {
+  max-width: 340px;
+}
+
+.transcriber-transcript-scroll {
+  max-width: 340px;
+}
+
+.transcriber-action-row {
+  spacing: 8px;
+  padding: 2px 0;
+}
+
+.transcriber-action-button {
+  min-height: 38px;
+  max-height: 38px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: none;
+  background-color: #35373d;
+  color: #f6f5f4;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.transcriber-action-button:hover {
+  background-color: #41434a;
+}
+
+.transcriber-action-button:disabled {
+  color: #92949a;
+  background-color: #303238;
+}
+
+.transcriber-action-content {
+  spacing: 7px;
+}
+
+.transcriber-action-icon {
+  icon-size: 16px;
+}
+
+.transcriber-provider-model-row {
+  spacing: 8px;
+}
+
+.transcriber-retry-item {
+  margin: 4px 0;
+  padding: 0;
+}
+
+.transcriber-choice-item {
+  margin: 3px 0;
+  padding: 0;
+  color: #f6f5f4;
+  opacity: 1;
+}
+
+.transcriber-choice-detail-item {
+  margin: 0;
+  padding: 0;
+  opacity: 1;
+}
+
+.transcriber-choice-row {
+  min-height: 38px;
+  max-height: 38px;
+  margin: 4px 0;
+  padding: 0 0 0 14px;
+  spacing: 0;
+  border: none;
+  border-radius: 999px;
+  background-color: #3584e4;
+  color: white;
+}
+
+.transcriber-choice-content {
+  spacing: 12px;
+  padding: 3px 0;
+}
+
+.transcriber-choice-icon {
+  icon-size: 20px;
+  color: white;
+}
+
+.transcriber-choice-labels {
+  min-width: 0;
+  spacing: 1px;
+}
+
+.transcriber-choice-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: white;
+}
+
+.transcriber-choice-value {
+  max-width: 190px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.transcriber-choice-row:hover,
+.transcriber-choice-row:focus,
+.transcriber-choice-row:active {
+  background-color: #4c95f2;
+}
+
+.transcriber-choice-arrow-button {
+  min-height: 0;
+  max-height: 999px;
+  min-width: 40px;
+  max-width: 40px;
+  width: 40px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 0 999px 999px 0;
+  background-color: #5294ef;
+  box-shadow: none;
+}
+
+.button.transcriber-choice-arrow-button:hover {
+  background-color: #68a4f4;
+}
+
+.button.transcriber-choice-arrow-button:focus {
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: none;
+}
+
+.transcriber-choice-arrow-icon {
+  icon-size: 18px;
+}
+
+.transcriber-option-panel {
+  spacing: 6px;
+  margin: 5px 0 8px;
+  padding: 16px 20px;
+  min-width: 0;
+  border-radius: 22px;
+  background-color: #35373d;
+}
+
+.transcriber-option-header {
+  spacing: 12px;
+  padding-bottom: 6px;
+}
+
+.transcriber-option-title {
+  color: #f6f5f4;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.transcriber-option-header-icon {
+  icon-size: 14px;
+  padding: 8px;
+  border-radius: 999px;
+  background-color: #3584e4;
+  color: white;
+}
+
+.transcriber-option-scroll {
+  min-width: 0;
+}
+
+.transcriber-option-button {
+  min-height: 36px;
+  max-height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background-color: transparent;
+  color: #f6f5f4;
+  text-align: left;
+  font-weight: normal;
+}
+
+.transcriber-option-label {
+  color: #f6f5f4;
+  font-size: 15px;
+  font-weight: normal;
+}
+
+.transcriber-option-button:hover,
+.transcriber-option-button:focus {
+  background-color: #41434a;
+}
+
+.transcriber-option-button:disabled {
+  color: #92949a;
+}
+
+.transcriber-option-row {
+  spacing: 10px;
+}
+
+.transcriber-option-check {
+  icon-size: 14px;
+  color: #62d49b;
+}
+
+.transcriber-option-placeholder {
+  padding: 10px;
+  color: #b3b3b3;
+}
+
+.transcriber-action-icon,
+.transcriber-choice-icon,
+.transcriber-choice-arrow-icon {
+  icon-size: 16px;
+}
+
+.transcriber-record-button {
+  background-color: #3584e4;
+  color: white;
+}
+
+.transcriber-record-button:hover {
+  background-color: #4c95f2;
+}
+
+.transcriber-record-button.transcriber-stop-button {
+  background-color: #a8323e;
+  border-color: #e37b83;
+}
+
+.transcriber-record-button.transcriber-stop-button:hover {
+  background-color: #bd3d49;
+}
