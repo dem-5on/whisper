@@ -63,6 +63,13 @@ this diagnostic executable, while the preview installer workflow explicitly
 opts into `packaged-daemon`. This ensures the focus-test executable cannot
 silently launch the transcription daemon.
 
+To test focus behavior from an installer before approving the functional build,
+run the **Windows focus-test installer** workflow from GitHub Actions. Download
+the `whisper-windows-focus-test-installer` artifact, install it on Windows, and
+repeat the focus test above. This installer keeps recording and settings
+controls disabled and does not start the daemon. It is unsigned, so Windows may
+show a publisher warning; it is a private test build, not the public download.
+
 After the manual focus test passes, run the **Windows installer preview and
 release** workflow from GitHub Actions and select `yes` for its focus-test
 confirmation. It builds an NSIS setup executable containing the Tauri UI and a

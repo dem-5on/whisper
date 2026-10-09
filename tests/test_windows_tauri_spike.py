@@ -128,6 +128,18 @@ def test_focus_test_runbook_checks_mouse_hide_without_activating_the_flyout():
     assert "mouse controls respond without activating the flyout" in readme
 
 
+def test_focus_test_installer_is_available_without_approving_the_focus_gate():
+    workflow = (ROOT / ".github/workflows/windows-focus-test-installer.yml").read_text()
+    readme = (ROOT / "windows-app/README.md").read_text()
+
+    assert "workflow_dispatch" in workflow
+    assert "focus_test_passed" not in workflow
+    assert "--features focus-test --no-sign" in workflow
+    assert "--features packaged-daemon" not in workflow
+    assert "whisper-windows-focus-test-installer" in workflow
+    assert "does not start the daemon" in readme
+
+
 def test_tray_visual_state_tracks_recording_status():
     rust = (ROOT / "windows-app/src-tauri/src/main.rs").read_text()
     frontend = (ROOT / "windows-app/src/main.js").read_text()
