@@ -9,6 +9,7 @@ permissions:
 jobs:
   focus-test-installer:
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       PYTHONUTF8: "1"
     steps:
@@ -60,6 +61,7 @@ jobs:
           "$($Hash.Hash)  $($Installers[0].Name)" | Set-Content -LiteralPath "$($Installers[0].FullName).sha256" -Encoding ascii
           Write-Host "Verified $($Installers[0].Name) ($($Installers[0].Length) bytes, SHA-256 $($Hash.Hash))."
       - name: Smoke-test focus-test install and uninstall
+        timeout-minutes: 5
         shell: pwsh
         run: |
           $Installer = Get-ChildItem windows-app/src-tauri/target/release/bundle/nsis -Filter '*.exe' -File | Select-Object -First 1
@@ -119,6 +121,7 @@ jobs:
           }
           Write-Host 'Focus-test per-user install, app launch, no-daemon safeguard, and uninstall passed.'
       - name: Upload focus-test installer
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: whisper-windows-focus-test-installer
