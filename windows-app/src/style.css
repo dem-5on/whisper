@@ -102,7 +102,7 @@ button:focus-visible { outline: 2px solid #b5d2ff; outline-offset: 3px; }
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
+  min-height: 40px;
   padding: 0 6px;
   border: 1px solid #62636b;
   border-radius: 24px;
@@ -118,17 +118,17 @@ button:focus-visible { outline: 2px solid #b5d2ff; outline-offset: 3px; }
 .copy-action { grid-column: 1 / -1; }
 button:disabled { opacity: 0.72; }
 
-.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 24px; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
 .tile {
   display: flex;
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 64px;
+  min-height: 48px;
   padding: 0 0 0 8px;
   overflow: hidden;
   border: 0;
-  border-radius: 32px;
+  border-radius: 24px;
   color: #fff;
   text-align: left;
   background: #2878f0;
@@ -145,12 +145,12 @@ button:disabled { opacity: 0.72; }
   display: grid;
   width: 26px;
   height: 100%;
-  min-height: 64px;
+  min-height: 48px;
   place-items: center;
   margin-left: auto;
   border-left: 1px solid #ffffff30;
   background: #ffffff26;
-  font-size: 28px;
+  font-size: 24px;
 }
 .chooser {
   margin-top: 14px;
