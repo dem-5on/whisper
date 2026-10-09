@@ -70,8 +70,14 @@ jobs:
           $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Whisper\Whisper.lnk'
           $UninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
-          $Setup = Start-Process -FilePath $Installer.FullName -ArgumentList '/S' -Wait -PassThru
+          Write-Host 'Starting silent Whisper setup.'
+          $Setup = Start-Process -FilePath $Installer.FullName -ArgumentList '/S' -PassThru
+          if (-not $Setup.WaitForExit(90000)) {
+            Stop-Process -Id $Setup.Id -Force -ErrorAction SilentlyContinue
+            throw 'Silent setup did not exit within 90 seconds.'
+          }
           if ($Setup.ExitCode -ne 0) { throw "Silent setup failed with exit code $($Setup.ExitCode)." }
+          Write-Host 'Silent setup completed; verifying registration and app launch.'
           $AutoStart = (Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper
           if (-not $AutoStart -or $AutoStart -notlike '*whisper-windows-ui.exe*') {
             throw 'Setup did not register Whisper to start at sign-in.'
@@ -113,8 +119,14 @@ jobs:
           if (-not $Uninstaller -or -not (Test-Path -LiteralPath $Uninstaller -PathType Leaf)) {
             throw 'The registered Whisper uninstaller could not be located.'
           }
-          $Removal = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -Wait -PassThru
+          Write-Host 'Starting silent Whisper uninstall.'
+          $Removal = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -PassThru
+          if (-not $Removal.WaitForExit(90000)) {
+            Stop-Process -Id $Removal.Id -Force -ErrorAction SilentlyContinue
+            throw 'Silent uninstall did not exit within 90 seconds.'
+          }
           if ($Removal.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($Removal.ExitCode)." }
+          Write-Host 'Silent uninstall completed; verifying cleanup.'
           if (Test-Path -LiteralPath $AppPath) { throw 'Uninstall left the Whisper app executable behind.' }
           if ((Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
             throw 'Uninstall left Whisper in the Windows sign-in startup registry.'

@@ -137,6 +137,9 @@ def test_focus_test_installer_is_available_without_approving_the_focus_gate():
     assert "--features focus-test --no-sign" in workflow
     assert "--features packaged-daemon" not in workflow
     assert "whisper-windows-focus-test-installer" in workflow
+    assert "WaitForExit(90000)" in workflow
+    assert "Silent uninstall did not exit within 90 seconds." in workflow
+    assert "if: always()" in workflow
     assert "does not start the daemon" in readme
 
 
