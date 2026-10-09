@@ -96,14 +96,28 @@ button:focus-visible { outline: 2px solid #b5d2ff; outline-offset: 3px; }
 .error { margin: -8px 0 15px; overflow-wrap: anywhere; color: #ff8c8c; font-size: 12px; line-height: 1.4; }
 .error[data-success="true"] { color: #58d5a0; }
 .state[data-connected="true"] .state-dot { background: #56d69a; }
+.reconnect {
+  margin: -12px 0 14px;
+  padding: 2px 0;
+  border: 0;
+  color: #8fb8ff;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.reconnect[hidden] { display: none; }
 .state[data-recording="true"] .state-dot { background: #ff6666; box-shadow: 0 0 0 4px #ff666626; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .action {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   min-height: 40px;
   padding: 0 6px;
+  overflow: hidden;
   border: 1px solid #62636b;
   border-radius: 24px;
   color: #f2f2f4;
@@ -111,11 +125,12 @@ button:focus-visible { outline: 2px solid #b5d2ff; outline-offset: 3px; }
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .icon { flex: 0 0 auto; width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .action .icon { margin-right: 8px; }
 .action.primary { border-color: #66a0ff; background: #2878f0; }
-.copy-action { grid-column: 1 / -1; }
+.session-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
 button:disabled { opacity: 0.72; }
 
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 20px; }
@@ -215,14 +230,6 @@ button:disabled { opacity: 0.72; }
 .live-note, .live-transcript { margin: 8px 0 0; color: #9697a0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .live-transcript { max-height: 96px; overflow: auto; color: #c5c5cc; white-space: pre-wrap; }
 .footer-actions { margin-top: 14px; }
-.retry-tile {
-  border: 1px solid #6fa5ff;
-  color: white;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.retry-tile:disabled { border-color: #5a5b63; color: #b5b5bd; background: #393a42; opacity: 1; }
 .transcript { display: -webkit-box; margin: 12px 2px 0; overflow: hidden; color: #aaaab2; font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
 .shortcut-note { margin: 18px 0 0; color: #9697a0; font-size: 11px; text-align: center; }
 .hint {

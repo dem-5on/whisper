@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { deriveControlState } from "./control-state.js";
+import { formatRecordingText, sessionResetPatch } from "./status-view.js";
 import { microphoneLabel } from "./display.js";
 import "./style.css";
 
@@ -55,6 +56,7 @@ function setActionContent(button, iconName, label) {
 
 const ui = {
   connection: document.querySelector("#connection"),
+  reconnect: document.querySelector("#reconnect"),
   focusResult: document.querySelector("#focus-result"),
   error: document.querySelector("#error"),
   toggle: document.querySelector("#toggle"),
@@ -77,6 +79,8 @@ const ui = {
 let currentStatus = null;
 let currentChooser = null;
 let reconnectDelay = 400;
+let connecting = false;
+let unavailableDetail = "";
 let requestSequence = 0;
 let connection = null;
 let trayVisualState = null;
@@ -91,6 +95,7 @@ function setConnection(text, connected = false) {
   dot.className = "state-dot";
   ui.connection.append(dot, document.createTextNode(text));
   ui.connection.dataset.connected = String(connected);
+  ui.reconnect.hidden = connected;
   const controls = deriveControlState(currentStatus, connected, focusTestBuild);
   ui.toggle.disabled = controls.toggleDisabled;
   ui.cancel.disabled = controls.cancelDisabled;
@@ -146,6 +151,8 @@ async function loadBuildMode() {
 
 function updateStatus(status) {
   if (!status || typeof status !== "object") return;
+  const reset = sessionResetPatch(currentStatus?.state, status.state);
+  if (reset) currentStatus = { ...currentStatus, ...reset };
   currentStatus = { ...currentStatus, ...status };
   const active = connection?.readyState === WebSocket.OPEN;
   const state = String(currentStatus.state || "IDLE");
@@ -174,6 +181,9 @@ function updateStatus(status) {
   document.querySelector("#provider-value").textContent = providerLabel(currentStatus.backend);
   document.querySelector("#model-value").textContent = currentStatus.model || "base";
   document.querySelector("#mic-value").textContent = microphoneLabel(currentStatus.mic, microphoneSources);
+  setTileTitle("provider", providerLabel(currentStatus.backend));
+  setTileTitle("model", currentStatus.model || "base");
+  setTileTitle("mic", microphoneLabel(currentStatus.mic, microphoneSources));
   ui.retry.disabled = controls.retryDisabled;
   ui.copy.disabled = controls.copyDisabled;
   ui.streaming.checked = currentStatus.streaming !== false;
@@ -188,11 +198,14 @@ function updateStatus(status) {
   ui.liveNote.hidden = !ui.liveNote.textContent;
   const liveText = String(currentStatus.live_text || "").trim();
   if (recording) {
-    ui.liveTranscript.textContent = liveText || (currentStatus.live_decode_error
-      ? `Live decode retrying: ${currentStatus.live_decode_error}`
-      : currentStatus.streaming !== false && !currentStatus.live_available
-        ? currentStatus.live_unavailable_reason || "Live partials unavailable."
-        : "Listening… press Stop recording when done.");
+    ui.liveTranscript.textContent = formatRecordingText({
+      liveText,
+      hearing: currentStatus.speech_active === true,
+      decodeError: currentStatus.live_decode_error || "",
+      streaming: currentStatus.streaming !== false,
+      liveAvailable: currentStatus.live_available !== false,
+      unavailableReason: currentStatus.live_unavailable_reason || "",
+    });
     ui.liveTranscript.hidden = false;
   } else if (busy) {
     ui.liveTranscript.textContent = liveText ? `Finalizing: ${liveText}` : "Transcribing… full text appears here when done.";
@@ -210,14 +223,26 @@ function providerLabel(provider) {
   return PROVIDERS.find(([id]) => id === provider)?.[1] || provider || "Local";
 }
 
+function setTileTitle(setting, value) {
+  // Values are ellipsized in CSS; the title keeps the full id reachable.
+  document.querySelector(`.tile[data-setting="${setting}"]`)?.setAttribute("title", String(value ?? ""));
+}
+
 function updateMicrophoneSources(sources) {
   microphoneSources = Array.isArray(sources) ? sources : [];
   if (currentStatus) {
-    document.querySelector("#mic-value").textContent = microphoneLabel(currentStatus.mic, microphoneSources);
+    const label = microphoneLabel(currentStatus.mic, microphoneSources);
+    document.querySelector("#mic-value").textContent = label;
+    setTileTitle("mic", label);
   }
 }
 
 async function connect() {
+  if (connecting && connection?.readyState === WebSocket.CONNECTING) return;
+  if (connection && connection.readyState !== WebSocket.OPEN) {
+    try { connection.close(); } catch { /* replaced below */ }
+  }
+  connecting = true;
   let socketUrl = SOCKET_URL;
   try {
     const token = await invoke("websocket_token");
@@ -228,7 +253,9 @@ async function connect() {
   connection = new WebSocket(socketUrl);
   setConnection("Connecting to Whisper…");
   connection.addEventListener("open", () => {
+    connecting = false;
     reconnectDelay = 400;
+    unavailableDetail = "";
     setConnection("Connected", true);
     request("status").catch(() => {});
     request("subscribe", {
@@ -261,16 +288,22 @@ async function connect() {
     if (message.state) updateStatus(message);
   });
   connection.addEventListener("close", () => {
+    connecting = false;
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timeout);
       waiter.reject(new Error("Whisper daemon disconnected"));
     }
     pending.clear();
-    setConnection("Whisper daemon unavailable");
+    setConnection(unavailableDetail || "Whisper daemon unavailable");
     window.setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(5000, reconnectDelay * 1.7);
   });
   connection.addEventListener("error", () => connection.close());
+}
+
+function requestReconnect() {
+  reconnectDelay = 400;
+  void connect();
 }
 
 function request(command, parameters = {}) {
@@ -464,10 +497,15 @@ listen("daemon-process", ({ payload }) => {
   if (!couldNotStart && !stopped) return;
   const prefix = couldNotStart ? "unavailable:" : "stopped:";
   const reason = payload.slice(prefix.length).trim();
+  unavailableDetail = couldNotStart
+    ? `Transcription service unavailable${reason ? `: ${reason}` : ""}`
+    : `Transcription service stopped${reason ? ` (${reason})` : ""}`;
   showError(couldNotStart
     ? `Whisper could not start its transcription service${reason ? `: ${reason}` : ". It will retry automatically."}`
     : `Whisper's transcription service stopped unexpectedly${reason ? ` (${reason})` : ""}. It will restart automatically.`);
+  if (connection?.readyState !== WebSocket.OPEN) setConnection(unavailableDetail);
 });
+ui.reconnect.addEventListener("click", requestReconnect);
 listen("focus-check", ({ payload }) => {
   if (!focusTestBuild) return;
   const preserved = payload === true;
@@ -491,12 +529,7 @@ listen("cancel-recording", () => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeChooser();
 });
-window.setInterval(() => {
-  if (currentStatus?.state === "RECORDING") {
-    currentStatus.recording_elapsed = Number(currentStatus.recording_elapsed || 0) + 0.25;
-    updateStatus(currentStatus);
-  }
-}, 250);
-
+// The elapsed timer renders from daemon status pushes (the bridge sends them
+// every 0.5 s while recording); no locally estimated clock here.
 connect();
 loadBuildMode();
