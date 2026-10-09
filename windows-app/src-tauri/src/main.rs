@@ -151,13 +151,11 @@ fn open_diagnostics_folder() -> Result<(), String> {
 fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, SWP_NOSIZE,
-        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW,
     };
 
-    let hwnd = window
-        .hwnd()
-        .ok_or_else(|| std::io::Error::other("Could not access the Whisper panel window"))?;
+    let hwnd = window.hwnd()?;
     let required = WS_EX_NOACTIVATE.0 as isize | WS_EX_TOOLWINDOW.0 as isize;
     unsafe {
         let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
@@ -174,7 +172,7 @@ fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn s
             0,
             SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOSIZE,
         )
-        .ok_or_else(std::io::Error::last_os_error)?;
+        .ok()?;
     }
     let actual = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
     if actual & required != required {
