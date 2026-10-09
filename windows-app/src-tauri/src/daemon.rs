@@ -7,7 +7,10 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
-use tauri_plugin_shell::{process::{CommandChild, CommandEvent}, ShellExt};
+use tauri_plugin_shell::{
+    process::{CommandChild, CommandEvent},
+    ShellExt,
+};
 
 #[derive(Clone, Default)]
 pub struct DaemonSupervisor {
@@ -90,10 +93,7 @@ pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: 
                                             status.signal.map(|signal| format!("signal {signal}"))
                                         })
                                         .unwrap_or_else(|| "unknown reason".to_string());
-                                    let _ = app.emit(
-                                        "daemon-process",
-                                        format!("stopped: {detail}"),
-                                    );
+                                    let _ = app.emit("daemon-process", format!("stopped: {detail}"));
                                 }
                                 break;
                             }

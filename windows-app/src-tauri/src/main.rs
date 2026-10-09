@@ -6,17 +6,18 @@ mod daemon;
 #[cfg(all(feature = "focus-test", feature = "packaged-daemon"))]
 compile_error!("focus-test builds must not start the packaged transcription daemon");
 
+use std::{
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
     webview::WebviewWindow,
     Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, State,
-};
-use std::{
-    fs,
-    path::Path,
-    sync::{Arc, Mutex},
 };
 
 const PANEL_WIDTH: i32 = 380;
@@ -99,15 +100,16 @@ fn load_or_create_websocket_token(path: &Path) -> Result<String, String> {
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
-            return Err(format!("Could not read Whisper's local connection token: {error}"));
+            return Err(format!(
+                "Could not read Whisper's local connection token: {error}"
+            ));
         }
     }
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| {
-                format!("Could not prepare Whisper's local settings folder: {error}")
-            })?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("Could not prepare Whisper's local settings folder: {error}")
+        })?;
     }
     let token = uuid::Uuid::new_v4().to_string();
     fs::write(path, &token)
@@ -153,7 +155,9 @@ fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn s
         WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
-    let hwnd = window.hwnd()?;
+    let hwnd = window
+        .hwnd()
+        .ok_or_else(|| std::io::Error::other("Could not access the Whisper panel window"))?;
     let required = WS_EX_NOACTIVATE.0 as isize | WS_EX_TOOLWINDOW.0 as isize;
     unsafe {
         let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
@@ -163,14 +167,14 @@ fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn s
     unsafe {
         SetWindowPos(
             hwnd,
-            HWND_TOPMOST,
+            Some(HWND_TOPMOST),
             0,
             0,
             0,
             0,
             SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOSIZE,
         )
-        .ok()?;
+        .ok_or_else(std::io::Error::last_os_error)?;
     }
     let actual = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
     if actual & required != required {
@@ -220,7 +224,11 @@ fn panel_position(
 }
 
 fn panel_height_for_monitor(requested: f64, monitor_height: u32, scale: f64, gap: i32) -> f64 {
-    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
     let usable_height = (monitor_height as f64 - 2.0 * gap as f64) / scale;
     requested.min(usable_height.max(1.0))
 }
@@ -339,9 +347,8 @@ fn emit_focus_check(window: &WebviewWindow, foreground_before: Option<isize>) {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(200));
             let visible = window.is_visible().unwrap_or(false);
-            let preserved = visible
-                && foreground_before.is_some()
-                && foreground_before == foreground_window();
+            let preserved =
+                visible && foreground_before.is_some() && foreground_before == foreground_window();
             let _ = window.emit("focus-check", preserved);
         });
     }
@@ -385,7 +392,7 @@ fn present_panel(window: &WebviewWindow, x: i32, y: i32) {
         unsafe {
             let _ = SetWindowPos(
                 hwnd,
-                HWND_TOPMOST,
+                Some(HWND_TOPMOST),
                 x,
                 y,
                 0,
@@ -404,10 +411,7 @@ fn present_panel(window: &WebviewWindow, x: i32, y: i32) {
 
 #[cfg(windows)]
 fn cursor_position() -> Option<(i32, i32)> {
-    use windows::{
-        Win32::Foundation::POINT,
-        Win32::UI::WindowsAndMessaging::GetCursorPos,
-    };
+    use windows::{Win32::Foundation::POINT, Win32::UI::WindowsAndMessaging::GetCursorPos};
 
     let mut point = POINT::default();
     unsafe { GetCursorPos(&mut point).ok()? };
@@ -456,12 +460,12 @@ fn main() {
             .plugin(tauri_plugin_clipboard_manager::init())
             .plugin(
                 tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |app, pressed, event| {
-                    if pressed == &handler_shortcut && event.state() == ShortcutState::Pressed {
-                        let _ = app.emit("recording-hotkey", ());
-                    }
-                })
-                .build(),
+                    .with_handler(move |app, pressed, event| {
+                        if pressed == &handler_shortcut && event.state() == ShortcutState::Pressed {
+                            let _ = app.emit("recording-hotkey", ());
+                        }
+                    })
+                    .build(),
             )
     };
     #[cfg(not(feature = "packaged-daemon"))]
@@ -478,14 +482,16 @@ fn main() {
                 app.handle().exit(0);
                 return Ok(());
             }
-            let window = app.get_webview_window("main").expect("main panel window is configured");
+            let window = app
+                .get_webview_window("main")
+                .expect("main panel window is configured");
             let token_path = app
                 .path()
                 .app_data_dir()
                 .map_err(std::io::Error::other)?
                 .join("ui-token");
-            let websocket_token = load_or_create_websocket_token(&token_path)
-                .map_err(std::io::Error::other)?;
+            let websocket_token =
+                load_or_create_websocket_token(&token_path).map_err(std::io::Error::other)?;
             app.manage(WebsocketToken(websocket_token.clone()));
             prepare_non_activating_window(&window)?;
             apply_panel_backdrop(&window);
