@@ -172,7 +172,8 @@ fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn s
             0,
             SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
         )
-        .ok_or(std::io::Error::last_os_error())?;
+        .ok()
+        .ok_or_else(std::io::Error::last_os_error)?;
     }
     let actual = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
     if actual & required != required {
