@@ -151,7 +151,7 @@ fn open_diagnostics_folder() -> Result<(), String> {
 fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_NOACTIVATE,
         WS_EX_TOOLWINDOW,
     };
 
@@ -170,9 +170,9 @@ fn prepare_non_activating_window(window: &WebviewWindow) -> Result<(), Box<dyn s
             0,
             0,
             0,
-            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOSIZE,
+            SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
         )
-        .ok()?;
+        .ok_or(std::io::Error::last_os_error())?;
     }
     let actual = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
     if actual & required != required {
