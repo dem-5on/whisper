@@ -470,7 +470,7 @@ def test_uninstaller_closes_the_resident_app_and_its_daemon_cleanly():
 
     assert 'const UNINSTALL_ARGUMENT: &str = "--whisper-uninstall"' in source
     assert "app.exit(0);" in source
-    assert "app.manage(daemon::DaemonSupervisor::default());" in source
+    assert "std::process::exit(0)" in source
     assert "request_shutdown" in daemon
 
 
