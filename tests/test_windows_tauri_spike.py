@@ -70,7 +70,7 @@ def test_windows_spike_applies_native_no_activation_flags():
     assert "SWP_NOACTIVATE" in source
     assert "SWP_SHOWWINDOW" in source
     assert "SWP_FRAMECHANGED" in source
-    assert "SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOSIZE" in source
+    assert "SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE" in source
     assert "GetForegroundWindow" in source
     assert "monitor_foreground" in source
     assert "foreground_window() != expected" in source
