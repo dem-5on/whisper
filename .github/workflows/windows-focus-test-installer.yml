@@ -109,6 +109,11 @@ jobs:
             if ([DateTime]::UtcNow -ge $Deadline) { throw 'Whisper did not exit before uninstall.' }
             Start-Sleep -Milliseconds 250
           }
+          # Let Windows release the executable handle before NSIS deletes it.
+          Start-Sleep -Seconds 3
+          if (Get-Process -Name 'whisper-windows-ui' -ErrorAction SilentlyContinue) {
+            throw 'Whisper relaunched before uninstall.'
+          }
 
           $UninstallEntry = Get-ChildItem -Path $UninstallRoot -ErrorAction SilentlyContinue |
             ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
@@ -127,7 +132,18 @@ jobs:
           }
           if ($Removal.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($Removal.ExitCode)." }
           Write-Host 'Silent uninstall completed; verifying cleanup.'
-          if (Test-Path -LiteralPath $AppPath) { throw 'Uninstall left the Whisper app executable behind.' }
+          # NSIS releases locks asynchronously; poll briefly before failing.
+          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while ((Test-Path -LiteralPath $AppPath) -and ([DateTime]::UtcNow -lt $Deadline)) {
+            Start-Sleep -Milliseconds 500
+          }
+          if (Test-Path -LiteralPath $AppPath) {
+            Write-Host "UninstallString: $($UninstallEntry.UninstallString)"
+            Write-Host "AppPath: $AppPath"
+            Get-ChildItem -Path (Split-Path -Parent $AppPath) -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "Remaining: $($_.FullName)" }
+            Get-Process -Name 'whisper-windows-ui' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host " lingering UI pid $($_.Id)" }
+            throw 'Uninstall left the Whisper app executable behind.'
+          }
           if ((Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
             throw 'Uninstall left Whisper in the Windows sign-in startup registry.'
           }

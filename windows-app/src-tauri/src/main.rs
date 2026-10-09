@@ -474,12 +474,13 @@ fn main() {
     builder
         .setup(move |app| {
             if std::env::args().any(|argument| argument == UNINSTALL_ARGUMENT) {
-                // If no resident instance exists, let the installer launch the
-                // app once, but don't create a tray icon or start the daemon.
-                #[cfg(feature = "packaged-daemon")]
-                app.manage(daemon::DaemonSupervisor::default());
-                app.handle().exit(0);
-                return Ok(());
+                // Uninstall helper (NSIS PREUNINSTALL ExecWait). Exit
+                // immediately without initializing windows, tray, or daemon so
+                // the uninstaller never waits on a locked executable. The
+                // resident instance (if any) is signaled separately via the
+                // single-instance plugin in packaged builds, or force-closed
+                // by the smoke test in focus-test builds.
+                std::process::exit(0);
             }
             let window = app
                 .get_webview_window("main")
