@@ -45,7 +45,7 @@ def main() -> None:
             if icon is not None:
                 state = response.get("state", "unknown").replace("_", " ").title()
                 icon.notify(f"Whisper: {state}", "Whisper")
-        except (OSError, ValueError):
+        except (OSError, EOFError, ValueError):
             if icon is not None:
                 icon.notify("The Whisper daemon is unavailable.", "Whisper")
 
@@ -98,7 +98,7 @@ def main() -> None:
             try:
                 status = request("status", timeout=1.0)
                 icon.title = f"Whisper — {status.get('state', 'unknown').replace('_', ' ').title()}"
-            except (OSError, ValueError):
+            except (OSError, EOFError, ValueError):
                 icon.title = "Whisper — daemon unavailable"
             time.sleep(2)
 

@@ -82,11 +82,8 @@ def main() -> None:
     if payload["command"] == "set_streaming" and args.enabled is not None:
         payload["enabled"] = args.enabled
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.connect(str(args.socket))
-            client.sendall((json.dumps(payload) + "\n").encode())
-            response = json.loads(client.makefile("rb").readline(65536))
-    except (OSError, json.JSONDecodeError):
+        response = _request_daemon(args, payload)
+    except (OSError, EOFError, json.JSONDecodeError, ValueError):
         print("whisper: daemon unavailable", file=sys.stderr)
         raise SystemExit(1)
     if response.get("ok") != "true":
@@ -120,6 +117,14 @@ def _stream_events(args: argparse.Namespace) -> int:
     if args.session:
         payload["session_id"] = args.session
     try:
+        if os.name == "nt":
+            from .platforms.windows.ipc import stream
+
+            for event in stream(payload):
+                if not event.get("subscribed"):
+                    print(json.dumps(event))
+                    sys.stdout.flush()
+            return 0
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.connect(str(args.socket))
             client.sendall((json.dumps(payload) + "\n").encode())
@@ -142,6 +147,17 @@ def _stream_events(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def _request_daemon(args: argparse.Namespace, payload: dict[str, object]) -> dict[str, object]:
+    if os.name == "nt":
+        from .platforms.windows.ipc import request
+
+        return request(payload)
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(str(args.socket))
+        client.sendall((json.dumps(payload) + "\n").encode())
+        return json.loads(client.makefile("rb").readline(65536))
 
 
 def _set_key(args: argparse.Namespace) -> int:

@@ -3,11 +3,12 @@ from __future__ import annotations
 import sys
 import unittest
 import ctypes
+import threading
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
 from transcriber.audio import AudioError, AudioSource, make_recorder
-from transcriber.config import AudioConfig, DeliveryConfig
+from transcriber.config import AudioConfig, Config, DeliveryConfig
 from transcriber.delivery import _detect_wayland, make_delivery
 from transcriber.platforms.windows.audio import WindowsRecorder, list_sources as windows_list_sources
 from transcriber.platforms.windows.delivery import (
@@ -143,38 +144,21 @@ class WindowsBackendTests(unittest.TestCase):
         self.assertIsNone(recorder._writer)
         self.assertFalse(audio_path.exists())
 
-    @unittest.skipUnless(sys.platform == "win32", "Windows AF_UNIX socket smoke test")
-    def test_windows_unix_socket_server_handles_shutdown(self) -> None:
-        import json
-        import socket
-        import tempfile
-        import threading
-        from pathlib import Path
-
-        from transcriber.daemon import UnixServer, _RequestHandler
+    @unittest.skipUnless(sys.platform == "win32", "Windows named-pipe smoke test")
+    def test_windows_named_pipe_server_handles_commands_and_shutdown(self) -> None:
+        from transcriber.platforms.windows.ipc import WindowsPipeServer, request
 
         class FakeDaemon:
             def command(self, command, _params):
                 return {"ok": "true", "state": "IDLE", "command": command}
 
-        endpoint = Path(tempfile.gettempdir()) / "whisper-test.sock"
-        endpoint.unlink(missing_ok=True)
-        server = UnixServer(str(endpoint), _RequestHandler)
-        server.daemon = FakeDaemon()
-        serving = threading.Thread(target=server.serve_forever)
+        server = WindowsPipeServer(FakeDaemon())
+        serving = threading.Thread(target=server.serve_forever, daemon=True)
         serving.start()
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(5)
-                client.connect(str(endpoint))
-                client.sendall(b'{"command":"status"}\n')
-                response = json.loads(client.makefile("rb").readline())
+            response = request({"command": "status"})
             self.assertEqual(response["state"], "IDLE")
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(5)
-                client.connect(str(endpoint))
-                client.sendall(b'{"command":"shutdown"}\n')
-                response = json.loads(client.makefile("rb").readline())
+            response = request({"command": "shutdown"})
             self.assertEqual(response["state"], "STOPPING")
             serving.join(timeout=5)
             self.assertFalse(serving.is_alive())
@@ -183,27 +167,24 @@ class WindowsBackendTests(unittest.TestCase):
                 server.shutdown()
                 serving.join(timeout=5)
             server.server_close()
-            endpoint.unlink(missing_ok=True)
 
-    @unittest.skipUnless(sys.platform == "win32", "Windows AF_UNIX sidecar-adoption integration test")
-    def test_sidecar_detects_an_existing_whisper_daemon_without_replacing_its_socket(self) -> None:
-        from transcriber.daemon import DaemonAlreadyRunning, UnixServer, _RequestHandler, run_server
+    @unittest.skipUnless(sys.platform == "win32", "Windows named-pipe adoption integration test")
+    def test_sidecar_adopts_an_existing_daemon_without_replacing_its_pipe(self) -> None:
+        from transcriber.daemon import DaemonAlreadyRunning, default_socket_path, run_server
+        from transcriber.platforms.windows.ipc import WindowsPipeServer
 
         class FakeDaemon:
             def command(self, command, _params):
                 return {"ok": "true", "state": "IDLE", "command": command}
 
-        with tempfile.TemporaryDirectory() as temp_root:
-            endpoint = Path(temp_root) / "whisper.sock"
-            server = UnixServer(str(endpoint), _RequestHandler)
-            server.daemon = FakeDaemon()  # type: ignore[assignment]
-            serving = threading.Thread(target=server.serve_forever, daemon=True)
-            serving.start()
-            try:
-                with self.assertRaises(DaemonAlreadyRunning):
-                    run_server(Config(), endpoint, ui_token="per-user-token")
-                self.assertTrue(endpoint.exists())
-            finally:
-                server.shutdown()
-                serving.join(timeout=5)
-                server.server_close()
+        server = WindowsPipeServer(FakeDaemon())
+        serving = threading.Thread(target=server.serve_forever, daemon=True)
+        serving.start()
+        try:
+            with self.assertRaises(DaemonAlreadyRunning):
+                run_server(Config(), default_socket_path(), ui_token="per-user-token")
+            self.assertEqual(server.daemon.command("status", {})["state"], "IDLE")
+        finally:
+            server.shutdown()
+            serving.join(timeout=5)
+            server.server_close()

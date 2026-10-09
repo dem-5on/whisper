@@ -1261,17 +1261,15 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             _ = revision
 
 
-# ``socketserver.ThreadingUnixStreamServer`` is not exposed by Python on
-# Windows.  ``TCPServer`` already implements the stream-server mechanics; by
-# overriding its address family we can keep using AF_UNIX sockets on platforms
-# that support them without depending on the Unix-only convenience subclass.
-class UnixServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    address_family = getattr(socket, "AF_UNIX", socket.AF_INET)
-    daemon: TranscriberDaemon
-    daemon_threads = True
+if hasattr(socket, "AF_UNIX"):
+    class UnixServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon: TranscriberDaemon
+        daemon_threads = True
+else:  # Windows uses its own named-pipe transport.
+    UnixServer = None  # type: ignore[assignment,misc]
 
 
-def _schedule_server_shutdown(server: UnixServer) -> None:
+def _schedule_server_shutdown(server: Any) -> None:
     """Stop serving from another thread to avoid socketserver's deadlock."""
     threading.Thread(
         target=server.shutdown,
@@ -1286,10 +1284,14 @@ def run_server(
     config_path: Path | None = None,
     ui_token: str | None = None,
 ) -> None:
+    if os.name == "nt":
+        _run_windows_server(config, config_path, ui_token)
+        return
+
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         # Do not blindly delete a live daemon's IPC endpoint.
-        if os.name != "nt" and not stat.S_ISSOCK(socket_path.stat().st_mode):
+        if not stat.S_ISSOCK(socket_path.stat().st_mode):
             raise RuntimeError(f"Refusing to replace non-socket path {socket_path}")
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
@@ -1317,14 +1319,7 @@ def run_server(
     daemon._warm_model_async()  # preload + warm the local model for the daemon's lifetime
     server = UnixServer(str(socket_path), _RequestHandler)
     server.daemon = daemon
-    if os.name != "nt":
-        os.chmod(socket_path, 0o600)
-    else:
-        # Keep the Unix-socket command protocol unchanged; expose the same
-        # daemon state/commands to the Windows WebView over loopback WebSocket.
-        from .platforms.windows.websocket import start_server as start_ui_websocket
-
-        start_ui_websocket(daemon, auth_token=ui_token)
+    os.chmod(socket_path, 0o600)
 
     def stop_server(_signal: int, _frame: Any) -> None:
         # ``shutdown`` must run from another thread than ``serve_forever``;
@@ -1340,6 +1335,43 @@ def run_server(
         daemon.shutdown()
         server.server_close()
         socket_path.unlink(missing_ok=True)
+
+
+def _run_windows_server(config: Config, config_path: Path | None, ui_token: str | None) -> None:
+    """Run Windows IPC over named pipes; Unix-socket logic stays platform-local."""
+    from .platforms.windows.ipc import WindowsPipeServer, request as pipe_request
+
+    try:
+        response = pipe_request({"command": "status"})
+    except (OSError, EOFError, ValueError):
+        response = None
+    if response is not None:
+        if not _is_daemon_status_response(response):
+            raise RuntimeError("Windows IPC endpoint is in use but did not return Whisper status")
+        message = "Whisper daemon already appears to be running"
+        if _existing_daemon_exit_code(os.name, ui_token) == 75:
+            raise DaemonAlreadyRunning(message)
+        raise RuntimeError(message)
+
+    daemon = TranscriberDaemon(config, config_path=config_path)
+    daemon._warm_model_async()
+    server = WindowsPipeServer(daemon)
+    if ui_token:
+        from .platforms.windows.websocket import start_server as start_ui_websocket
+
+        start_ui_websocket(daemon, auth_token=ui_token)
+
+    def stop_server(_signal: int, _frame: Any) -> None:
+        threading.Thread(target=server.shutdown, name="transcriber-shutdown", daemon=True).start()
+
+    signal.signal(signal.SIGTERM, stop_server)
+    signal.signal(signal.SIGINT, stop_server)
+    LOG.info("Windows daemon listening on authenticated named pipe")
+    try:
+        server.serve_forever()
+    finally:
+        daemon.shutdown()
+        server.server_close()
 
 
 def main() -> None:

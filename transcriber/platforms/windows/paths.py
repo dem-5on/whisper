@@ -16,5 +16,5 @@ def data_dir() -> Path:
 
 
 def socket_path() -> Path:
-    # Windows AF_UNIX paths have a short maximum; use the user's temp folder.
+    """Compatibility placeholder for shared CLI arguments; IPC uses a named pipe."""
     return Path(tempfile.gettempdir()) / "whisper-daemon.sock"

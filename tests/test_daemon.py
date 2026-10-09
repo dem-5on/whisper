@@ -260,13 +260,17 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(self.daemon.command("last")["transcript"], "secret text")
 
     def test_set_backend_rejects_mid_run_and_invalid(self) -> None:
-        self.assertEqual(self.daemon.command("set_backend", {"backend": "groq"})["backend"], "groq")
-        bad = self.daemon.command("set_backend", {"backend": "nope"})
-        self.assertEqual(bad["ok"], "false")
-        self.daemon.command("toggle")
-        busy = self.daemon.command("set_backend", {"backend": "local"})
-        self.assertEqual(busy["ok"], "false")
-        self.daemon.command("cancel")
+        # Switching to a provider that disables streaming recreates the audio
+        # recorder. Keep the fake recorder in place so this state-machine test
+        # does not depend on a physical microphone on Windows CI.
+        with patch("transcriber.daemon.make_recorder", return_value=self.recorder):
+            self.assertEqual(self.daemon.command("set_backend", {"backend": "groq"})["backend"], "groq")
+            bad = self.daemon.command("set_backend", {"backend": "nope"})
+            self.assertEqual(bad["ok"], "false")
+            self.daemon.command("toggle")
+            busy = self.daemon.command("set_backend", {"backend": "local"})
+            self.assertEqual(busy["ok"], "false")
+            self.daemon.command("cancel")
 
     def test_set_provider_alias_matches_set_backend(self) -> None:
         self.assertEqual(self.daemon.command("set_provider", {"provider": "groq"})["backend"], "groq")
