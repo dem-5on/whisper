@@ -90,6 +90,18 @@ class WindowsBackendTests(unittest.TestCase):
         finally:
             wav_path.unlink(missing_ok=True)
 
+    def test_recorder_constructor_failure_cleans_up_without_masking_device_error(self) -> None:
+        fake_sounddevice = MagicMock(
+            InputStream=MagicMock(side_effect=RuntimeError("no input device"))
+        )
+        with patch.dict(sys.modules, {"sounddevice": fake_sounddevice}):
+            recorder = WindowsRecorder(AudioConfig())
+            with self.assertRaisesRegex(AudioError, "Could not open Windows microphone: no input device"):
+                recorder.start()
+
+        self.assertIsNone(recorder._writer)
+        self.assertIsNone(recorder._path)
+
     def test_microphone_enumeration_marks_default_and_ignores_output_only(self) -> None:
         sounddevice = MagicMock(
             default=SimpleNamespace(device=(1, 1)),
@@ -172,3 +184,26 @@ class WindowsBackendTests(unittest.TestCase):
                 serving.join(timeout=5)
             server.server_close()
             endpoint.unlink(missing_ok=True)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows AF_UNIX sidecar-adoption integration test")
+    def test_sidecar_detects_an_existing_whisper_daemon_without_replacing_its_socket(self) -> None:
+        from transcriber.daemon import DaemonAlreadyRunning, UnixServer, _RequestHandler, run_server
+
+        class FakeDaemon:
+            def command(self, command, _params):
+                return {"ok": "true", "state": "IDLE", "command": command}
+
+        with tempfile.TemporaryDirectory() as temp_root:
+            endpoint = Path(temp_root) / "whisper.sock"
+            server = UnixServer(str(endpoint), _RequestHandler)
+            server.daemon = FakeDaemon()  # type: ignore[assignment]
+            serving = threading.Thread(target=server.serve_forever, daemon=True)
+            serving.start()
+            try:
+                with self.assertRaises(DaemonAlreadyRunning):
+                    run_server(Config(), endpoint, ui_token="per-user-token")
+                self.assertTrue(endpoint.exists())
+            finally:
+                server.shutdown()
+                serving.join(timeout=5)
+                server.server_close()

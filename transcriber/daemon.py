@@ -1,4 +1,4 @@
-"""Daemon state machine and Unix-socket service.
+"""Daemon state machine and local IPC services.
 
 Protocol (JSON per line, ``{"command": ...}``):
   toggle, cancel, status (legacy) plus retry/retranscribe, last, mics,
@@ -9,8 +9,8 @@ Backend/model/mic switches are persisted to config.yaml; API keys live in
 keys.env (loaded at startup, never logged). Status responses always include
 state, timing, backend, model, mic, key presence, last-run metadata, and the
 current live session (session_id, live_revision, committed/provisional text,
-speech_active) so the GNOME panel can render partial text from its normal
-poll loop; ``subscribe`` streams ``partial``/``committed``/``final``/
+speech_active) so desktop clients can render partial text from daemon state;
+``subscribe`` streams ``partial``/``committed``/``final``/
 ``speech_started``/``speech_ended`` events with session ID and revision for
 push-style clients. Only finalized transcripts are delivered to the focused
 app; partials stay in the panel/overlay.
@@ -22,6 +22,7 @@ import argparse
 import dataclasses
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import shutil
@@ -38,7 +39,7 @@ import re
 
 from . import __version__
 from .audio import list_sources, make_recorder
-from .config import Config, load_config, load_keys_env, resolve_config_path, save_config
+from .config import KEY_ENV, Config, load_config, load_keys_env, resolve_config_path, save_config, write_key
 from .delivery import make_delivery
 from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallbacks, RemoteLiveCallbacks, make_live_engine
 from .processing import process_transcript
@@ -55,6 +56,23 @@ _OPENAI_MODEL_PRESETS = ("gpt-transcribe", "gpt-4o-transcribe", "gpt-4o-mini-tra
 _GROQ_MODEL_FALLBACK = ("whisper-large-v3-turbo", "whisper-large-v3", "distil-whisper-large-v3-en")
 _OPENROUTER_MODEL_FALLBACK = ("openai/whisper-large-v3-turbo", "openai/whisper-large-v3", "openai/whisper-1")
 _MODEL_CACHE_TTL_SECONDS = 24 * 3600
+
+
+class DaemonAlreadyRunning(RuntimeError):
+    """A Tauri sidecar found the daemon left alive by a restarted UI shell."""
+
+
+def _existing_daemon_exit_code(platform_name: str, ui_token: str | None) -> int:
+    """Return the sidecar adoption sentinel only for authenticated Windows UI launches."""
+    return 75 if platform_name == "nt" and ui_token else 1
+
+
+def _is_daemon_status_response(response: Any) -> bool:
+    return (
+        isinstance(response, dict)
+        and response.get("ok") == "true"
+        and response.get("state") in {state.value for state in State}
+    )
 
 
 def default_socket_path() -> Path:
@@ -149,6 +167,8 @@ class TranscriberDaemon:
             return self._set_backend(str(params.get("backend", params.get("provider", ""))))
         if command == "set_model":
             return self._set_model(str(params.get("model", "")))
+        if command == "set_key":
+            return self._set_key(params.get("provider"), params.get("key"), params.get("clear", False))
         if command == "set_live_engine":
             return self._set_live_engine(str(params.get("engine", "")), params.get("server_url"))
         if command == "set_live_model":
@@ -167,6 +187,39 @@ class TranscriberDaemon:
             session_filter = params.get("session_id")
             return self._get_events(since_int, str(session_filter) if session_filter else None)
         return {**self._status_locked(), "ok": "false", "error": "Unknown command"}
+
+    def _set_key(self, provider: Any, raw_key: Any, clear: Any = False) -> dict[str, Any]:
+        """Persist one provider secret without returning or logging its contents."""
+        if not isinstance(provider, str) or provider not in KEY_ENV:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Choose a supported API-key provider"}
+        env_name = KEY_ENV[provider]
+        if clear is True:
+            value = None
+        elif isinstance(raw_key, str):
+            value = raw_key.strip()
+            if not value:
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": "Enter a non-empty API key"}
+            if len(value) > 4096 or any(character in value for character in "\r\n\0"):
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": "The API key has an invalid format"}
+        else:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Enter a non-empty API key"}
+
+        try:
+            with self._lock:
+                write_key(None, env_name, value)
+                if value is None:
+                    os.environ.pop(env_name, None)
+                else:
+                    os.environ[env_name] = value
+                LOG.info("API key %s for %s", "removed" if value is None else "updated", provider)
+                return self._ok_locked()
+        except OSError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not save the API key"}
 
     def status_dict(self) -> dict[str, Any]:
         with self._lock:
@@ -985,6 +1038,9 @@ class TranscriberDaemon:
             "streaming": self.config.streaming.enabled,
             "live_engine": self.config.streaming.engine,
             "live_model": self.config.streaming.model,
+            # Endpoint configuration isn't secret; expose it so desktop
+            # settings UIs can edit a hosted service without reading YAML.
+            "live_server_url": self.config.streaming.server_url,
             "live_available": live_available,
             "live_unavailable_reason": live_unavailable_reason,
             "live_decode_ms": round(self._live_decode_ms, 1),
@@ -1219,7 +1275,12 @@ def _schedule_server_shutdown(server: UnixServer) -> None:
     ).start()
 
 
-def run_server(config: Config, socket_path: Path, config_path: Path | None = None) -> None:
+def run_server(
+    config: Config,
+    socket_path: Path,
+    config_path: Path | None = None,
+    ui_token: str | None = None,
+) -> None:
     socket_path.parent.mkdir(parents=True, exist_ok=True)
     if socket_path.exists():
         # Do not blindly delete a live daemon's IPC endpoint.
@@ -1227,11 +1288,24 @@ def run_server(config: Config, socket_path: Path, config_path: Path | None = Non
             raise RuntimeError(f"Refusing to replace non-socket path {socket_path}")
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
+            probe.settimeout(1.0)
             probe.connect(str(socket_path))
         except OSError:
             socket_path.unlink()
         else:
-            raise RuntimeError(f"Daemon already appears to be running at {socket_path}")
+            try:
+                probe.sendall(b'{"command":"status"}\n')
+                response = json.loads(probe.makefile("rb").readline(8192))
+            except (OSError, ValueError) as exc:
+                raise RuntimeError(f"IPC endpoint is in use but did not return Whisper status: {socket_path}") from exc
+            if not _is_daemon_status_response(response):
+                raise RuntimeError(f"IPC endpoint is in use but did not return Whisper status: {socket_path}")
+            message = f"Daemon already appears to be running at {socket_path}"
+            if _existing_daemon_exit_code(os.name, ui_token) == 75:
+                # Tauri may have restarted while its daemon child survived. The
+                # UI uses the same per-user token and can reconnect to it.
+                raise DaemonAlreadyRunning(message)
+            raise RuntimeError(message)
         finally:
             probe.close()
     daemon = TranscriberDaemon(config, config_path=config_path)
@@ -1240,6 +1314,12 @@ def run_server(config: Config, socket_path: Path, config_path: Path | None = Non
     server.daemon = daemon
     if os.name != "nt":
         os.chmod(socket_path, 0o600)
+    else:
+        # Keep the Unix-socket command protocol unchanged; expose the same
+        # daemon state/commands to the Windows WebView over loopback WebSocket.
+        from .platforms.windows.websocket import start_server as start_ui_websocket
+
+        start_ui_websocket(daemon, auth_token=ui_token)
 
     def stop_server(_signal: int, _frame: Any) -> None:
         # ``shutdown`` must run from another thread than ``serve_forever``;
@@ -1261,17 +1341,49 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run the Whisper transcription daemon")
     parser.add_argument("--config")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
+    parser.add_argument("--ui-token", help=argparse.SUPPRESS)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    _configure_logging(
+        verbose=args.verbose,
+        log_to_file=os.name == "nt" and bool(args.ui_token),
+    )
     load_keys_env()  # keys.env fills missing env vars; values never logged
     try:
         config_path = resolve_config_path(args.config)
-        run_server(load_config(config_path), args.socket, config_path)
+        run_server(load_config(config_path), args.socket, config_path, args.ui_token)
+    except DaemonAlreadyRunning:
+        raise SystemExit(75) from None
     except Exception as exc:
         # Configuration/socket errors are safe summaries; never print exception chains containing request data.
         LOG.error("Daemon could not start: %s", exc)
         raise SystemExit(1) from None
+
+
+def _configure_logging(*, verbose: bool, log_to_file: bool = False) -> None:
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    log_setup_error: OSError | None = None
+    if log_to_file:
+        log_path = default_data_dir() / "logs" / "daemon.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handlers.append(
+                RotatingFileHandler(
+                    log_path,
+                    maxBytes=2 * 1024 * 1024,
+                    backupCount=3,
+                    encoding="utf-8",
+                )
+            )
+        except OSError as exc:
+            log_setup_error = exc
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
+    )
+    if log_setup_error is not None:
+        LOG.warning("Could not open the packaged daemon log file: %s", log_setup_error)
 
 
 if __name__ == "__main__":

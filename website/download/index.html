@@ -73,7 +73,7 @@
           <div class="icon" aria-hidden="true">🐧</div><strong>Linux</strong><span>Available · limited desktop support</span>
         </button>
         <button class="platform" type="button" data-platform="windows" aria-pressed="false">
-          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 4.2 10.7 2.9v8.4H1V4.2Zm11.2-1.5L23 1v10.3H12.2V2.7ZM1 12.8h9.7v8.4L1 19.8v-7Zm11.2 0H23V23l-10.8-1.5V12.8Z"/></svg></div><strong>Windows</strong><span>Preview · early access</span>
+          <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 4.2 10.7 2.9v8.4H1V4.2Zm11.2-1.5L23 1v10.3H12.2V2.7ZM1 12.8h9.7v8.4L1 19.8v-7Zm11.2 0H23V23l-10.8-1.5V12.8Z"/></svg></div><strong>Windows</strong><span>Installer in testing</span>
         </button>
         <button class="platform" type="button" data-platform="macos" aria-pressed="false">
           <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 28"><path d="M19.8 14.8c0-3 2.5-4.5 2.6-4.6a5.7 5.7 0 0 0-4.5-2.4c-1.9-.2-3.7 1.1-4.7 1.1s-2.5-1.1-4.1-1.1a6.1 6.1 0 0 0-5.1 3.1c-2.2 3.8-.6 9.5 1.6 12.6 1.1 1.5 2.3 3.2 3.9 3.1 1.6-.1 2.2-1 4.1-1s2.5 1 4.2 1 2.7-1.5 3.8-3.1a13.5 13.5 0 0 0 1.7-3.5 5.4 5.4 0 0 1-3.5-5.2ZM16.7 5.7A5.5 5.5 0 0 0 18 1.8a5.8 5.8 0 0 0-3.7 1.9 5.2 5.2 0 0 0-1.3 3.8 4.8 4.8 0 0 0 3.7-1.8Z"/></svg></div><strong>macOS</strong><span>Not available yet</span>
@@ -102,24 +102,12 @@
       </section>
 
       <section class="details" id="windows-details" aria-labelledby="windows-heading" hidden>
-        <h2 id="windows-heading">Install Whisper on Windows</h2>
-        <p>The Windows preview includes microphone capture, local transcription, transcript typing, a tray controller, and a global recording shortcut. It is still early access; Windows checks are being added, and we have not yet verified it across a range of Windows PCs.</p>
-        <div class="notice"><strong>Before you begin:</strong> install Python 3.11 or newer from python.org and include the Python Launcher. Setup needs internet access to install Whisper and its dependencies; the local speech model downloads on first use. You do not need administrator access.</div>
+        <h2 id="windows-heading">Windows installer is being rebuilt</h2>
+        <p>We’re replacing the script-based preview with a proper Windows tray app and per-user installer. The new app is being tested before we offer it for download.</p>
+        <div class="notice"><strong>Windows download temporarily unavailable.</strong> The replacement will include the tray interface and transcription service in one installer. It won’t require Python or a PowerShell install command.</div>
         <div class="actions">
-          <a class="button primary" href="/download/whisper-installer.ps1" download="whisper-installer.ps1">↓ Download PowerShell installer</a>
           <a class="button secondary" href="https://github.com/dem-5on/whisper">View source and report an issue</a>
         </div>
-        <h2>Guided setup</h2>
-        <div class="steps">
-          <div class="step"><div class="number">1</div><div><h3>Install Python</h3><p>Install Python 3.11 or newer from <a href="https://www.python.org/downloads/windows/">python.org</a>. Make sure the Python Launcher is included so Windows provides the <code>py</code> command.</p></div></div>
-          <div class="step"><div class="number">2</div><div><h3>Open PowerShell</h3><p>Open PowerShell as your normal user. Do not choose “Run as administrator.”</p></div></div>
-          <div class="step"><div class="number">3</div><div><h3>Run the installer</h3><p>Copy this command into PowerShell and press Enter. It downloads the installer from the Whisper GitHub repository and installs the app for your Windows account.</p>
-            <div class="command"><code id="windows-install-command">irm https://raw.githubusercontent.com/dem-5on/whisper/main/install.ps1 | iex</code><button class="copy" type="button" data-copy-command="windows-install-command">Copy</button></div>
-          </div></div>
-          <div class="step"><div class="number">4</div><div><h3>Start recording</h3><p>Whisper opens in the notification area. Press <code>Ctrl+Alt+R</code> to start or stop recording, or use the tray menu. The first local-model startup downloads the model.</p></div></div>
-        </div>
-        <div class="requirements"><h3>Remove Whisper</h3><p>Run <code>&amp; "$env:LOCALAPPDATA\Programs\Whisper\uninstall.ps1"</code> in PowerShell. Your settings, API keys, recordings, and downloaded models are kept by default; add <code>-RemoveUserData</code> if you want those removed too.</p></div>
-        <p class="more">This is an early Windows preview, not a signed standalone executable. Review the <a href="https://github.com/dem-5on/whisper/blob/main/install.ps1">installer source</a> before running it, and report problems on <a href="https://github.com/dem-5on/whisper/issues">GitHub Issues</a>.</p>
       </section>
 
       <section class="details" id="macos-details" aria-labelledby="macos-heading" hidden>
@@ -128,7 +116,7 @@
         <p class="more">Please don’t install the Linux bundle on macOS. Follow development at the <a href="https://github.com/dem-5on/whisper">Whisper project on GitHub</a>.</p>
       </section>
     </main>
-    <footer>Whisper · Free and open source · Windows preview · macOS not available yet.</footer>
+    <footer>Whisper · Free and open source · Windows installer in testing · macOS not available yet.</footer>
   </div>
   <div class="toast" id="copy-toast" role="status" aria-live="polite"></div>
   <script>

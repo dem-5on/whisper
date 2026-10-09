@@ -6,6 +6,11 @@ build/
 dist/
 *.egg-info/
 docs/
+/windows-app/node_modules/
+/windows-app/src-tauri/target/
+/windows-app/src-tauri/gen/
+/windows-app/src-tauri/binaries/
+/windows-app/src-tauri/icons/
 
 # Local configuration and credentials
 config.yaml

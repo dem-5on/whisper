@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the local Whisper tray panel.",
+  "windows": ["main", "keys"],
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [{
+        "name": "binaries/whisper-daemon",
+        "sidecar": true,
+        "args": ["--ui-token", { "validator": "^[0-9a-f-]{36}$" }]
+      }]
+    }
+  ]
+}

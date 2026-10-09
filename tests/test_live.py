@@ -471,6 +471,7 @@ class DaemonStreamingSwitchTests(unittest.TestCase):
         self.assertEqual(response["ok"], "true")
         self.assertEqual(response["live_engine"], "hosted-whisper")
         self.assertEqual(response["live_model"], "default")
+        self.assertEqual(response["live_server_url"], "wss://api.example.test/v1/live")
         self.assertEqual(self.daemon.config.streaming.server_url, "wss://api.example.test/v1/live")
 
         self.daemon.command("set_backend", {"backend": "openrouter"})

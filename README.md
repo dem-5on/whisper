@@ -33,8 +33,23 @@ bash ~/.local/share/whisper/uninstall.sh
 
 For other Linux distributions, use `make package` to create a source bundle and
 a GNOME extension ZIP under `dist/`, then follow the manual setup below.
-Currently, the guided installer supports GNOME on Wayland on Debian/Ubuntu; it
-does not claim support for GNOME X11, KDE, Windows, or macOS.
+The guided Linux installer supports GNOME on Wayland on Debian/Ubuntu; it does
+not claim support for GNOME X11, KDE, or macOS. Windows is being rebuilt as a
+native tray app and per-user installer; it is not available for download while
+the Windows focus and installer checks are incomplete. The old PowerShell
+installer is retired. Do not use `irm .../install.ps1 | iex`; it is not the
+supported Windows installation path.
+
+### Windows desktop app (in testing)
+
+The Windows UI is a Tauri shell around the Python daemon. The flyout is designed
+to stay non-activating so dictated text continues going to the previously
+focused app. The focused settings window handles provider credentials and live
+transcription options. Development and verification instructions are in
+[`windows-app/README.md`](windows-app/README.md). The private focus-test build
+must pass its manual focus check before the daemon-enabled installer is
+considered for release. Until then, the Windows download page intentionally
+offers no installer or PowerShell command.
 
 ### Publishing a release
 

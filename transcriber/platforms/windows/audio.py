@@ -72,6 +72,7 @@ class WindowsRecorder:
             device = None
         elif str(device).isdigit():
             device = int(device)
+        stream = None
         try:
             stream = sd.InputStream(
                 samplerate=self.config.sample_rate,
@@ -84,10 +85,11 @@ class WindowsRecorder:
             stream.start()
             self._stream = stream
         except Exception as exc:
-            try:
-                stream.close()
-            except Exception:
-                pass
+            if stream is not None:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
             self._stop_writer()
             self._discard()
             raise AudioError(f"Could not open Windows microphone: {exc}") from exc

@@ -1,0 +1,260 @@
+name: Windows installer preview and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      focus_test_passed:
+        description: Confirm the tray panel passed the manual no-focus-stealing test on Windows.
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+        required: true
+      sign_installer:
+        description: Sign the app and installer using the configured Windows code-signing secrets.
+        type: boolean
+        default: false
+      publish_release:
+        description: Attach the signed installer to an existing GitHub release (requires passing focus test and signing secrets).
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing six-digit DDMMYY GitHub release tag to receive the installer.
+        type: string
+        required: false
+      installation_test_passed:
+        description: Confirm the signed preview installed, launched, recorded, opened settings, and uninstalled successfully before publishing.
+        type: choice
+        options:
+          - "no"
+          - "yes"
+        default: "no"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  installer-preview:
+    if: inputs.focus_test_passed == 'yes'
+    runs-on: windows-latest
+    env:
+      WHISPER_APP_ROOT: "${{ github.workspace }}\\windows-app"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.publish_release && inputs.release_tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Validate release publication request
+        if: inputs.publish_release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw 'Run the Windows release workflow from the main branch.'
+          }
+          if ('${{ inputs.sign_installer }}' -ne 'true') {
+            throw 'Publishing requires sign_installer=true.'
+          }
+          if ('${{ inputs.installation_test_passed }}' -ne 'yes') {
+            throw 'Publishing requires confirmation that the signed preview passed installation, launch, recording, settings, and uninstall tests.'
+          }
+          if (-not $env:RELEASE_TAG) {
+            throw 'Provide the existing DDMMYY GitHub release tag.'
+          }
+          python scripts/validate_release.py $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw 'The release tag does not match the project version.' }
+          $Project = Get-Content pyproject.toml -Raw
+          $ProjectVersion = [regex]::Match($Project, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          $Tauri = Get-Content windows-app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $Package = Get-Content windows-app/package.json -Raw | ConvertFrom-Json
+          if (-not $ProjectVersion -or $Tauri.version -ne $ProjectVersion -or $Package.version -ne $ProjectVersion) {
+            throw "Windows app versions must match project version '$ProjectVersion' (Tauri '$($Tauri.version)', npm '$($Package.version)')."
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release '$env:RELEASE_TAG' does not exist." }
+      - name: Build the Windows daemon sidecar
+        shell: pwsh
+        run: ./windows-app/scripts/build-sidecar.ps1
+      - name: Install frontend dependencies
+        working-directory: windows-app
+        run: npm ci --no-audit --no-fund
+      - name: Test frontend control-state rules
+        working-directory: windows-app
+        run: npm test
+      - name: Import the Windows code-signing certificate
+        if: inputs.sign_installer || inputs.publish_release
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_CERTIFICATE_BASE64 -or -not $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD) {
+            throw 'Set WINDOWS_SIGNING_CERTIFICATE_BASE64 and WINDOWS_SIGNING_CERTIFICATE_PASSWORD in repository Actions secrets.'
+          }
+          $CertificatePath = Join-Path $env:RUNNER_TEMP 'whisper-signing.pfx'
+          [IO.File]::WriteAllBytes($CertificatePath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+          try {
+            $Password = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD -AsPlainText -Force
+            $Imported = @(Import-PfxCertificate -FilePath $CertificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $Password)
+            $SigningCert = $Imported | Where-Object HasPrivateKey | Select-Object -First 1
+            if (-not $SigningCert) { throw 'The imported certificate has no private signing key.' }
+            "WHISPER_SIGNING_THUMBPRINT=$($SigningCert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+          finally {
+            Remove-Item -LiteralPath $CertificatePath -Force -ErrorAction SilentlyContinue
+          }
+      - name: Sign the bundled daemon
+        if: inputs.sign_installer || inputs.publish_release
+        shell: pwsh
+        run: ./windows-app/scripts/sign-windows.ps1 ./windows-app/src-tauri/binaries/whisper-daemon-x86_64-pc-windows-msvc.exe
+      - name: Build the signed Whisper installer
+        if: inputs.sign_installer || inputs.publish_release
+        working-directory: windows-app
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          npm run tauri build -- --ci --features packaged-daemon
+      - name: Build the unsigned private installer preview
+        if: ${{ !inputs.sign_installer && !inputs.publish_release }}
+        working-directory: windows-app
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          npm run tauri build -- --ci --features packaged-daemon --no-sign
+      - name: Verify the NSIS installer output
+        shell: pwsh
+        run: |
+          $Installers = @(Get-ChildItem windows-app/src-tauri/target/release/bundle/nsis -Filter '*.exe' -File)
+          if ($Installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($Installers.Count)."
+          }
+          if ($Installers[0].Length -lt 1MB) {
+            throw "The NSIS installer is unexpectedly small ($($Installers[0].Length) bytes)."
+          }
+          $PackagedFiles = @(
+            $Installers[0].FullName,
+            'windows-app/src-tauri/target/release/whisper-windows-ui.exe',
+            'windows-app/src-tauri/binaries/whisper-daemon-x86_64-pc-windows-msvc.exe'
+          )
+          foreach ($File in $PackagedFiles) {
+            if (-not (Test-Path -LiteralPath $File -PathType Leaf)) {
+              throw "Expected packaged Windows file was not produced: $File"
+            }
+            $Stream = [IO.File]::OpenRead((Resolve-Path -LiteralPath $File).Path)
+            try {
+              $Header = New-Object byte[] 2
+              if ($Stream.Read($Header, 0, 2) -ne 2 -or $Header[0] -ne 0x4D -or $Header[1] -ne 0x5A) {
+                throw "Packaged file is not a Windows executable: $File"
+              }
+            }
+            finally {
+              $Stream.Dispose()
+            }
+          }
+          if ('${{ inputs.sign_installer || inputs.publish_release }}' -eq 'true') {
+            foreach ($File in $PackagedFiles) {
+              $Signature = Get-AuthenticodeSignature $File
+              if ($Signature.Status -ne 'Valid') {
+                throw "The signature for $File is not valid: $($Signature.Status)"
+              }
+            }
+          }
+          $Hash = Get-FileHash -LiteralPath $Installers[0].FullName -Algorithm SHA256
+          "$($Hash.Hash)  $($Installers[0].Name)" | Set-Content -LiteralPath "$($Installers[0].FullName).sha256" -Encoding ascii
+          Write-Host "Verified $($Installers[0].Name) ($($Installers[0].Length) bytes, SHA-256 $($Hash.Hash))."
+      - name: Smoke-test per-user install and uninstall
+        shell: pwsh
+        run: |
+          $Installer = Get-ChildItem windows-app/src-tauri/target/release/bundle/nsis -Filter '*.exe' -File | Select-Object -First 1
+          if (-not $Installer) { throw 'The NSIS installer could not be found.' }
+          $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Whisper\Whisper.lnk'
+          $UninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+
+          $Setup = Start-Process -FilePath $Installer.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($Setup.ExitCode -ne 0) { throw "Silent setup failed with exit code $($Setup.ExitCode)." }
+          $AutoStart = (Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper
+          if (-not $AutoStart -or $AutoStart -notlike '*whisper-windows-ui.exe*') {
+            throw 'Setup did not register Whisper to start at sign-in.'
+          }
+          $AppPath = [regex]::Match($AutoStart, '^"([^"]+)"').Groups[1].Value
+          if (-not $AppPath -or -not $AppPath.StartsWith($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Setup did not install Whisper per-user under LOCALAPPDATA: $AutoStart"
+          }
+          if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {
+            throw "The registered Whisper app executable is missing: $AppPath"
+          }
+          if (-not (Test-Path -LiteralPath $ShortcutPath -PathType Leaf)) {
+            throw "Setup did not create the Start menu shortcut: $ShortcutPath"
+          }
+          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while (-not (Get-Process -Name 'whisper-windows-ui' -ErrorAction SilentlyContinue)) {
+            if ([DateTime]::UtcNow -ge $Deadline) { throw 'The installed Whisper app did not launch.' }
+            Start-Sleep -Milliseconds 250
+          }
+          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while (-not (Get-Process -Name 'whisper-daemon' -ErrorAction SilentlyContinue)) {
+            if ([DateTime]::UtcNow -ge $Deadline) { throw 'The installed Whisper daemon sidecar did not launch.' }
+            Start-Sleep -Milliseconds 250
+          }
+
+          # Ask the resident app to exit gracefully so its daemon sidecar is
+          # stopped before NSIS removes files that may still be open.
+          Start-Process -FilePath $AppPath -ArgumentList '--whisper-uninstall' -Wait
+          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while (Get-Process -Name 'whisper-windows-ui' -ErrorAction SilentlyContinue) {
+            if ([DateTime]::UtcNow -ge $Deadline) { throw 'Whisper did not exit after its uninstall signal.' }
+            Start-Sleep -Milliseconds 250
+          }
+          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while (Get-Process -Name 'whisper-daemon' -ErrorAction SilentlyContinue) {
+            if ([DateTime]::UtcNow -ge $Deadline) { throw 'Whisper daemon sidecar did not stop with the app.' }
+            Start-Sleep -Milliseconds 250
+          }
+
+          $UninstallEntry = Get-ChildItem -Path $UninstallRoot -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+            Where-Object { $_.DisplayName -eq 'Whisper' } |
+            Select-Object -First 1
+          if (-not $UninstallEntry) { throw 'Setup did not register Whisper for uninstall.' }
+          $Uninstaller = [regex]::Match($UninstallEntry.UninstallString, '^"([^"]+)"').Groups[1].Value
+          if (-not $Uninstaller -or -not (Test-Path -LiteralPath $Uninstaller -PathType Leaf)) {
+            throw 'The registered Whisper uninstaller could not be located.'
+          }
+          $Removal = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($Removal.ExitCode -ne 0) { throw "Silent uninstall failed with exit code $($Removal.ExitCode)." }
+          if (Test-Path -LiteralPath $AppPath) { throw 'Uninstall left the Whisper app executable behind.' }
+          if ((Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
+            throw 'Uninstall left Whisper in the Windows sign-in startup registry.'
+          }
+          Write-Host 'Per-user install, UI and daemon startup/shutdown, sign-in registration, Start menu shortcut, and uninstall passed.'
+      - name: Upload the Windows installer preview
+        if: ${{ !inputs.publish_release }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.sign_installer && 'whisper-windows-signed-installer-preview' || 'whisper-windows-installer-preview' }}
+          path: |
+            windows-app/src-tauri/target/release/bundle/nsis/*.exe
+            windows-app/src-tauri/target/release/bundle/nsis/*.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Attach the signed installer to the GitHub release
+        if: inputs.publish_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $Installer = Get-ChildItem windows-app/src-tauri/target/release/bundle/nsis -Filter '*.exe' -File | Select-Object -First 1
+          if (-not $Installer) { throw 'The verified NSIS installer could not be found.' }
+          gh release upload $env:RELEASE_TAG $Installer.FullName "$($Installer.FullName).sha256" --repo $env:GITHUB_REPOSITORY

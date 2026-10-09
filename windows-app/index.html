@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#202127" />
+    <title>Whisper</title>
+  </head>
+  <body>
+    <main class="panel" aria-label="Whisper panel">
+      <header class="heading">
+        <div class="brand-mark" aria-hidden="true"><span></span></div>
+        <div>
+          <h1>Whisper</h1>
+          <p>Push-to-talk transcription</p>
+        </div>
+        <button id="close" class="close" aria-label="Hide Whisper panel">×</button>
+      </header>
+
+      <p class="state" id="connection"><span class="state-dot"></span>Connecting to Whisper…</p>
+      <p class="focus-result" id="focus-result" hidden></p>
+      <p class="error" id="error" hidden></p>
+
+      <section class="actions" aria-label="Recording controls">
+        <button id="toggle" class="action primary" disabled>Start recording</button>
+        <button id="cancel" class="action" disabled>Cancel</button>
+        <button id="copy" class="action copy-action" disabled>Copy transcript</button>
+      </section>
+
+      <section class="tiles" aria-label="Settings preview">
+        <button class="tile" data-setting="provider" aria-expanded="false">
+          <span class="tile-icon" data-icon="provider" aria-hidden="true"></span>
+          <span class="tile-copy"><strong>Provider</strong><small id="provider-value">Local</small></span>
+          <span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button class="tile" data-setting="model" aria-expanded="false">
+          <span class="tile-icon" data-icon="model" aria-hidden="true"></span>
+          <span class="tile-copy"><strong>Model</strong><small id="model-value">base</small></span>
+          <span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button class="tile" data-setting="mic" aria-expanded="false">
+          <span class="tile-icon" data-icon="mic" aria-hidden="true"></span>
+          <span class="tile-copy"><strong>Microphone</strong><small id="mic-value">Default</small></span>
+          <span class="chevron" aria-hidden="true">›</span>
+        </button>
+        <button id="retry" class="tile retry-tile" disabled>Re-transcribe last</button>
+      </section>
+
+      <section id="chooser" class="chooser" aria-live="polite" hidden>
+        <header><span id="chooser-icon" data-icon="provider" aria-hidden="true"></span><h2 id="chooser-title">Choose an option</h2></header>
+        <div id="chooser-options" class="chooser-options" role="radiogroup" aria-labelledby="chooser-title"></div>
+        <button id="manage-keys" class="manage-keys" hidden>Settings &amp; API keys</button>
+      </section>
+
+      <section class="live-section" aria-label="Live transcription settings">
+        <label class="live-toggle" for="streaming-toggle">
+          <span>Live transcription</span>
+          <input id="streaming-toggle" type="checkbox" disabled />
+          <span class="switch-track" aria-hidden="true"></span>
+        </label>
+        <p id="live-note" class="live-note" hidden></p>
+        <p id="live-transcript" class="live-transcript" hidden></p>
+      </section>
+
+      <section class="footer-actions">
+        <p id="transcript" class="transcript" hidden></p>
+      </section>
+      <p id="shortcut-note" class="shortcut-note" hidden></p>
+      <p id="hint" class="hint" hidden>Focus-test: opening this panel must leave the app behind it active.</p>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

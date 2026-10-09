@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import os
 import tempfile
@@ -10,8 +11,45 @@ from unittest.mock import patch
 
 from transcriber.audio import AudioSource, parse_wpctl_status
 from transcriber.config import Config, DeliveryConfig, UiConfig, _parse
-from transcriber.daemon import TranscriberDaemon
+from transcriber.daemon import (
+    TranscriberDaemon,
+    _configure_logging,
+    _existing_daemon_exit_code,
+    _is_daemon_status_response,
+)
 from transcriber.state import State
+
+
+class DaemonLoggingTests(unittest.TestCase):
+    def test_packaged_windows_sidecar_uses_a_bounded_user_log_file(self) -> None:
+        from logging.handlers import RotatingFileHandler
+
+        with tempfile.TemporaryDirectory() as temporary:
+            log_root = Path(temporary)
+            with patch("transcriber.daemon.default_data_dir", return_value=log_root), patch(
+                "transcriber.daemon.logging.basicConfig"
+            ) as basic_config:
+                _configure_logging(verbose=False, log_to_file=True)
+
+            handlers = basic_config.call_args.kwargs["handlers"]
+            file_handlers = [handler for handler in handlers if isinstance(handler, RotatingFileHandler)]
+            try:
+                self.assertEqual(len(file_handlers), 1)
+                self.assertEqual(Path(file_handlers[0].baseFilename), log_root / "logs" / "daemon.log")
+                self.assertEqual(file_handlers[0].maxBytes, 2 * 1024 * 1024)
+                self.assertEqual(file_handlers[0].backupCount, 3)
+                self.assertTrue((log_root / "logs" / "daemon.log").exists())
+            finally:
+                for handler in handlers:
+                    handler.close()
+
+    def test_regular_daemon_mode_does_not_create_a_file_log(self) -> None:
+        with patch("transcriber.daemon.logging.basicConfig") as basic_config:
+            _configure_logging(verbose=False)
+
+        handlers = basic_config.call_args.kwargs["handlers"]
+        self.assertEqual(len(handlers), 1)
+        self.assertIsInstance(handlers[0], logging.StreamHandler)
 
 
 class FakeRecorder:
@@ -76,6 +114,16 @@ class DaemonTests(unittest.TestCase):
                 return
             time.sleep(0.01)
         self.fail(f"daemon did not reach {states}; at {self.daemon.state}")
+
+    def test_existing_daemon_adoption_is_limited_to_authenticated_windows_sidecars(self) -> None:
+        self.assertEqual(_existing_daemon_exit_code("nt", "per-user-token"), 75)
+        self.assertEqual(_existing_daemon_exit_code("nt", None), 1)
+        self.assertEqual(_existing_daemon_exit_code("posix", "per-user-token"), 1)
+
+    def test_existing_ipc_endpoint_must_answer_with_a_daemon_state_before_adoption(self) -> None:
+        self.assertTrue(_is_daemon_status_response({"ok": "true", "state": "IDLE"}))
+        self.assertFalse(_is_daemon_status_response({"ok": "false", "state": "IDLE"}))
+        self.assertFalse(_is_daemon_status_response({"ok": "true", "state": "not-a-state"}))
 
     def test_toggle_processes_delivers_and_returns_idle(self) -> None:
         delivery = FakeDelivery()
@@ -177,6 +225,34 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(status["last_preview"], "hello")
         self.assertEqual(status["last_backend"], "groq")
         self.assertEqual(status["last_duration"], 2.5)
+
+    def test_set_key_persists_secret_and_only_returns_presence(self) -> None:
+        keys_file = Path(self.tmp.name) / "keys.env"
+        secret = "test-openrouter-secret"
+        with patch.dict(os.environ, {"TRANSCRIBER_KEYS_FILE": str(keys_file), "OPENROUTER_API_KEY": ""}):
+            response = self.daemon.command("set_key", {"provider": "openrouter", "key": secret})
+
+            self.assertEqual(response["ok"], "true")
+            self.assertTrue(response["has_openrouter_key"])
+            self.assertNotIn(secret, str(response))
+            self.assertEqual(keys_file.read_text(), f"OPENROUTER_API_KEY={secret}\n")
+            self.assertEqual(os.environ["OPENROUTER_API_KEY"], secret)
+
+    def test_set_key_clear_and_invalid_input(self) -> None:
+        keys_file = Path(self.tmp.name) / "keys.env"
+        with patch.dict(os.environ, {
+            "TRANSCRIBER_KEYS_FILE": str(keys_file),
+            "GROQ_API_KEY": "existing-secret",
+        }):
+            invalid = self.daemon.command("set_key", {"provider": "local", "key": "secret"})
+            malformed = self.daemon.command("set_key", {"provider": "groq", "key": "bad\nINJECTED=value"})
+            removed = self.daemon.command("set_key", {"provider": "groq", "clear": True})
+
+            self.assertEqual(invalid["ok"], "false")
+            self.assertEqual(malformed["ok"], "false")
+            self.assertEqual(removed["ok"], "true")
+            self.assertFalse(removed["has_groq_key"])
+            self.assertNotIn("GROQ_API_KEY=", keys_file.read_text())
 
     def test_preview_hidden_by_default(self) -> None:
         self.daemon._last_transcript = "secret text"

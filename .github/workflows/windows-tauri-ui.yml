@@ -1,0 +1,68 @@
+name: Windows Tauri UI build
+
+on:
+  push:
+    paths:
+      - "windows-app/**"
+      - "transcriber/daemon.py"
+      - "transcriber/platforms/windows/websocket.py"
+      - "pyproject.toml"
+      - "tests/test_windows_websocket.py"
+      - "tests/test_windows_tauri_spike.py"
+      - ".github/workflows/windows-tauri-ui.yml"
+  pull_request:
+    paths:
+      - "windows-app/**"
+      - "transcriber/daemon.py"
+      - "transcriber/platforms/windows/websocket.py"
+      - "pyproject.toml"
+      - "tests/test_windows_websocket.py"
+      - "tests/test_windows_tauri_spike.py"
+      - ".github/workflows/windows-tauri-ui.yml"
+  workflow_dispatch:
+
+jobs:
+  windows-tauri-ui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Build the Windows daemon sidecar for compile checks
+        shell: pwsh
+        run: ./windows-app/scripts/build-sidecar.ps1
+      - name: Check panel focus invariants
+        run: |
+          python -m pip install -e . pytest websockets
+          python -m pytest -q tests/test_windows_tauri_spike.py tests/test_windows_websocket.py
+      - name: Install frontend dependencies
+        working-directory: windows-app
+        run: npm ci --no-audit --no-fund
+      - name: Build the panel frontend
+        working-directory: windows-app
+        run: npm run build
+      - name: Test frontend control-state rules
+        working-directory: windows-app
+        run: npm test
+      - name: Test tray panel monitor positioning
+        run: |
+          cargo fmt --manifest-path windows-app/src-tauri/Cargo.toml -- --check
+          cargo test --manifest-path windows-app/src-tauri/Cargo.toml --features focus-test
+      - name: Build the Windows focus-test executable
+        working-directory: windows-app
+        run: npm run tauri build -- --no-bundle --ci --features focus-test
+      - name: Compile the packaged-daemon supervisor
+        run: cargo check --manifest-path windows-app/src-tauri/Cargo.toml --features packaged-daemon
+      - name: Upload the Windows focus-test executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-windows-focus-spike
+          path: windows-app/src-tauri/target/release/whisper-windows-ui.exe
+          if-no-files-found: error

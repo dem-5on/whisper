@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#202127" />
+    <title>Whisper settings</title>
+  </head>
+  <body>
+    <main class="key-settings">
+      <header class="key-heading">
+        <div class="key-brand" aria-hidden="true">W</div>
+        <div class="key-heading-copy">
+          <h1>Whisper settings</h1>
+          <p>Close this window to keep Whisper running in the tray.</p>
+        </div>
+      </header>
+
+      <label class="key-label" for="key-provider">Provider</label>
+      <select id="key-provider">
+        <option value="openai">OpenAI</option>
+        <option value="groq">Groq</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="hosted-whisper">Hosted Whisper service</option>
+      </select>
+
+      <p id="key-state" class="key-state" aria-live="polite">Checking saved key…</p>
+      <form id="key-form">
+        <label class="key-label" for="key-value">API key or service token</label>
+        <input
+          id="key-value"
+          type="password"
+          autocomplete="new-password"
+          autocapitalize="off"
+          spellcheck="false"
+          maxlength="4096"
+          placeholder="Paste your key"
+          required
+        />
+        <div class="key-actions">
+          <button class="key-save" type="submit">Save key</button>
+          <button id="clear-key" class="key-remove" type="button" hidden>Remove saved key</button>
+        </div>
+      </form>
+
+      <section class="live-settings" aria-labelledby="live-settings-title">
+        <h2 id="live-settings-title">Live transcription service</h2>
+        <label class="key-label" for="live-engine">Engine</label>
+        <select id="live-engine">
+          <option value="local">Local on this computer</option>
+          <option value="openai-realtime">OpenAI Realtime</option>
+          <option value="hosted-whisper">Hosted Whisper server</option>
+        </select>
+        <div id="live-url-row" hidden>
+          <label class="key-label" for="live-server-url">WebSocket server URL</label>
+          <input id="live-server-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="wss://whisper.example.com/v1/live" />
+        </div>
+        <label class="key-label" for="live-model">Live model or profile</label>
+        <input id="live-model" type="text" maxlength="120" autocomplete="off" spellcheck="false" />
+        <p class="key-help">Local and OpenAI engines use their supported model IDs. For Hosted Whisper, enter the profile configured on your server.</p>
+        <button id="save-live-settings" class="key-save live-save" type="button">Save live settings</button>
+      </section>
+
+      <p class="key-privacy">API keys and service tokens stay in your Windows user profile. The server URL and model profile are regular app settings.</p>
+      <button id="open-diagnostics" class="diagnostics-button" type="button">Open diagnostics folder</button>
+      <p id="key-feedback" class="key-feedback" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="/src/keys.js"></script>
+  </body>
+</html>

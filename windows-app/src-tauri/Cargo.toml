@@ -1,0 +1,28 @@
+[package]
+name = "whisper-windows-ui"
+version = "2026.10.8"
+description = "Whisper Windows tray interface"
+authors = ["Whisper contributors"]
+edition = "2021"
+rust-version = "1.90"
+
+[features]
+default = []
+packaged-daemon = []
+focus-test = []
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-clipboard-manager = "2"
+tokio = { version = "1", features = ["time"] }
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+window-vibrancy = "0.8.1"

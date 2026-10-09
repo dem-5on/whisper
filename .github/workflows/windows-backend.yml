@@ -5,6 +5,7 @@ on:
     paths:
       - "transcriber/**"
       - "tests/test_windows_*.py"
+      - "tests/test_windows_websocket.py"
       - "tests/test_config_and_processing.py"
       - "tests/test_transcription.py"
       - "tests/test_daemon.py"
@@ -14,6 +15,7 @@ on:
     paths:
       - "transcriber/**"
       - "tests/test_windows_*.py"
+      - "tests/test_windows_websocket.py"
       - "tests/test_config_and_processing.py"
       - "tests/test_transcription.py"
       - "tests/test_daemon.py"
@@ -36,4 +38,4 @@ jobs:
       - name: Install Windows backend and test dependencies
         run: python -m pip install --disable-pip-version-check -e ".[windows,local,dev]"
       - name: Run Windows backend and IPC checks
-        run: python -m pytest -q tests/test_windows_backends.py tests/test_windows_platform.py tests/test_config_and_processing.py tests/test_transcription.py tests/test_daemon.py
+        run: python -m pytest -q tests/test_windows_backends.py tests/test_windows_platform.py tests/test_windows_websocket.py tests/test_config_and_processing.py tests/test_transcription.py tests/test_daemon.py
