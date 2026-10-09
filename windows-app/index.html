@@ -18,13 +18,13 @@
       </header>
 
       <p class="state" id="connection"><span class="state-dot"></span>Connecting to Whisper…</p>
+      <button id="reconnect" class="reconnect" type="button" hidden>Retry now</button>
       <p class="focus-result" id="focus-result" hidden></p>
-      <p class="error" id="error" hidden></p>
+      <p class="error" id="error" role="alert" hidden></p>
 
       <section class="actions" aria-label="Recording controls">
         <button id="toggle" class="action primary" disabled>Start recording</button>
         <button id="cancel" class="action" disabled>Cancel</button>
-        <button id="copy" class="action copy-action" disabled>Copy transcript</button>
       </section>
 
       <section class="tiles" aria-label="Settings preview">
@@ -43,7 +43,6 @@
           <span class="tile-copy"><strong>Microphone</strong><small id="mic-value">Default</small></span>
           <span class="chevron" aria-hidden="true">›</span>
         </button>
-        <button id="retry" class="tile retry-tile" disabled>Re-transcribe last</button>
       </section>
 
       <section id="chooser" class="chooser" aria-live="polite" hidden>
@@ -59,10 +58,14 @@
           <span class="switch-track" aria-hidden="true"></span>
         </label>
         <p id="live-note" class="live-note" hidden></p>
-        <p id="live-transcript" class="live-transcript" hidden></p>
+        <p id="live-transcript" class="live-transcript" aria-live="polite" hidden></p>
       </section>
 
-      <section class="footer-actions">
+      <section class="footer-actions" aria-label="Last transcript">
+        <div class="session-actions">
+          <button id="copy" class="action" disabled>Copy transcript</button>
+          <button id="retry" class="action" disabled>Re-transcribe last</button>
+        </div>
         <p id="transcript" class="transcript" hidden></p>
       </section>
       <p id="shortcut-note" class="shortcut-note" hidden></p>

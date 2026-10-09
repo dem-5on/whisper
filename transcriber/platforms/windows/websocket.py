@@ -85,15 +85,23 @@ async def handle_connection(daemon: TranscriberDaemon, websocket: Any) -> None:
                     await send({"type": "daemon_event", "event": event})
                     last_revision = max(last_revision, int(event.get("revision", last_revision)))
                 status = daemon.status_dict()
-                # Elapsed timers are rendered locally by JS; only push when
-                # meaningful daemon-owned state has changed.
+                last_revision = max(last_revision, revision)
+                if status.get("state") in ("RECORDING", "PROCESSING", "DELIVERING"):
+                    # While active, push at this loop's cadence with elapsed
+                    # times intact so the UI timer tracks daemon truth
+                    # instead of a locally estimated clock.
+                    if status != previous_status:
+                        await send({"type": "status", "status": status})
+                        previous_status = status
+                    continue
+                # Elapsed timers are rendered from daemon pushes while active;
+                # at rest only push when meaningful daemon-owned state changes.
                 for transient in ("recording_elapsed", "processing_elapsed"):
                     status.pop(transient, None)
                     previous_status.pop(transient, None)
                 if status != previous_status:
                     await send({"type": "status", "status": status})
                     previous_status = status
-                last_revision = max(last_revision, revision)
         except asyncio.CancelledError:
             raise
         except Exception:

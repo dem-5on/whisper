@@ -155,3 +155,71 @@ def test_websocket_server_enforces_browser_origin(monkeypatch):
             await server.__aexit__(None, None, None)
 
     asyncio.run(run())
+
+
+class RecordingDaemon:
+    """Daemon stuck in RECORDING with an advancing elapsed clock."""
+
+    def __init__(self, ticks_before_end=4):
+        self.ticks = 0
+        self.ticks_before_end = ticks_before_end
+
+    def command(self, command, params):
+        return {"ok": "true"}
+
+    def status_dict(self):
+        self.ticks += 1
+        return {
+            "state": "RECORDING",
+            "recording_elapsed": round(self.ticks * 0.5, 1),
+            "live_revision": 0,
+        }
+
+    def wait_events_since(self, since, session_id=None, timeout=1.0):
+        if self.ticks >= self.ticks_before_end:
+            raise RuntimeError("end test event stream")
+        return ([], since)
+
+
+class YieldingSocket:
+    """Single subscribe command, then ends the stream after N sends."""
+
+    def __init__(self, max_sends=8):
+        self.messages = [json.dumps({"command": "subscribe", "since": 0, "request_id": 1})]
+        self.sent = []
+        self.max_sends = max_sends
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.messages:
+            return self.messages.pop(0)
+        if len(self.sent) >= self.max_sends:
+            raise StopAsyncIteration
+        await asyncio.sleep(0.01)
+        raise StopAsyncIteration
+
+    async def send(self, message):
+        await asyncio.sleep(0)
+        self.sent.append(json.loads(message))
+
+
+def test_windows_websocket_pushes_daemon_elapsed_time_while_recording(monkeypatch):
+    async def run_inline(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", run_inline)
+
+    async def run():
+        daemon = RecordingDaemon()
+        websocket = YieldingSocket()
+        await handle_connection(daemon, websocket)
+        statuses = [payload for payload in websocket.sent if payload.get("type") == "status"]
+        assert len(statuses) >= 2
+        assert all("recording_elapsed" in status["status"] for status in statuses)
+        elapsed = [status["status"]["recording_elapsed"] for status in statuses]
+        assert elapsed == sorted(elapsed)
+        assert elapsed[-1] > elapsed[0]
+
+    asyncio.run(run())
