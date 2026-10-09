@@ -181,6 +181,7 @@ def test_packaged_windows_app_owns_a_restarting_daemon_sidecar():
     assert "PyInstaller" in sidecar_build
     assert "@('-m', 'venv', $VenvRoot)" in sidecar_build
     assert "Invoke-Checked $BuildPython" in sidecar_build
+    assert "--hidden-import', 'transcriber.platforms.windows.ipc'" in sidecar_build
     assert 'feature = "packaged-daemon"' in app
     assert "--no-bundle --ci --features focus-test" in workflow
     assert 'compile_error!("focus-test builds must not start the packaged transcription daemon")' in app

@@ -40,6 +40,7 @@ try {
         '--collect-all', 'yaml',
         '--paths', '.',
         '--hidden-import', 'transcriber.platforms.windows.websocket',
+        '--hidden-import', 'transcriber.platforms.windows.ipc',
         '--hidden-import', 'transcriber.platforms.windows.audio',
         'windows-app/sidecar_entry.py'
     )
