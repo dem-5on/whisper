@@ -1261,7 +1261,12 @@ class _RequestHandler(socketserver.StreamRequestHandler):
             _ = revision
 
 
-class UnixServer(socketserver.ThreadingUnixStreamServer):
+# ``socketserver.ThreadingUnixStreamServer`` is not exposed by Python on
+# Windows.  ``TCPServer`` already implements the stream-server mechanics; by
+# overriding its address family we can keep using AF_UNIX sockets on platforms
+# that support them without depending on the Unix-only convenience subclass.
+class UnixServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    address_family = getattr(socket, "AF_UNIX", socket.AF_INET)
     daemon: TranscriberDaemon
     daemon_threads = True
 
