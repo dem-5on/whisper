@@ -212,10 +212,29 @@ jobs:
           }
           # The sidecar keeps its target-triple filename at runtime
           # (whisper-daemon-x86_64-pc-windows-msvc.exe), so match the prefix.
-          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          # PyInstaller onefile unpack + model load can be slow on cold
+          # runners, so allow two minutes and dump diagnostics on failure.
+          $InstallDir = Split-Path -Parent $AppPath
+          Write-Host "Installed files in $InstallDir"
+          Get-ChildItem -Path $InstallDir -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "Installed: $($_.Name)" }
+          $Sidecar = Get-ChildItem -Path $InstallDir -Filter 'whisper-daemon*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $Sidecar) { throw "The packaged daemon sidecar is missing from $InstallDir." }
+          Write-Host "Sidecar present: $($Sidecar.Name) ($($Sidecar.Length) bytes)"
+          $Deadline = [DateTime]::UtcNow.AddSeconds(120)
           while (-not (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue)) {
-            if ([DateTime]::UtcNow -ge $Deadline) { throw 'The installed Whisper daemon sidecar did not launch.' }
-            Start-Sleep -Milliseconds 250
+            if ([DateTime]::UtcNow -ge $Deadline) {
+              Write-Host 'Process snapshot while waiting for the daemon:'
+              Get-Process | Where-Object { $_.ProcessName -like '*whisper*' -or $_.ProcessName -like '*python*' } | ForEach-Object { Write-Host "Running: $($_.ProcessName) (pid $($_.Id))" }
+              $DaemonLog = Join-Path $env:LOCALAPPDATA 'Whisper\logs\daemon.log'
+              if (Test-Path -LiteralPath $DaemonLog -PathType Leaf) {
+                Write-Host "--- $DaemonLog (tail) ---"
+                Get-Content -LiteralPath $DaemonLog -Tail 40 | ForEach-Object { Write-Host $_ }
+              } else {
+                Write-Host "No daemon log at $DaemonLog"
+              }
+              throw 'The installed Whisper daemon sidecar did not launch.'
+            }
+            Start-Sleep -Milliseconds 500
           }
 
           # Ask the resident app to exit gracefully so its daemon sidecar is
@@ -277,7 +296,7 @@ jobs:
           }
           Write-Host 'Per-user install, UI and daemon startup/shutdown, sign-in registration, Start menu shortcut, and uninstall passed.'
       - name: Upload the Windows installer preview
-        if: ${{ !inputs.publish_release }}
+        if: ${{ always() && !inputs.publish_release }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.sign_installer && 'whisper-windows-signed-installer-preview' || 'whisper-windows-installer-preview' }}
