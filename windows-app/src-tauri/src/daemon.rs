@@ -54,6 +54,36 @@ impl DaemonSupervisor {
     }
 }
 
+fn sidecar_log_path() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    base.join("Whisper").join("logs").join("ui-sidecar.log")
+}
+
+/// Best-effort file log of sidecar supervision. Spawn failures are otherwise
+/// only visible as webview events, which headless smoke tests cannot read.
+fn append_sidecar_log(message: &str) {
+    use std::io::Write;
+    let path = sidecar_log_path();
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "{secs} {message}");
+    }
+}
+
 pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: String) {
     // Development uses the developer's project environment and separately
     // started daemon; the sidecar exists only in packaged builds.
@@ -73,6 +103,7 @@ pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: 
             match child.and_then(|command| command.spawn()) {
                 Ok((mut events, child)) => {
                     supervisor.set_child(child);
+                    append_sidecar_log("sidecar spawned");
                     let _ = app.emit("daemon-process", "started");
                     while let Some(event) = events.recv().await {
                         match event {
@@ -82,6 +113,7 @@ pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: 
                                     // Its stable per-user token lets this UI
                                     // reconnect without replacing active state.
                                     adopted_existing_daemon = true;
+                                    append_sidecar_log("adopted existing daemon (exit 75)");
                                     let _ = app.emit("daemon-process", "adopted-existing");
                                     break;
                                 }
@@ -114,6 +146,7 @@ pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: 
                 Err(error) => {
                     // Surface a concise launch failure to the tray UI instead
                     // of leaving users with an unexplained reconnect spinner.
+                    append_sidecar_log(&format!("sidecar spawn failed: {error}"));
                     let _ = app.emit("daemon-process", format!("unavailable: {error}"));
                 }
             }

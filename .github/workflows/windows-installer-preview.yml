@@ -251,7 +251,18 @@ jobs:
             Write-Host "Probe: no daemon log at $ProbeLog"
           }
           Stop-Process -Id $ProbeDaemon.Id -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
+          # Verify the kill: a surviving probe would poison the launch check
+          # below (found instantly) and the stop check later (not our child).
+          $Deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while (Get-Process -Id $ProbeDaemon.Id -ErrorAction SilentlyContinue) {
+            if ([DateTime]::UtcNow -ge $Deadline) {
+              Write-Host "Probe: sidecar probe pid $($ProbeDaemon.Id) refused to die; abandoning run."
+              Get-Process | Where-Object { $_.ProcessName -like '*whisper*' -or $_.ProcessName -like '*python*' } | ForEach-Object { Write-Host "Lingering: $($_.ProcessName) (pid $($_.Id))" }
+              throw 'Probe sidecar could not be stopped; refusing to poison the launch check.'
+            }
+            Start-Sleep -Milliseconds 500
+          }
+          Write-Host 'Probe: sidecar probe stopped; launch check below can only match a UI-spawned daemon.'
           $Deadline = [DateTime]::UtcNow.AddSeconds(120)
           while (-not (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue)) {
             if ([DateTime]::UtcNow -ge $Deadline) {
@@ -263,6 +274,13 @@ jobs:
                 Get-Content -LiteralPath $DaemonLog -Tail 40 | ForEach-Object { Write-Host $_ }
               } else {
                 Write-Host "No daemon log at $DaemonLog"
+              }
+              $SidecarLog = Join-Path $env:LOCALAPPDATA 'Whisper\logs\ui-sidecar.log'
+              if (Test-Path -LiteralPath $SidecarLog -PathType Leaf) {
+                Write-Host "--- $SidecarLog (tail) ---"
+                Get-Content -LiteralPath $SidecarLog -Tail 40 | ForEach-Object { Write-Host $_ }
+              } else {
+                Write-Host "No UI sidecar log at $SidecarLog"
               }
               throw 'The installed Whisper daemon sidecar did not launch.'
             }
