@@ -97,9 +97,13 @@ pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: 
         while !supervisor.is_shutdown_requested() {
             let started_at = Instant::now();
             let mut adopted_existing_daemon = false;
+            // NOTE: sidecar() takes the bare binary name, not the externalBin
+            // path ("whisper-daemon", never "binaries/whisper-daemon").
+            // The full path form fails resolution with os error 3 on every
+            // attempt, leaving the UI running with no daemon.
             let child = app
                 .shell()
-                .sidecar("binaries/whisper-daemon")
+                .sidecar("whisper-daemon")
                 .map(|command| command.args(["--ui-token", websocket_token.as_str()]));
             match child.and_then(|command| command.spawn()) {
                 Ok((mut events, child)) => {
