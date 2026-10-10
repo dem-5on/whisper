@@ -24,7 +24,20 @@ impl DaemonSupervisor {
         self.shutdown.store(true, Ordering::SeqCst);
         if let Ok(mut child) = self.child.lock() {
             if let Some(child) = child.take() {
-                let _ = child.kill();
+                // CommandChild::kill waits for exit but swallows nothing here:
+                // its result decides whether the Win32 fallback below runs.
+                // (Previously the result was discarded, silently orphaning
+                // the daemon whenever the plugin kill failed on Windows.)
+                let pid = child.pid();
+                match child.kill() {
+                    Ok(()) => append_sidecar_log(&format!("sidecar kill signaled (pid {pid})")),
+                    Err(error) => {
+                        append_sidecar_log(&format!(
+                            "sidecar kill failed (pid {pid}): {error}; trying TerminateProcess"
+                        ));
+                        force_terminate_process(pid);
+                    }
+                }
             }
         }
     }
@@ -83,6 +96,27 @@ fn append_sidecar_log(message: &str) {
             .unwrap_or(0);
         let _ = writeln!(file, "{secs} {message}");
     }
+}
+
+/// Last-resort termination when the plugin kill reports failure. Runs
+/// immediately on the still-valid pid while the PID-reuse window is tiny.
+#[cfg(windows)]
+fn force_terminate_process(pid: u32) {
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    unsafe {
+        match OpenProcess(PROCESS_TERMINATE, false, pid) {
+            Ok(handle) => {
+                let result = TerminateProcess(handle, 1);
+                append_sidecar_log(&format!("TerminateProcess(pid {pid}) returned {result:?}"));
+            }
+            Err(error) => append_sidecar_log(&format!("OpenProcess(pid {pid}) failed: {error}")),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn force_terminate_process(pid: u32) {
+    append_sidecar_log(&format!("no TerminateProcess fallback off Windows (pid {pid})"));
 }
 
 pub fn supervise(app: AppHandle, supervisor: DaemonSupervisor, websocket_token: String) {

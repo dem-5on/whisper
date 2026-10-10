@@ -186,6 +186,8 @@ def test_packaged_windows_app_owns_a_restarting_daemon_sidecar():
     assert "status.code == Some(75)" in supervisor
     assert "ui-sidecar.log" in supervisor
     assert "sidecar spawn failed" in supervisor
+    assert "TerminateProcess" in supervisor
+    assert "Win32_System_Threading" in (ROOT / "windows-app/src-tauri/Cargo.toml").read_text()
     assert '.sidecar("whisper-daemon")' in supervisor
     assert '.sidecar("binaries/whisper-daemon")' not in supervisor
     assert '.args(["--ui-token", websocket_token.as_str()])' in supervisor
