@@ -220,6 +220,18 @@ jobs:
           $Sidecar = Get-ChildItem -Path $InstallDir -Filter 'whisper-daemon*.exe' -File -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $Sidecar) { throw "The packaged daemon sidecar is missing from $InstallDir." }
           Write-Host "Sidecar present: $($Sidecar.Name) ($($Sidecar.Length) bytes)"
+          # Probe: can the sidecar process even start on this runner? --help
+          # exits 0 via argparse before any server/model work, so a non-zero
+          # or hung probe means a broken binary (hypothesis 2), while exit 0
+          # points at UI-side spawn (hypotheses 1/3). Never fatal by itself.
+          Write-Host 'Probing sidecar startup with --help.'
+          $Probe = Start-Process -FilePath $Sidecar.FullName -ArgumentList '--help' -PassThru
+          if (-not $Probe.WaitForExit(60000)) {
+            Stop-Process -Id $Probe.Id -Force -ErrorAction SilentlyContinue
+            Write-Host 'Probe: sidecar --help did not exit within 60s (unexpected).'
+          } else {
+            Write-Host "Probe: sidecar --help exited with code $($Probe.ExitCode)."
+          }
           $Deadline = [DateTime]::UtcNow.AddSeconds(120)
           while (-not (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue)) {
             if ([DateTime]::UtcNow -ge $Deadline) {
