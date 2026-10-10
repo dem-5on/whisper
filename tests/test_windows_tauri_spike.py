@@ -248,7 +248,9 @@ def test_retired_powershell_installer_stays_out_of_the_download_path():
     assert not (ROOT / "website/download/whisper-installer.ps1").exists()
     assert "install.ps1" not in windows_section.lower()
     assert "whisper-installer.ps1" not in website.lower()
-    assert "Windows download temporarily unavailable" in windows_section
+    assert "Windows download temporarily unavailable" not in windows_section
+    assert "Install Whisper on Windows" in windows_section
+    assert "Download Windows installer" in windows_section
     assert "old PowerShell" in readme
     assert "not the supported Windows installation path" in readme
 
@@ -552,7 +554,9 @@ def test_website_no_longer_offers_the_legacy_powershell_installer():
     assert not (ROOT / "install.ps1").exists()
     assert not (ROOT / "uninstall.ps1").exists()
     assert not (ROOT / "website/download/whisper-installer.ps1").exists()
-    assert "Windows installer is being rebuilt" in page
+    assert "Windows installer is being rebuilt" not in page
+    assert "Install Whisper on Windows" in page
+    assert "Download Windows installer" in page
     assert "Download PowerShell installer" not in page
     assert "install.ps1" not in page
     assert "Do not use `irm .../install.ps1 | iex`" in readme
