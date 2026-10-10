@@ -482,6 +482,9 @@ def test_uninstaller_closes_the_resident_app_and_its_daemon_cleanly():
     assert "try_state::<daemon::DaemonSupervisor>" in source
     assert "request_shutdown" in daemon
     assert "shutdown requested" in (ROOT / "windows-app/src-tauri/src/daemon.rs").read_text()
+    assert "taskkill" in daemon
+    assert '"/T", "/F"' in daemon
+    assert "sidecar process tree terminated" in daemon
 
 
 def test_packaged_tauri_app_registers_global_recording_shortcut():

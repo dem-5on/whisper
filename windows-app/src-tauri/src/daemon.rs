@@ -24,18 +24,30 @@ impl DaemonSupervisor {
         self.shutdown.store(true, Ordering::SeqCst);
         if let Ok(mut child) = self.child.lock() {
             if let Some(child) = child.take() {
-                // CommandChild::kill waits for exit but swallows nothing here:
-                // its result decides whether the Win32 fallback below runs.
-                // (Previously the result was discarded, silently orphaning
-                // the daemon whenever the plugin kill failed on Windows.)
                 let pid = child.pid();
-                match child.kill() {
-                    Ok(()) => append_sidecar_log(&format!("sidecar kill signaled (pid {pid})")),
-                    Err(error) => {
-                        append_sidecar_log(&format!(
-                            "sidecar kill failed (pid {pid}): {error}; trying TerminateProcess"
-                        ));
-                        force_terminate_process(pid);
+                // PyInstaller's --onefile bootloader launches the extracted
+                // application as a child process. Killing CommandChild alone
+                // terminates only the bootloader and leaves the actual daemon
+                // serving behind. Terminate the whole Windows process tree
+                // before falling back to the shell plugin's direct-child kill.
+                #[cfg(windows)]
+                let tree_terminated = terminate_process_tree(pid);
+                #[cfg(not(windows))]
+                let tree_terminated = false;
+
+                if tree_terminated {
+                    append_sidecar_log(&format!("sidecar process tree terminated (pid {pid})"));
+                } else {
+                    match child.kill() {
+                        Ok(()) => {
+                            append_sidecar_log(&format!("sidecar kill signaled (pid {pid})"))
+                        }
+                        Err(error) => {
+                            append_sidecar_log(&format!(
+                                "sidecar kill failed (pid {pid}): {error}; trying TerminateProcess"
+                            ));
+                            force_terminate_process(pid);
+                        }
                     }
                 }
             }
@@ -64,6 +76,34 @@ impl DaemonSupervisor {
     fn clear_child(&self) {
         if let Ok(mut child) = self.child.lock() {
             child.take();
+        }
+    }
+}
+
+/// Stop a Windows sidecar and descendants (notably PyInstaller's onefile
+/// child) as one operation. `CommandChild::kill` only targets the launcher.
+#[cfg(windows)]
+fn terminate_process_tree(pid: u32) -> bool {
+    use std::{os::windows::process::CommandExt, process::Command};
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    match Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(output) if output.status.success() => true,
+        Ok(output) => {
+            append_sidecar_log(&format!(
+                "taskkill process tree failed (pid {pid}, status {}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+            false
+        }
+        Err(error) => {
+            append_sidecar_log(&format!("could not run taskkill for pid {pid}: {error}"));
+            false
         }
     }
 }
