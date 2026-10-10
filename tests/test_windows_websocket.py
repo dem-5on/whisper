@@ -195,9 +195,15 @@ class YieldingSocket:
     async def __anext__(self):
         if self.messages:
             return self.messages.pop(0)
-        if len(self.sent) >= self.max_sends:
-            raise StopAsyncIteration
-        await asyncio.sleep(0.01)
+        # Keep the connection open until the publish task has pushed enough
+        # recording statuses. The old fixed 0.01s sleep raced the publish
+        # task on Windows runners (only the initial status arrived before
+        # the stream was cancelled). Poll for ack + >=2 statuses instead.
+        for _ in range(250):  # ~5s max
+            statuses = [p for p in self.sent if p.get("type") == "status"]
+            if len(statuses) >= 3:
+                break
+            await asyncio.sleep(0.02)
         raise StopAsyncIteration
 
     async def send(self, message):
