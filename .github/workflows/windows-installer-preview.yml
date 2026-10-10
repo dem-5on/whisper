@@ -302,7 +302,23 @@ jobs:
           }
           $Deadline = [DateTime]::UtcNow.AddSeconds(30)
           while (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue) {
-            if ([DateTime]::UtcNow -ge $Deadline) { throw 'Whisper daemon sidecar did not stop with the app.' }
+            if ([DateTime]::UtcNow -ge $Deadline) {
+              Write-Host 'Daemon survived the graceful app exit; process snapshot and logs:'
+              Get-Process | Where-Object { $_.ProcessName -like '*whisper*' -or $_.ProcessName -like '*python*' } | ForEach-Object { Write-Host "Lingering: $($_.ProcessName) (pid $($_.Id))" }
+              $DaemonLog = Join-Path $env:LOCALAPPDATA 'Whisper\logs\daemon.log'
+              if (Test-Path -LiteralPath $DaemonLog -PathType Leaf) {
+                Write-Host "--- $DaemonLog (tail) ---"
+                Get-Content -LiteralPath $DaemonLog -Tail 20 | ForEach-Object { Write-Host $_ }
+              }
+              $SidecarLog = Join-Path $env:LOCALAPPDATA 'Whisper\logs\ui-sidecar.log'
+              if (Test-Path -LiteralPath $SidecarLog -PathType Leaf) {
+                Write-Host "--- $SidecarLog (tail) ---"
+                Get-Content -LiteralPath $SidecarLog -Tail 20 | ForEach-Object { Write-Host $_ }
+              } else {
+                Write-Host "No UI sidecar log at $SidecarLog (shutdown handler never ran)"
+              }
+              throw 'Whisper daemon sidecar did not stop with the app.'
+            }
             Start-Sleep -Milliseconds 250
           }
 

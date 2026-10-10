@@ -450,6 +450,14 @@ fn main() {
         tauri::Builder::default()
             .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
                 if args.iter().any(|argument| argument == UNINSTALL_ARGUMENT) {
+                    // Stop the supervised sidecar here, not only in
+                    // RunEvent::Exit: exiting from inside this callback does
+                    // not reliably deliver the Exit event first, which used
+                    // to orphan a running daemon after uninstall.
+                    #[cfg(feature = "packaged-daemon")]
+                    if let Some(supervisor) = app.try_state::<daemon::DaemonSupervisor>() {
+                        supervisor.request_shutdown();
+                    }
                     app.exit(0);
                 } else {
                     toggle_panel(app);

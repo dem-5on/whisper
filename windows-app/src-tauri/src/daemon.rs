@@ -20,6 +20,7 @@ pub struct DaemonSupervisor {
 
 impl DaemonSupervisor {
     pub fn request_shutdown(&self) {
+        append_sidecar_log("shutdown requested");
         self.shutdown.store(true, Ordering::SeqCst);
         if let Ok(mut child) = self.child.lock() {
             if let Some(child) = child.take() {
