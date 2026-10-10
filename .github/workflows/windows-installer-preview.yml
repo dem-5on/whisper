@@ -210,8 +210,10 @@ jobs:
             if ([DateTime]::UtcNow -ge $Deadline) { throw 'The installed Whisper app did not launch.' }
             Start-Sleep -Milliseconds 250
           }
+          # The sidecar keeps its target-triple filename at runtime
+          # (whisper-daemon-x86_64-pc-windows-msvc.exe), so match the prefix.
           $Deadline = [DateTime]::UtcNow.AddSeconds(30)
-          while (-not (Get-Process -Name 'whisper-daemon' -ErrorAction SilentlyContinue)) {
+          while (-not (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue)) {
             if ([DateTime]::UtcNow -ge $Deadline) { throw 'The installed Whisper daemon sidecar did not launch.' }
             Start-Sleep -Milliseconds 250
           }
@@ -230,7 +232,7 @@ jobs:
             Start-Sleep -Milliseconds 250
           }
           $Deadline = [DateTime]::UtcNow.AddSeconds(30)
-          while (Get-Process -Name 'whisper-daemon' -ErrorAction SilentlyContinue) {
+          while (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue) {
             if ([DateTime]::UtcNow -ge $Deadline) { throw 'Whisper daemon sidecar did not stop with the app.' }
             Start-Sleep -Milliseconds 250
           }
