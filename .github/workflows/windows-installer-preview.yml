@@ -232,6 +232,26 @@ jobs:
           } else {
             Write-Host "Probe: sidecar --help exited with code $($Probe.ExitCode)."
           }
+          # Probe: real startup the way the UI spawns it. --help exits via
+          # argparse before any server/model work; --ui-token runs the full
+          # pipe + websocket server. If this stays alive and writes its log,
+          # the binary is fine and the UI never spawns it. Kill it promptly
+          # so it cannot hold the IPC pipe when the UI retries its spawn.
+          Write-Host 'Probing sidecar real startup with --ui-token.'
+          $ProbeToken = [guid]::NewGuid().ToString()
+          $ProbeDaemon = Start-Process -FilePath $Sidecar.FullName -ArgumentList @('--ui-token', $ProbeToken) -PassThru
+          Start-Sleep -Seconds 20
+          $ProbeAlive = [bool](Get-Process -Id $ProbeDaemon.Id -ErrorAction SilentlyContinue)
+          Write-Host "Probe: sidecar process alive after 20s: $ProbeAlive"
+          $ProbeLog = Join-Path $env:LOCALAPPDATA 'Whisper\logs\daemon.log'
+          if (Test-Path -LiteralPath $ProbeLog -PathType Leaf) {
+            Write-Host "--- $ProbeLog (tail) ---"
+            Get-Content -LiteralPath $ProbeLog -Tail 40 | ForEach-Object { Write-Host $_ }
+          } else {
+            Write-Host "Probe: no daemon log at $ProbeLog"
+          }
+          Stop-Process -Id $ProbeDaemon.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
           $Deadline = [DateTime]::UtcNow.AddSeconds(120)
           while (-not (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue)) {
             if ([DateTime]::UtcNow -ge $Deadline) {
