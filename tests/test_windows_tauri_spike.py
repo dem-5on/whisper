@@ -212,7 +212,7 @@ def test_windows_installer_workflow_smoke_tests_install_startup_and_uninstall():
     assert "[regex]::Match($AutoStart, '^\"([^\"]+)\"')" in workflow
     assert "Microsoft\\Windows\\CurrentVersion\\Run" in workflow
     assert "Start menu shortcut" in workflow
-    assert "Get-Process -Name 'whisper-daemon'" in workflow
+    assert "Get-Process -Name 'whisper-daemon*'" in workflow
     assert "The installed Whisper daemon sidecar did not launch." in workflow
     assert "Whisper daemon sidecar did not stop with the app." in workflow
     assert "--whisper-uninstall" in workflow

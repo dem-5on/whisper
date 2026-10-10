@@ -97,7 +97,7 @@ jobs:
             if ([DateTime]::UtcNow -ge $Deadline) { throw 'The installed Whisper app did not launch.' }
             Start-Sleep -Milliseconds 250
           }
-          if (Get-Process -Name 'whisper-daemon' -ErrorAction SilentlyContinue) {
+          if (Get-Process -Name 'whisper-daemon*' -ErrorAction SilentlyContinue) {
             throw 'The focus-test build unexpectedly started the transcription daemon.'
           }
 
