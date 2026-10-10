@@ -1,3 +1,3 @@
 """Universal, OS-level voice-to-text input."""
 
-__version__ = "2026.10.8"
+__version__ = "2026.10.10"
