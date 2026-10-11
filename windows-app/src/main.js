@@ -35,6 +35,13 @@ const ICON_PATHS = {
     ["path", { d: "M7 5.5h.01M7 12.5h.01M7 19h.01" }],
   ],
   model: [["path", { d: "M9 3h6m-5 0v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3M8 15h8" }]],
+  waveform: [["path", { d: "M3 12h3l2-6 4 12 3-9 2 3h4" }]],
+  pin: [["path", { d: "m16 3 5 5-4 1-4 4 3 3-1 1-4-3-4 4-1 5-1 1-1-6 5-5-4-4-1-4 1-1 4 1 4 4z" }]],
+  settings: [
+    ["path", { d: "M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7z" }],
+    ["path", { d: "m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9z" }],
+  ],
+  close: [["path", { d: "m18 6-12 12M6 6l12 12" }]],
 };
 
 function createIcon(name, className = "icon") {
@@ -51,11 +58,27 @@ function createIcon(name, className = "icon") {
 }
 
 function setActionContent(button, iconName, label) {
-  button.replaceChildren(createIcon(iconName), document.createTextNode(label));
+  const icon = createIcon(iconName);
+  if (button.id === "toggle") {
+    const capsule = document.createElement("span");
+    capsule.className = "action-icon";
+    capsule.append(icon);
+    button.replaceChildren(capsule, document.createTextNode(label));
+  } else {
+    button.replaceChildren(icon, document.createTextNode(label));
+  }
 }
 
 const ui = {
+  statusBanner: document.querySelector("#status-banner"),
   connection: document.querySelector("#connection"),
+  statusActions: document.querySelector("#status-actions"),
+  statusKind: document.querySelector("#status-kind"),
+  errorKeys: document.querySelector("#error-keys"),
+  errorProvider: document.querySelector("#error-provider"),
+  version: document.querySelector("#version"),
+  pin: document.querySelector("#pin"),
+  settings: document.querySelector("#settings"),
   audioMic: document.querySelector("#audio-mic"),
   audioStatus: document.querySelector("#audio-status"),
   audioMeter: document.querySelector("#audio-meter"),
@@ -76,6 +99,7 @@ const ui = {
   liveNote: document.querySelector("#live-note"),
   liveTranscript: document.querySelector("#live-transcript"),
   shortcutNote: document.querySelector("#shortcut-note"),
+  shortcutHint: document.querySelector("#shortcut-hint"),
   hint: document.querySelector("#hint"),
 };
 
@@ -113,6 +137,7 @@ function setConnection(text, connected = false) {
   dot.className = "state-dot";
   ui.connection.append(dot, document.createTextNode(text));
   ui.connection.dataset.connected = String(connected);
+  if (!connected) ui.statusBanner.dataset.state = "disconnected";
   ui.audioStatus.textContent = connected ? "Service ready" : "Waiting for daemon";
   ui.audioStatus.dataset.connected = String(connected);
   if (!connected) renderAudioMeter(0, false);
@@ -150,6 +175,7 @@ async function loadBuildMode() {
   ui.focusResult.hidden = !focusTestBuild;
   if (focusTestBuild) {
     ui.shortcutNote.hidden = true;
+    ui.shortcutHint.hidden = true;
   } else {
     try {
       const shortcutStatus = await invoke("recording_shortcut_status");
@@ -158,10 +184,17 @@ async function loadBuildMode() {
         unavailable: "Ctrl+Space is unavailable because another app is using it",
         development: "Ctrl+Space is enabled in the installed app",
       };
-      ui.shortcutNote.textContent = messages[shortcutStatus] || "";
-      ui.shortcutNote.hidden = !ui.shortcutNote.textContent;
+      if (shortcutStatus === "unavailable") {
+        ui.shortcutNote.textContent = messages[shortcutStatus];
+        ui.shortcutNote.hidden = false;
+        ui.shortcutHint.hidden = true;
+      } else {
+        ui.shortcutNote.hidden = true;
+        ui.shortcutHint.hidden = false;
+      }
     } catch {
       ui.shortcutNote.hidden = true;
+      ui.shortcutHint.hidden = false;
     }
   }
   document.querySelectorAll(".tile[data-setting]").forEach((tile) => {
@@ -190,9 +223,13 @@ function updateStatus(status) {
     : busy
       ? "Transcribing…"
       : state === "ERROR"
-        ? "Needs attention"
+        ? "Attention required"
         : "Ready";
   setConnection(label, active);
+  ui.statusBanner.dataset.state = state === "ERROR" ? "error"
+    : recording ? "recording"
+      : busy ? "processing"
+        : active ? "ready" : "disconnected";
   ui.connection.dataset.recording = String(recording);
   renderAudioMeter(currentStatus.audio_level, recording && active);
   setActionContent(ui.toggle, recording ? "stop" : "mic", recording
@@ -205,6 +242,10 @@ function updateStatus(status) {
   const micLabel = microphoneLabel(currentStatus.mic, microphoneSources);
   document.querySelector("#mic-value").textContent = micLabel;
   ui.audioMic.textContent = micLabel;
+  if (currentStatus.version) {
+    ui.version.textContent = `v${currentStatus.version}`;
+    ui.version.hidden = false;
+  }
   setTileTitle("provider", providerLabel(currentStatus.backend));
   setTileTitle("model", currentStatus.model || "base");
   setTileTitle("mic", microphoneLabel(currentStatus.mic, microphoneSources));
@@ -241,6 +282,9 @@ function updateStatus(status) {
   ui.transcript.textContent = currentStatus.last_preview || "";
   ui.transcript.hidden = !currentStatus.last_preview;
   showError(currentStatus.error || "");
+  const requiresKey = /API[_ ]KEY|API key|authentication|unauthorized/i.test(currentStatus.error || "");
+  ui.statusActions.hidden = !requiresKey;
+  ui.statusKind.hidden = !requiresKey;
 }
 
 function providerLabel(provider) {
@@ -479,6 +523,10 @@ ui.toggle.addEventListener("click", toggleRecording);
 setActionContent(ui.toggle, "mic", "Start recording");
 setActionContent(ui.cancel, "cancel", "Cancel");
 setActionContent(ui.copy, "copy", "Copy transcript");
+document.querySelector(".brand-mark").replaceChildren(createIcon("waveform", "header-icon"));
+ui.pin.replaceChildren(createIcon("pin", "header-icon"));
+ui.settings.replaceChildren(createIcon("settings", "header-icon"));
+document.querySelector("#close").replaceChildren(createIcon("close", "header-icon"));
 document.querySelectorAll(".tile-icon[data-icon]").forEach((element) => {
   element.append(createIcon(element.dataset.icon, "icon tile-symbol"));
 });
@@ -507,13 +555,30 @@ document.querySelectorAll(".tile").forEach((tile) => {
   tile.addEventListener("click", () => openChooser(tile.dataset.setting));
 });
 document.querySelector("#close").addEventListener("click", () => getCurrentWindow().hide());
-ui.manageKeys.addEventListener("click", async () => {
+let panelPinned = true;
+ui.pin.addEventListener("click", async () => {
+  const nextPinned = !panelPinned;
+  try {
+    await getCurrentWindow().setAlwaysOnTop(nextPinned);
+    panelPinned = nextPinned;
+    ui.pin.setAttribute("aria-pressed", String(panelPinned));
+    ui.pin.setAttribute("aria-label", panelPinned ? "Unpin panel from top" : "Pin panel on top");
+    ui.pin.title = panelPinned ? "Unpin overlay" : "Pin overlay";
+  } catch (error) {
+    showError(error.message);
+  }
+});
+async function openKeySettings() {
   try {
     await invoke("show_key_settings");
   } catch (error) {
     showError(error.message);
   }
-});
+}
+ui.settings.addEventListener("click", openKeySettings);
+ui.manageKeys.addEventListener("click", openKeySettings);
+ui.errorKeys.addEventListener("click", openKeySettings);
+ui.errorProvider.addEventListener("click", () => openChooser("provider"));
 listen("panel-shown", closeChooser);
 listen("daemon-process", ({ payload }) => {
   if (typeof payload !== "string") return;

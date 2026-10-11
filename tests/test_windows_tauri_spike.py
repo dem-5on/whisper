@@ -491,9 +491,12 @@ def test_packaged_tauri_app_registers_global_recording_shortcut():
     manifest = (ROOT / "windows-app/src-tauri/Cargo.toml").read_text()
     rust = (ROOT / "windows-app/src-tauri/src/main.rs").read_text()
     frontend = (ROOT / "windows-app/src/main.js").read_text()
+    capabilities = (ROOT / "windows-app/src-tauri/capabilities/default.json").read_text()
 
     assert 'tauri-plugin-global-shortcut = "2"' in manifest
     assert "Shortcut::new(Some(Modifiers::CONTROL), Code::Space)" in rust
+    assert '"core:window:allow-set-always-on-top"' in capabilities
+    assert "setAlwaysOnTop(nextPinned)" in frontend
     assert 'available: "Ctrl+Space · Start or stop recording"' in frontend
     assert 'unavailable: "Ctrl+Space is unavailable because another app is using it"' in frontend
     assert 'app.emit("recording-hotkey", ())' in rust

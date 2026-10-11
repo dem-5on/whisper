@@ -9,26 +9,39 @@
   <body>
     <main class="panel" aria-label="Whisper panel">
       <header class="heading">
-        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
-        <div>
-          <h1>Whisper</h1>
-          <p>Push-to-talk transcription</p>
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="brand-copy">
+            <div class="brand-title"><h1>Whisper</h1><span id="version" class="version-badge" hidden></span></div>
+            <p>Push-to-talk transcription</p>
+          </div>
         </div>
-        <button id="close" class="close" aria-label="Hide Whisper panel">×</button>
+        <nav class="header-actions" aria-label="Panel controls">
+          <button id="pin" class="header-action" type="button" aria-label="Unpin panel from top" aria-pressed="true" title="Unpin overlay"></button>
+          <button id="settings" class="header-action" type="button" aria-label="Provider key settings" title="Settings"></button>
+          <button id="close" class="header-action close" type="button" aria-label="Hide Whisper panel" title="Hide panel"></button>
+        </nav>
       </header>
 
-      <p class="state" id="connection"><span class="state-dot"></span>Connecting to Whisper…</p>
+      <section class="status-banner" id="status-banner" data-state="connecting">
+        <p class="state" id="connection"><span class="state-dot"></span>Connecting to Whisper…</p>
+        <span id="status-kind" class="status-kind" hidden>Auth error</span>
+        <p class="error" id="error" role="alert" hidden></p>
+        <div class="status-actions" id="status-actions" hidden>
+          <button id="error-keys" type="button">Enter API Key</button>
+          <button id="error-provider" type="button">Switch Provider</button>
+        </div>
+      </section>
       <button id="reconnect" class="reconnect" type="button" hidden>Retry now</button>
       <p class="focus-result" id="focus-result" hidden></p>
-      <p class="error" id="error" role="alert" hidden></p>
 
       <section class="actions" aria-label="Recording controls">
         <button id="toggle" class="action primary" disabled>Start recording</button>
         <button id="cancel" class="action" disabled>Cancel</button>
       </section>
 
-      <div class="audio-monitor" aria-live="polite">
-        <span class="audio-source"><span class="audio-dot"></span>Input: <strong id="audio-mic">Default</strong></span>
+      <div class="audio-monitor" aria-live="off">
+        <span class="audio-source"><span class="audio-dot"></span>Mic ready: <strong id="audio-mic">Default</strong></span>
         <div id="audio-meter" class="audio-meter" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Not recording" data-active="false">
           <span class="meter-bar"></span><span class="meter-bar"></span><span class="meter-bar"></span><span class="meter-bar"></span><span class="meter-bar"></span>
         </div>
@@ -78,8 +91,11 @@
           <button id="retry" class="action" disabled>Re-transcribe last</button>
         </div>
         <p id="transcript" class="transcript" hidden></p>
+        <div class="shortcut-hint" id="shortcut-hint" hidden>
+          <span>Shortcut:</span><kbd>Ctrl</kbd><span>+</span><kbd>Space</kbd><span class="shortcut-separator">•</span><span>Press to toggle recording</span>
+        </div>
+        <p id="shortcut-note" class="shortcut-note" hidden></p>
       </section>
-      <p id="shortcut-note" class="shortcut-note" hidden></p>
       <p id="hint" class="hint" hidden>Focus-test: opening this panel must leave the app behind it active.</p>
     </main>
     <script type="module" src="/src/main.js"></script>

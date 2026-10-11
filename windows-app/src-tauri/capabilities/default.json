@@ -5,6 +5,7 @@
   "windows": ["main", "keys"],
   "permissions": [
     "core:default",
+    "core:window:allow-set-always-on-top",
     "clipboard-manager:allow-write-text",
     {
       "identifier": "shell:allow-spawn",
