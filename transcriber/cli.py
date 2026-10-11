@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "retry-session", "export-session", "export-session-audio", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -33,6 +33,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
     parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or exports")
     parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
+    parser.add_argument("--action", choices=("list", "add", "remove"), help="Dictionary action")
+    parser.add_argument("--term", default=None, help="One custom vocabulary term")
     parser.add_argument("--mode", choices=("lecture", "meeting"), help="Mode for start-session")
     parser.add_argument("--consent", action="store_true", help="Confirm people being recorded have been informed")
     parser.add_argument("--key", default=None, help="API key value (omit for a hidden prompt)")
@@ -84,6 +86,13 @@ def main() -> None:
         payload["command"] = "export_session_audio"
         payload["session_id"] = args.session
         payload["output"] = str(args.output.expanduser().resolve())
+    elif args.command == "dictionary":
+        action = args.action or "list"
+        if action in {"add", "remove"} and not args.term:
+            parser.error(f"dictionary --action {action} requires --term")
+        payload["action"] = action
+        if args.term is not None:
+            payload["term"] = args.term
     elif args.command == "start-session":
         if not args.mode:
             parser.error("start-session requires --mode lecture|meeting")
@@ -148,6 +157,12 @@ def main() -> None:
         print(response.get("export_path", ""))
     elif args.command == "export-session-audio":
         print(response.get("export_path", ""))
+    elif args.command == "dictionary":
+        if args.action in {"add", "remove"}:
+            print("Dictionary updated" if response.get("changed") else "Dictionary unchanged")
+        else:
+            for term in response.get("terms", []):
+                print(term)
     elif args.command == "mics":
         for mic in response.get("mics", []):
             marker = "*" if mic.get("default") else " "

@@ -222,6 +222,24 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(refused["ok"], "false")
         self.assertIn("already exists", refused["error"])
 
+    def test_dictionary_commands_persist_terms_and_supply_local_recognition_hint(self) -> None:
+        added = self.daemon.command("dictionary", {"action": "add", "term": "CTranslate2"})
+        duplicate = self.daemon.command("dictionary", {"action": "add", "term": "ctranslate2"})
+        listed = self.daemon.command("dictionary", {"action": "list"})
+        self.assertEqual(added["ok"], "true")
+        self.assertTrue(added["changed"])
+        self.assertFalse(duplicate["changed"])
+        self.assertEqual(listed["terms"], ["CTranslate2"])
+
+        backend = type("PromptBackend", (), {"set_initial_prompt": lambda self, value: setattr(self, "prompt", value)})()
+        with patch("transcriber.daemon.make_backend", return_value=backend):
+            self.daemon._make_backend(self.daemon.config.transcription)
+        self.assertIn("CTranslate2", backend.prompt)
+
+        removed = self.daemon.command("dictionary", {"action": "remove", "term": "ctranslate2"})
+        self.assertTrue(removed["changed"])
+        self.assertEqual(self.daemon.command("dictionary")["terms"], [])
+
     def test_active_session_cannot_be_deleted(self) -> None:
         self.daemon.command("toggle")
         session_id = self.daemon._stored_session_id

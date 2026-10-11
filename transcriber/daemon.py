@@ -46,6 +46,7 @@ from .processing import process_transcript
 from .state import State
 from .session_store import SessionStore, SessionStoreError
 from .session_export import export_session_audio, export_session_markdown
+from .vocabulary import VocabularyError, VocabularyStore
 from .streaming import LiveSession
 from .transcription import TranscriptionError, make_backend, preload_local_model, transcribe_long_audio
 from .vad import SpeechEndpoint, create_vad
@@ -122,6 +123,7 @@ class TranscriberDaemon:
         self._last_duration: float | None = None
         self._data_dir = data_dir or default_data_dir()
         self._session_store = SessionStore(self._data_dir)
+        self._vocabulary = VocabularyStore(self._data_dir)
         try:
             recovered = self._session_store.recover_interrupted()
             if recovered:
@@ -191,6 +193,8 @@ class TranscriberDaemon:
             return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
         if command == "export_session_audio":
             return self._export_session_audio(str(params.get("session_id", "")), str(params.get("output", "")))
+        if command == "dictionary":
+            return self._dictionary_command(str(params.get("action", "list")), params.get("term"))
         if command == "retry_session":
             return self._retry_session(str(params.get("session_id", "")))
         if command == "mics":
@@ -555,6 +559,24 @@ class TranscriberDaemon:
                 return {**self._status_locked(), "ok": "false", "error": "Could not export the session recording; check the path and permissions"}
         with self._lock:
             return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
+
+    def _dictionary_command(self, action: str, raw_term: Any) -> dict[str, Any]:
+        try:
+            if action == "list":
+                terms = self._vocabulary.list()
+                changed = False
+            elif action == "add":
+                terms, changed = self._vocabulary.add(raw_term)
+            elif action == "remove":
+                terms, changed = self._vocabulary.remove(raw_term)
+            else:
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": "Dictionary action must be list, add, or remove"}
+        except VocabularyError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "terms": terms, "changed": changed}
 
     def _retry_session(self, session_id: str) -> dict[str, Any]:
         if not session_id:
@@ -934,7 +956,7 @@ class TranscriberDaemon:
             is_active=self._live_session_active,
             has_speech=lambda: self._live_has_speech(session_id),
             window_bytes=self._live_window_bytes,
-            create_backend=lambda: make_backend(dataclasses.replace(
+            create_backend=lambda: self._make_backend(dataclasses.replace(
                 live_transcription, backend="local", model=live_streaming.model,
             )),
             decode=self._decode_live_samples,
@@ -1096,6 +1118,13 @@ class TranscriberDaemon:
         with self._inference_lock:
             return backend.transcribe_samples(samples)
 
+    def _make_backend(self, config: Any) -> Any:
+        backend = make_backend(config)
+        set_prompt = getattr(backend, "set_initial_prompt", None)
+        if config.backend == "local" and callable(set_prompt):
+            set_prompt(self._vocabulary.initial_prompt())
+        return backend
+
     def _publish_live_partial(self, session_id: str, text: str, generation: int) -> None:
         self._push_live_event(session_id, "partial", text, generation)
 
@@ -1194,7 +1223,7 @@ class TranscriberDaemon:
                             transcription_config, backend="local", model="base",
                         )
                     with self._inference_lock:
-                        backend = make_backend(transcription_config)
+                        backend = self._make_backend(transcription_config)
                         transcript = (
                             transcribe_long_audio(backend, audio)
                             if mode in {"lecture", "meeting"}

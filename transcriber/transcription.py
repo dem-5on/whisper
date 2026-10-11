@@ -89,6 +89,10 @@ class FasterWhisperBackend:
         self.language = language
         self.device = device
         self.compute_type = compute_type
+        self.initial_prompt: str | None = None
+
+    def set_initial_prompt(self, prompt: str | None) -> None:
+        self.initial_prompt = prompt
 
     def _cache_key(self) -> tuple[str, str, str]:
         return (self.model, self.device, self.compute_type)
@@ -132,6 +136,8 @@ class FasterWhisperBackend:
         try:
             model = self.ensure_loaded()
             kwargs = {"language": self.language} if self.language else {}
+            if self.initial_prompt:
+                kwargs["initial_prompt"] = self.initial_prompt
             segments, _ = model.transcribe(samples, **kwargs)
             return "".join(segment.text for segment in segments).strip()
         except TranscriptionError:

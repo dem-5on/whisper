@@ -103,6 +103,9 @@ wicx delete-session --session <id>  # permanently delete that local history reco
 wicx retry-session --session <id>  # explicitly retry a failed Lecture/Meeting from its saved audio
 wicx export-session --session <id> --output ./lecture.md  # export transcript and generated outputs as Markdown
 wicx export-session-audio --session <id> --output ./lecture.wav  # copy the retained Lecture/Meeting recording
+wicx dictionary --action list
+wicx dictionary --action add --term 'CTranslate2'
+wicx dictionary --action remove --term 'CTranslate2'
 wicx start-session --mode lecture|meeting --consent  # start a retained long-form session
 wicx stop-session  # finish the active Lecture or Meeting and transcribe locally
 wicx mics [--json]    # list PipeWire/Pulse capture sources

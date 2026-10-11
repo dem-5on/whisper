@@ -11,7 +11,7 @@ from types import ModuleType
 from unittest.mock import MagicMock, patch
 
 from transcriber.config import TranscriptionConfig
-from transcriber.transcription import FasterWhisperBackend, OpenAICompatibleBackend, TranscriptionError, _multipart, make_backend, read_standard_wav
+from transcriber.transcription import FasterWhisperBackend, OpenAICompatibleBackend, TranscriptionError, _multipart, clear_model_cache, make_backend, read_standard_wav
 
 
 class TranscriptionTests(unittest.TestCase):
@@ -54,6 +54,8 @@ class TranscriptionTests(unittest.TestCase):
 
     @unittest.skipUnless(find_spec("numpy"), "numpy is installed with the local backend extra")
     def test_local_backend_passes_normalized_samples_not_a_path(self) -> None:
+        clear_model_cache()
+        self.addCleanup(clear_model_cache)
         fake_model = MagicMock()
         fake_model.transcribe.return_value = ([MagicMock(text="hello")], None)
         module = ModuleType("faster_whisper")
@@ -62,3 +64,22 @@ class TranscriptionTests(unittest.TestCase):
             self.assertEqual(FasterWhisperBackend("base").transcribe(Path("audio.wav")), "hello")
         fake_model.transcribe.assert_called_once_with(unittest.mock.ANY)
         module.WhisperModel.assert_called_once_with("base", device="cpu", compute_type="int8")
+
+    @unittest.skipUnless(find_spec("numpy"), "numpy is installed with the local backend extra")
+    def test_local_backend_passes_custom_vocabulary_as_recognition_context(self) -> None:
+        clear_model_cache()
+        self.addCleanup(clear_model_cache)
+        fake_model = MagicMock()
+        fake_model.transcribe.return_value = ([MagicMock(text="Wicx")], None)
+        module = ModuleType("faster_whisper")
+        module.WhisperModel = MagicMock(return_value=fake_model)  # type: ignore[attr-defined]
+        backend = FasterWhisperBackend("base")
+        backend.set_initial_prompt("Use these preferred spellings: Wicx, CTranslate2")
+        with patch.dict(sys.modules, {"faster_whisper": module}), patch(
+            "transcriber.transcription.read_standard_wav", return_value=MagicMock()
+        ):
+            self.assertEqual(backend.transcribe(Path("audio.wav")), "Wicx")
+        fake_model.transcribe.assert_called_once_with(
+            unittest.mock.ANY,
+            initial_prompt="Use these preferred spellings: Wicx, CTranslate2",
+        )
