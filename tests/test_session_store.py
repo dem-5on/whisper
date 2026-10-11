@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from transcriber.session_store import SessionStore
+from transcriber.session_store import SessionStore, SessionStoreError
 
 
 class SessionStoreTests(unittest.TestCase):
@@ -62,6 +63,17 @@ class SessionStoreTests(unittest.TestCase):
         self.assertFalse(session.audio_path.parent.exists())
         with self.assertRaises(KeyError):
             self.store.get(session.id)
+
+    def test_failed_audio_removal_keeps_session_indexed_for_retry(self) -> None:
+        session = self.store.create("meeting")
+        session.audio_path.write_bytes(b"recording")
+
+        with patch("transcriber.session_store.shutil.rmtree", side_effect=PermissionError("locked")):
+            with self.assertRaises(SessionStoreError):
+                self.store.delete(session.id)
+
+        self.assertTrue(session.audio_path.is_file())
+        self.assertEqual(self.store.get(session.id).id, session.id)
 
     def test_recovery_marks_unfinished_long_sessions_and_preserves_audio(self) -> None:
         lecture = self.store.create("lecture")

@@ -231,11 +231,15 @@ class SessionStore:
         record = self.get(session_id)
         session_dir = record.audio_path.parent
         try:
+            # Remove the bytes before the index row. If filesystem deletion
+            # fails, leave the session visible and retryable instead of
+            # orphaning private audio with no history entry to find it.
+            if session_dir.exists():
+                shutil.rmtree(session_dir, ignore_errors=False)
             with self._connect() as connection:
                 cursor = connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
                 if cursor.rowcount == 0:
                     raise KeyError(session_id)
-            shutil.rmtree(session_dir, ignore_errors=False)
         except (OSError, sqlite3.Error) as exc:
             raise SessionStoreError("Could not delete local session data") from exc
 
