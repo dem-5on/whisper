@@ -45,6 +45,7 @@ from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallback
 from .processing import process_transcript
 from .state import State
 from .session_store import SessionStore, SessionStoreError
+from .session_export import export_session_markdown
 from .streaming import LiveSession
 from .transcription import TranscriptionError, make_backend, preload_local_model, transcribe_long_audio
 from .vad import SpeechEndpoint, create_vad
@@ -186,6 +187,8 @@ class TranscriberDaemon:
             return self._get_sessions(params.get("limit", 50))
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
+        if command == "export_session":
+            return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
         if command == "retry_session":
             return self._retry_session(str(params.get("session_id", "")))
         if command == "mics":
@@ -501,6 +504,29 @@ class TranscriberDaemon:
                 return {**self._status_locked(), "ok": "false", "error": "Could not delete local session data"}
         with self._lock:
             return {**self._status_locked(), "ok": "true", "deleted_session_id": session_id}
+
+    def _export_session(self, session_id: str, output: str) -> dict[str, Any]:
+        if not session_id or not output:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier and output path are required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        try:
+            exported = export_session_markdown(stored, output)
+        except FileExistsError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The export file already exists; choose another path"}
+        except OSError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not write the session export; check the path and permissions"}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
 
     def _retry_session(self, session_id: str) -> dict[str, Any]:
         if not session_id:

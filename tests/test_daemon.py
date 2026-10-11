@@ -190,6 +190,31 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(self.daemon.command("history")["history"], [])
         self.assertEqual(self.daemon.command("delete_session", {"session_id": session_id})["ok"], "false")
 
+    def test_export_session_writes_markdown_without_overwriting(self) -> None:
+        stored = self.daemon._session_store.create("lecture")
+        self.daemon._session_store.update(
+            stored.id,
+            state="ready",
+            source_transcript="The lesson begins.",
+            outputs={"notes": ["First topic"]},
+            finished=True,
+        )
+        destination = self.data / "exports" / "lecture.md"
+        destination.parent.mkdir()
+
+        exported = self.daemon.command("export_session", {
+            "session_id": stored.id, "output": str(destination),
+        })
+
+        self.assertEqual(exported["ok"], "true")
+        self.assertEqual(Path(exported["export_path"]), destination)
+        self.assertIn("The lesson begins.", destination.read_text(encoding="utf-8"))
+        refused = self.daemon.command("export_session", {
+            "session_id": stored.id, "output": str(destination),
+        })
+        self.assertEqual(refused["ok"], "false")
+        self.assertIn("already exists", refused["error"])
+
     def test_active_session_cannot_be_deleted(self) -> None:
         self.daemon.command("toggle")
         session_id = self.daemon._stored_session_id
