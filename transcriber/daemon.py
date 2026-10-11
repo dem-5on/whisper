@@ -48,7 +48,12 @@ from .session_store import SessionStore, SessionStoreError
 from .session_export import export_session_audio, export_session_markdown
 from .vocabulary import VocabularyError, VocabularyStore
 from .streaming import LiveSession
-from .transcription import TranscriptionError, make_backend, preload_local_model, transcribe_long_audio
+from .transcription import (
+    TranscriptionError,
+    make_backend,
+    preload_local_model,
+    transcribe_long_audio_with_segments,
+)
 from .vad import SpeechEndpoint, create_vad
 
 LOG = logging.getLogger("transcriber")
@@ -1270,6 +1275,7 @@ class TranscriberDaemon:
         mode: str = "dictation", publish_live: bool = True,
     ) -> None:
         started = time.monotonic()
+        transcript_segments: list[dict[str, Any]] = []
         backend_name = self.config.transcription.backend
         if mode in {"lecture", "meeting"}:
             backend_name = "local"
@@ -1298,17 +1304,21 @@ class TranscriberDaemon:
                         )
                     with self._inference_lock:
                         backend = self._make_backend(transcription_config)
-                        transcript = (
-                            transcribe_long_audio(backend, audio)
-                            if mode in {"lecture", "meeting"}
-                            else backend.transcribe(audio)
-                        )
+                        if mode in {"lecture", "meeting"}:
+                            transcript, transcript_segments = transcribe_long_audio_with_segments(backend, audio)
+                        else:
+                            transcript = backend.transcribe(audio)
             except Exception as exc:
                 LOG.error("Transcription failed: %s", _safe_error(exc))
                 self._fail(f"Transcription failed ({_short_reason(exc)})")
                 return
             try:
                 text = process_transcript(transcript, self.config.processing)
+                if transcript_segments:
+                    transcript_segments = [
+                        {**segment, "text": process_transcript(segment["text"], self.config.processing)}
+                        for segment in transcript_segments
+                    ]
             except Exception:
                 LOG.error("Text processing failed")
                 self._fail("Text processing failed")
@@ -1324,6 +1334,7 @@ class TranscriberDaemon:
                         session_id,
                         state="ready",
                         source_transcript=text,
+                        segments=transcript_segments,
                         error="",
                         finished=True,
                     )

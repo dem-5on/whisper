@@ -83,3 +83,27 @@ class TranscriptionTests(unittest.TestCase):
             unittest.mock.ANY,
             initial_prompt="Use these preferred spellings: Wicx, CTranslate2",
         )
+
+    @unittest.skipUnless(find_spec("numpy"), "numpy is installed with the local backend extra")
+    def test_local_backend_preserves_timestamped_segments_and_chunk_offset(self) -> None:
+        clear_model_cache()
+        self.addCleanup(clear_model_cache)
+        raw = MagicMock(start=1.25, end=2.5, text=" words ")
+        fake_model = MagicMock()
+        fake_model.transcribe.return_value = ([raw], None)
+        module = ModuleType("faster_whisper")
+        module.WhisperModel = MagicMock(return_value=fake_model)  # type: ignore[attr-defined]
+        backend = FasterWhisperBackend("base", language="en")
+        backend.set_initial_prompt("Wicx")
+
+        with patch.dict(sys.modules, {"faster_whisper": module}):
+            segments = backend.transcribe_samples_with_timestamps(
+                MagicMock(), offset_seconds=300.0,
+            )
+
+        self.assertEqual(segments, [{
+            "start_seconds": 301.25, "end_seconds": 302.5, "text": "words",
+        }])
+        fake_model.transcribe.assert_called_once_with(
+            unittest.mock.ANY, language="en", initial_prompt="Wicx",
+        )

@@ -325,10 +325,37 @@ class DaemonTests(unittest.TestCase):
         saved = self.daemon._session_store.get(session_id)
         self.assertEqual(saved.mode, "meeting")
         self.assertEqual(saved.source_transcript, "lecture words")
+        self.assertEqual(saved.segments, [])
         session_list = self.daemon.command("sessions")["sessions"]
         self.assertEqual(session_list[0]["mode"], "meeting")
         self.assertTrue(session_list[0]["audio_available"])
         self.assertEqual(audio_path.read_bytes(), b"wav")
+
+    def test_long_session_persists_timestamped_transcription_segments(self) -> None:
+        delivery = FakeDelivery()
+        segments = [{
+            "start_seconds": 0.25,
+            "end_seconds": 1.5,
+            "text": "lecture words",
+            "speaker_id": None,
+        }]
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend()), patch(
+            "transcriber.daemon.transcribe_long_audio_with_segments",
+            return_value=("lecture words", segments),
+        ), patch("transcriber.daemon.make_delivery", return_value=delivery):
+            started = self.daemon.command("start_session", {
+                "mode": "lecture", "consent_acknowledged": True,
+            })
+            self.assertEqual(started["state"], "RECORDING")
+            session_id = self.daemon._stored_session_id
+            self.assertIsNotNone(session_id)
+            self.daemon.command("stop_session")
+            self.wait_for(State.IDLE)
+
+        assert session_id is not None
+        saved = self.daemon._session_store.get(session_id)
+        self.assertEqual(saved.source_transcript, "lecture words")
+        self.assertEqual(saved.segments, segments)
 
     def test_processing_failure_enters_error_with_reason(self) -> None:
         with patch("transcriber.daemon.make_backend", side_effect=RuntimeError("boom")):

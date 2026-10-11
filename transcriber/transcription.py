@@ -58,6 +58,57 @@ def transcribe_long_audio(backend: Any, audio: Path, *, chunk_seconds: int = 300
         raise TranscriptionError(f"Could not decode long-session audio: {detail or type(exc).__name__}") from exc
 
 
+def transcribe_long_audio_with_segments(
+    backend: Any, audio: Path, *, chunk_seconds: int = 300,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Transcribe long audio and preserve chunk-relative timestamps when available.
+
+    Backends without timestamp support retain their existing plain-text behavior;
+    no timing is fabricated for them.
+    """
+    transcribe_samples = getattr(backend, "transcribe_samples_with_timestamps", None)
+    if not callable(transcribe_samples):
+        return transcribe_long_audio(backend, audio, chunk_seconds=chunk_seconds), []
+    if not isinstance(chunk_seconds, int) or isinstance(chunk_seconds, bool) or chunk_seconds < 1:
+        raise ValueError("chunk_seconds must be a positive integer")
+    try:
+        import numpy as np
+
+        segments: list[dict[str, Any]] = []
+        chunk_texts: list[str] = []
+        with wave.open(str(audio), "rb") as source:
+            if source.getnchannels() != 1 or source.getsampwidth() != 2 or source.getframerate() != 16_000:
+                raise TranscriptionError("Long-session audio must be 16 kHz mono PCM WAV")
+            frames_per_chunk = chunk_seconds * source.getframerate()
+            offset_seconds = 0.0
+            while True:
+                frames = source.readframes(frames_per_chunk)
+                if not frames:
+                    break
+                samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+                chunk_segments = transcribe_samples(samples, offset_seconds=offset_seconds)
+                for segment in chunk_segments:
+                    text = segment["text"].strip()
+                    if not text:
+                        continue
+                    segments.append({
+                        "start_seconds": float(segment["start_seconds"]),
+                        "end_seconds": float(segment["end_seconds"]),
+                        "text": text,
+                        "speaker_id": None,
+                    })
+                    chunk_texts.append(text)
+                offset_seconds += len(frames) / (2 * source.getframerate())
+        if not segments:
+            raise TranscriptionError("No speech detected")
+        return " ".join(chunk_texts), segments
+    except TranscriptionError:
+        raise
+    except (OSError, wave.Error, ImportError, ValueError, KeyError, TypeError) as exc:
+        detail = str(exc).replace("\n", " ")[:300]
+        raise TranscriptionError(f"Could not decode long-session audio: {detail or type(exc).__name__}") from exc
+
+
 # Process-wide WhisperModel cache keyed by (model, device, compute_type).
 # ``FasterWhisperBackend.transcribe()`` used to construct a WhisperModel on
 # every recording (multi-second startup latency); wrappers are still cheap
@@ -140,6 +191,31 @@ class FasterWhisperBackend:
                 kwargs["initial_prompt"] = self.initial_prompt
             segments, _ = model.transcribe(samples, **kwargs)
             return "".join(segment.text for segment in segments).strip()
+        except TranscriptionError:
+            raise
+        except Exception as exc:
+            detail = str(exc).replace("\n", " ")[:500]
+            raise TranscriptionError(f"Local transcription failed: {detail or type(exc).__name__}") from exc
+
+    def transcribe_samples_with_timestamps(
+        self, samples: Any, *, offset_seconds: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Decode one bounded audio chunk and return segment times on the source timeline."""
+        try:
+            model = self.ensure_loaded()
+            kwargs = {"language": self.language} if self.language else {}
+            if self.initial_prompt:
+                kwargs["initial_prompt"] = self.initial_prompt
+            raw_segments, _info = model.transcribe(samples, **kwargs)
+            return [
+                {
+                    "start_seconds": float(segment.start) + offset_seconds,
+                    "end_seconds": float(segment.end) + offset_seconds,
+                    "text": str(segment.text).strip(),
+                }
+                for segment in raw_segments
+                if str(segment.text).strip()
+            ]
         except TranscriptionError:
             raise
         except Exception as exc:

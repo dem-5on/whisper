@@ -125,10 +125,11 @@ wicx set-key --provider groq|openrouter|openai|hosted-whisper --clear      # rem
 ```
 
 Meeting speaker display names are stored with the local session and included in
-Markdown exports. Automatic speaker diarization is not implemented yet; this
-command provides the persistent naming layer for detected `speaker_N` IDs.
-Sessions can now also store timestamped text segments with optional stable
-speaker IDs, while retaining the original plain-text transcript for compatibility.
+Markdown exports. Local Faster-Whisper Lecture and Meeting transcripts now save
+the model's timestamped text segments as well as the plain-text transcript.
+Speaker IDs remain unassigned until diarization is implemented; the naming
+command and segment schema provide the persistence layer for that later feature.
+Other backends that do not expose timestamps continue to save plain text only.
 
 `whisper`, `whisper-daemon`, `transcriber`, and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.
 
