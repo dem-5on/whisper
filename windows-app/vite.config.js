@@ -5,10 +5,10 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    // Cargo creates and replaces locked executables under target while Tauri
-    // is compiling. They are not frontend sources and can crash Vite's watcher
-    // on Windows if watched recursively.
-    watch: { ignored: ["**/src-tauri/target/**"] },
+    // Rust sources and generated Cargo/Tauri files are not frontend sources.
+    // In particular, Windows locks build executables and generated schemas
+    // while compiling, which can crash Vite's recursive watcher with EBUSY.
+    watch: { ignored: ["**/src-tauri/**"] },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
