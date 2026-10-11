@@ -9,7 +9,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import wave
 from typing import Any
 
@@ -17,10 +17,10 @@ from .auth import TokenAuthenticator
 from .diarization_jobs import DiarizationJobManager, create_audio_tempfile
 from .entitlements import EntitlementConfigError, EntitlementStore
 from .sessions import ServiceError
-from .billing import BillingStore
+from .billing import BillingStore, BillingStoreError
 from .paystack import (
     PaystackPlan, PaystackWebhookError, apply_paystack_subscription_event,
-    validate_checkout_request, verify_paystack_webhook,
+    validate_checkout_request, verified_transaction_matches, verify_paystack_webhook,
 )
 
 
@@ -121,6 +121,64 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             )
         except PaystackWebhookError as exc:
             return web.json_response({"error": "invalid_webhook", "message": str(exc)}, status=401)
+        if event.name == "charge.success":
+            reference = event.data.get("reference")
+            if not isinstance(reference, str) or not reference:
+                return web.json_response({"received": True, "applied": False})
+            subscription = event.data.get("subscription")
+            subscription_code = subscription.get("subscription_code") if isinstance(subscription, dict) else None
+            try:
+                checkout = billing_store.get_checkout(reference)
+                current = (billing_store.get_subscription("paystack", subscription_code)
+                           if isinstance(subscription_code, str) else None)
+            except BillingStoreError as exc:
+                logger.error("Could not read Paystack mapping (%s)", type(exc).__name__)
+                return web.json_response({"error": "billing_unavailable"}, status=503)
+            if checkout is None and current is None:
+                # Do not query Paystack or create an account mapping for an
+                # uncorrelated charge notification.
+                return web.json_response({"received": True, "applied": False})
+            expected_plan_id = checkout["plan_id"] if checkout else current["plan_id"]
+            plan = paystack_plans.get(str(expected_plan_id)) if paystack_plans else None
+            expected_amount = checkout["amount_minor"] if checkout else (plan.amount_minor if plan else None)
+            expected_currency = checkout["currency"] if checkout else (plan.currency if plan else None)
+            if (plan is None or not isinstance(expected_amount, int) or
+                    expected_amount != plan.amount_minor or expected_currency != plan.currency):
+                return web.json_response({"received": True, "applied": False})
+            if checkout is not None:
+                # The durable checkout mapping, not webhook-supplied metadata,
+                # is authoritative for the first account-to-subscription link.
+                verified_data = dict(event.data)
+                verified_data["metadata"] = {
+                    "wicx_user_id": checkout["user_id"],
+                    "wicx_plan_id": checkout["plan_id"],
+                }
+                event = type(event)(name=event.name, data=verified_data, digest=event.digest)
+            try:
+                from aiohttp import ClientSession, ClientTimeout
+
+                timeout = ClientTimeout(total=15)
+                async with ClientSession(timeout=timeout) as session:
+                    async with session.get(
+                        f"https://api.paystack.co/transaction/verify/{quote(reference, safe='')}",
+                        headers={"Authorization": f"Bearer {paystack_secret}"},
+                        allow_redirects=False,
+                    ) as response:
+                        provider_result = await response.json(content_type=None)
+                        if response.status != 200:
+                            return web.json_response({"error": "verification_unavailable"}, status=503)
+            except Exception as exc:
+                logger.warning("Paystack transaction verification failed (%s)", type(exc).__name__)
+                return web.json_response({"error": "verification_unavailable"}, status=503)
+            if not verified_transaction_matches(
+                provider_result, reference=reference,
+                amount_minor=expected_amount, currency=str(expected_currency),
+            ):
+                return web.json_response({"received": True, "applied": False})
+            webhook_amount = event.data.get("amount")
+            if (webhook_amount != expected_amount or isinstance(webhook_amount, bool) or
+                    event.data.get("currency") != expected_currency):
+                return web.json_response({"received": True, "applied": False})
         try:
             applied = apply_paystack_subscription_event(billing_store, event, paystack_plans)
         except PaystackWebhookError as exc:
@@ -129,7 +187,7 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
         return web.json_response({"received": True, "applied": applied})
 
     async def create_checkout(request: Any) -> Any:
-        if not paystack_secret or not paystack_plans:
+        if billing_store is None or not paystack_secret or not paystack_plans:
             return web.json_response({"error": "billing_unavailable"}, status=503)
         if request.content_type != "application/json":
             return web.json_response({"error": "content_type"}, status=415)
@@ -184,6 +242,18 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                 not isinstance(reference, str) or not re.fullmatch(r"[A-Za-z0-9.=-]{1,100}", reference)):
             logger.warning("Paystack returned an invalid checkout response")
             return web.json_response({"error": "checkout_unavailable"}, status=502)
+        selected_plan = paystack_plans[body["plan_id"]]
+        try:
+            billing_store.record_checkout(
+                reference=reference,
+                user_id=request["user_id"],
+                plan_id=selected_plan.plan_id,
+                amount_minor=selected_plan.amount_minor,
+                currency=selected_plan.currency,
+            )
+        except (ValueError, BillingStoreError) as exc:
+            logger.error("Could not persist Paystack checkout mapping (%s)", type(exc).__name__)
+            return web.json_response({"error": "billing_unavailable"}, status=503)
         return web.json_response({"authorization_url": checkout_url, "reference": reference})
 
     app = web.Application(middlewares=[authenticate], client_max_size=MAX_UPLOAD_BYTES)

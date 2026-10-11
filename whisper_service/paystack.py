@@ -57,6 +57,26 @@ def validate_checkout_request(
     }
 
 
+def verified_transaction_matches(
+    response: Any, *, reference: str, amount_minor: int, currency: str,
+) -> bool:
+    """Accept only Paystack's successful verification response for this charge."""
+    if not isinstance(response, dict) or response.get("status") is not True:
+        return False
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return False
+    amount = data.get("amount")
+    return (
+        data.get("status") == "success"
+        and data.get("reference") == reference
+        and isinstance(amount, int)
+        and not isinstance(amount, bool)
+        and amount == amount_minor
+        and data.get("currency") == currency
+    )
+
+
 class PaystackWebhookError(ValueError):
     """A webhook body, signature, or event envelope is invalid."""
 

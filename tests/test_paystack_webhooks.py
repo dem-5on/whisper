@@ -15,6 +15,7 @@ from whisper_service.paystack import (
     VerifiedPaystackEvent,
     apply_paystack_subscription_event,
     validate_checkout_request,
+    verified_transaction_matches,
     verify_paystack_webhook,
 )
 
@@ -96,6 +97,19 @@ class PaystackCheckoutPayloadTests(unittest.TestCase):
                 user_id="authenticated-user", email="not-an-email",
                 plan_id="pro-monthly", plans=plans,
             )
+
+    def test_provider_verification_requires_exact_reference_status_price_and_currency(self) -> None:
+        response = {"status": True, "data": {
+            "status": "success", "reference": "ref-123", "amount": 1250, "currency": "GHS",
+        }}
+        self.assertTrue(verified_transaction_matches(
+            response, reference="ref-123", amount_minor=1250, currency="GHS",
+        ))
+        for field, wrong in (("reference", "other"), ("status", "failed"), ("amount", 1249), ("currency", "USD")):
+            changed = {"status": True, "data": {**response["data"], field: wrong}}
+            self.assertFalse(verified_transaction_matches(
+                changed, reference="ref-123", amount_minor=1250, currency="GHS",
+            ))
 
 
 class PaystackSubscriptionEventTests(unittest.TestCase):

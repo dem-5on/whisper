@@ -79,6 +79,23 @@ class BillingStoreTests(unittest.TestCase):
         with self.assertRaises(BillingStoreError):
             BillingStore(path)
 
+    def test_checkout_reference_is_durable_and_account_linked(self) -> None:
+        self.store.record_checkout(
+            reference="checkout-123", user_id="account-abc", plan_id="pro-monthly",
+            amount_minor=1250, currency="GHS",
+            now=datetime(2026, 10, 11, tzinfo=UTC),
+        )
+        self.assertEqual(BillingStore(self.path).get_checkout("checkout-123"), {
+            "reference": "checkout-123", "user_id": "account-abc",
+            "plan_id": "pro-monthly", "amount_minor": 1250,
+            "currency": "GHS", "created_at": "2026-10-11T00:00:00+00:00",
+        })
+        with self.assertRaises(BillingStoreError):
+            self.store.record_checkout(
+                reference="checkout-123", user_id="another-account", plan_id="pro-monthly",
+                amount_minor=1250, currency="GHS",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

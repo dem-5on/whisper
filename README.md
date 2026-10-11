@@ -233,12 +233,14 @@ smallest currency unit, and currency (for example,
 Use the actual approved pricing and Paystack plan codes in deployment config;
 the example is illustrative only. The server supplies the plan code and account
 metadata; clients cannot set the amount or account ID. Signed successful-charge
-events that do not match the configured plan code, amount, and currency are
-ignored. The request currently
+events are accepted only when Paystack's verified reference, amount, and
+currency match the stored checkout and configured plan. The request currently
 uses an email as payer contact because stable Google/Apple account identities
-are not implemented yet. This remains a billing foundation, not production
-entitlement: Paystack transaction-reference verification, stable sign-in
-identities, and projection of verified subscription state into product
+are not implemented yet. Each checkout reference is stored against the
+authenticated account, and successful charge webhooks are checked against
+Paystack's transaction-verification API before they update the billing ledger.
+This remains a billing foundation, not production entitlement: stable
+sign-in identities and projection of verified subscription state into product
 entitlements still need to be implemented. Do not grant
 features from this ledger yet. Never grant access from a frontend success
 callback or store raw card details. Paystack's transaction initialization API

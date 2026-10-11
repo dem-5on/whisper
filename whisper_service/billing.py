@@ -53,6 +53,14 @@ class BillingStore:
                         received_at TEXT NOT NULL,
                         PRIMARY KEY (provider, event_id)
                     );
+                    CREATE TABLE IF NOT EXISTS checkout_attempts (
+                        reference TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        plan_id TEXT NOT NULL,
+                        amount_minor INTEGER NOT NULL,
+                        currency TEXT NOT NULL,
+                        created_at TEXT NOT NULL
+                    );
                     """
                 )
         except sqlite3.Error as exc:
@@ -127,6 +135,50 @@ class BillingStore:
         if row is None:
             return None
         keys = ("provider", "subscription_id", "user_id", "plan_id", "status", "current_period_end", "updated_at")
+        return dict(zip(keys, row, strict=True))
+
+    def record_checkout(
+        self, *, reference: str, user_id: str, plan_id: str,
+        amount_minor: int, currency: str, now: datetime | None = None,
+    ) -> None:
+        """Persist Paystack's checkout reference before returning it to a client."""
+        for name, value in (("reference", reference), ("user ID", user_id), ("plan ID", plan_id)):
+            if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{name} is invalid")
+        if not isinstance(amount_minor, int) or isinstance(amount_minor, bool) or amount_minor <= 0:
+            raise ValueError("checkout amount must be a positive integer")
+        if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
+            raise ValueError("checkout currency must be a three-letter uppercase code")
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("checkout time must include a timezone")
+        created_at = current.astimezone(UTC).isoformat(timespec="seconds")
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute(
+                    """INSERT INTO checkout_attempts
+                       (reference, user_id, plan_id, amount_minor, currency, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (reference, user_id, plan_id, amount_minor, currency, created_at),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise BillingStoreError("Checkout reference already exists") from exc
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not persist checkout reference") from exc
+
+    def get_checkout(self, reference: str) -> dict[str, str | int] | None:
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    """SELECT reference, user_id, plan_id, amount_minor, currency, created_at
+                       FROM checkout_attempts WHERE reference = ?""",
+                    (reference,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not read checkout reference") from exc
+        if row is None:
+            return None
+        keys = ("reference", "user_id", "plan_id", "amount_minor", "currency", "created_at")
         return dict(zip(keys, row, strict=True))
 
     def _prepare_private_file(self) -> None:
