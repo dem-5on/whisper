@@ -27,7 +27,9 @@
         <button id="cancel" class="action" disabled>Cancel</button>
       </section>
 
-      <section class="tiles" aria-label="Settings preview">
+      <section class="configuration" aria-label="Engine and hardware settings">
+        <div class="section-heading"><span>Engine &amp; hardware</span><small>Click to change</small></div>
+        <div class="tiles">
         <button class="tile" data-setting="provider" aria-expanded="false">
           <span class="tile-icon" data-icon="provider" aria-hidden="true"></span>
           <span class="tile-copy"><strong>Provider</strong><small id="provider-value">Local</small></span>
@@ -43,6 +45,7 @@
           <span class="tile-copy"><strong>Microphone</strong><small id="mic-value">Default</small></span>
           <span class="chevron" aria-hidden="true">›</span>
         </button>
+        </div>
       </section>
 
       <section id="chooser" class="chooser" aria-live="polite" hidden>

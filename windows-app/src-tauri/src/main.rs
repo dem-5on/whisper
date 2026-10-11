@@ -20,8 +20,8 @@ use tauri::{
     Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, State,
 };
 
-const PANEL_WIDTH: i32 = 380;
-const PANEL_HEIGHT: i32 = 530;
+const PANEL_WIDTH: i32 = 420;
+const PANEL_HEIGHT: i32 = 560;
 const EXPANDED_PANEL_HEIGHT: f64 = 760.0;
 const SCREEN_GAP: i32 = 8;
 const UNINSTALL_ARGUMENT: &str = "--whisper-uninstall";
@@ -642,8 +642,8 @@ mod tests {
     #[test]
     fn anchors_panel_above_tray_and_keeps_it_inside_right_monitor_edge() {
         assert_eq!(
-            panel_position((0, 0, 1920, 1080), (1800, 900), (380, 530), 8),
-            (1532, 362)
+            panel_position((0, 0, 1920, 1080), (1800, 900), (420, 560), 8),
+            (1492, 332)
         );
     }
 
