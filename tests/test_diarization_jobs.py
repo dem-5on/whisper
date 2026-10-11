@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 from pathlib import Path
 import tempfile
 import unittest
 import wave
 
+from aiohttp.test_utils import TestClient, TestServer
+
+from whisper_service.auth import TokenAuthenticator
+from whisper_service.diarization_api import JOBS_PATH, make_app
 from whisper_service.diarization_api import _validate_wav
 from whisper_service.diarization_jobs import DiarizationJobManager
 from whisper_service.sessions import ServiceError
@@ -92,6 +97,73 @@ class DiarizationJobManagerTests(unittest.IsolatedAsyncioTestCase):
                 finish.set()
                 await manager.close()
 
+
+class DiarizationHttpApiTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        class Worker:
+            async def diarize(self, _audio):
+                return [{"start_seconds": 0.0, "end_seconds": 0.01, "speaker_id": "speaker_1"}]
+
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.manager = DiarizationJobManager(Worker(), temp_dir=Path(self.tempdir.name))
+        await self.manager.start()
+        auth = TokenAuthenticator({
+            hashlib.sha256(b"user-a-token").hexdigest(): "user-a",
+            hashlib.sha256(b"user-b-token").hexdigest(): "user-b",
+        })
+        self.client = TestClient(TestServer(make_app(auth, self.manager)))
+        await self.client.start_server()
+
+    async def asyncTearDown(self) -> None:
+        await self.client.close()
+        await self.manager.close()
+        self.tempdir.cleanup()
+
+    async def test_requires_bearer_authentication(self) -> None:
+        response = await self.client.post(JOBS_PATH, data=wav_bytes(), headers={"Content-Type": "audio/wav"})
+        self.assertEqual(response.status, 401)
+
+    async def test_rejects_wrong_content_type_and_invalid_wav(self) -> None:
+        headers = {"Authorization": "Bearer user-a-token"}
+        wrong_type = await self.client.post(JOBS_PATH, data=b"x", headers=headers)
+        self.assertEqual(wrong_type.status, 415)
+        invalid_wav = await self.client.post(
+            JOBS_PATH, data=b"not wav", headers={**headers, "Content-Type": "audio/wav"}
+        )
+        self.assertEqual(invalid_wav.status, 400)
+
+    async def test_owner_can_submit_poll_and_other_user_gets_not_found(self) -> None:
+        response = await self.client.post(
+            JOBS_PATH, data=wav_bytes(),
+            headers={"Authorization": "Bearer user-a-token", "Content-Type": "audio/wav"},
+        )
+        self.assertEqual(response.status, 202)
+        created = await response.json()
+        job_id = created["job_id"]
+        self.assertEqual(created["state"], "queued")
+
+        other_user = await self.client.get(
+            f"{JOBS_PATH}/{job_id}", headers={"Authorization": "Bearer user-b-token"}
+        )
+        self.assertEqual(other_user.status, 404)
+
+        for _ in range(100):
+            result = await self.client.get(
+                f"{JOBS_PATH}/{job_id}", headers={"Authorization": "Bearer user-a-token"}
+            )
+            payload = await result.json()
+            if payload["state"] == "complete":
+                break
+            await asyncio.sleep(0.01)
+        self.assertEqual(payload["turns"], [
+            {"start_seconds": 0.0, "end_seconds": 0.01, "speaker_id": "speaker_1"}
+        ])
+
+    async def test_unknown_job_ids_are_not_found(self) -> None:
+        response = await self.client.get(
+            f"{JOBS_PATH}/{'a' * 32}", headers={"Authorization": "Bearer user-a-token"}
+        )
+        self.assertEqual(response.status, 404)
 
 if __name__ == "__main__":
     unittest.main()
