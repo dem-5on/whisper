@@ -102,6 +102,8 @@ wicx sessions [--limit 50] [--offset 0] [--session-mode lecture] [--search "term
 wicx get-session --session <id>  # retrieve the full transcript and timestamped speaker segments
 wicx delete-session --session <id>  # permanently delete that local history record
 wicx rename-speaker --session <id> --speaker-id speaker_1 --name "Dr. Mensah"  # name a detected Meeting speaker
+wicx label-segment --session <id> --segment-index 4 --speaker-id speaker_2  # correct one Meeting segment; omit speaker ID to clear
+wicx merge-speakers --session <id> --speaker-id speaker_2 --target-speaker-id speaker_1  # merge duplicate Meeting identities
 wicx retry-session --session <id>  # explicitly retry a failed Lecture/Meeting from its saved audio
 wicx export-session --session <id> --output ./lecture.md  # export transcript and generated outputs as Markdown
 wicx export-session-audio --session <id> --output ./lecture.wav  # copy the retained Lecture/Meeting recording
@@ -128,7 +130,7 @@ Meeting speaker display names are stored with the local session and included in
 Markdown exports. Local Faster-Whisper Lecture and Meeting transcripts now save
 the model's timestamped text segments as well as the plain-text transcript.
 Speaker IDs remain unassigned until diarization is implemented; the naming
-command and segment schema provide the persistence layer for that later feature.
+and correction commands provide the persistence layer for that later feature.
 Other backends that do not expose timestamps continue to save plain text only.
 
 `whisper`, `whisper-daemon`, `transcriber`, and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.

@@ -205,6 +205,16 @@ class TranscriberDaemon:
                 str(params.get("speaker_id", "")),
                 params.get("name"),
             )
+        if command == "assign_segment_speaker":
+            return self._assign_segment_speaker(
+                str(params.get("session_id", "")), params.get("segment_index"),
+                params.get("speaker_id"),
+            )
+        if command == "merge_speakers":
+            return self._merge_speakers(
+                str(params.get("session_id", "")), str(params.get("source_id", "")),
+                str(params.get("target_id", "")),
+            )
         if command == "export_session":
             return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
         if command == "export_session_audio":
@@ -588,6 +598,51 @@ class TranscriberDaemon:
             return {
                 **self._status_locked(), "ok": "true", "session_id": session.id,
                 "speaker_id": speaker_id, "name": session.outputs["speaker_names"][speaker_id],
+            }
+
+    def _assign_segment_speaker(self, session_id: str, segment_index: Any, speaker_id: Any) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        if not isinstance(segment_index, int) or isinstance(segment_index, bool):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "segment_index must be an integer"}
+        try:
+            session = self._session_store.assign_segment_speaker(session_id, segment_index, speaker_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except ValueError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not update the speaker assignment"}
+        with self._lock:
+            return {
+                **self._status_locked(), "ok": "true", "session_id": session.id,
+                "segment_index": segment_index, "speaker_id": session.segments[segment_index]["speaker_id"],
+            }
+
+    def _merge_speakers(self, session_id: str, source_id: str, target_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            session = self._session_store.merge_speakers(session_id, source_id, target_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except ValueError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not merge the Meeting speakers"}
+        with self._lock:
+            return {
+                **self._status_locked(), "ok": "true", "session_id": session.id,
+                "source_id": source_id, "target_id": target_id,
             }
 
     def _export_session(self, session_id: str, output: str) -> dict[str, Any]:

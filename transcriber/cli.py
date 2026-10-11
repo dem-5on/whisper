@@ -10,6 +10,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+from typing import Any
 
 from .config import KEY_ENV, write_key
 from .daemon import default_socket_path
@@ -19,7 +20,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "get-session", "delete-session", "rename-speaker", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "get-session", "delete-session", "rename-speaker", "label-segment", "merge-speakers", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -35,6 +36,8 @@ def main() -> None:
     parser.add_argument("--search", default=None, help="Find text in saved source transcripts or translations (sessions)")
     parser.add_argument("--session", default=None, help="Session id for events, session detail, rename, retry, or exports")
     parser.add_argument("--speaker-id", default=None, help="Stable detected speaker ID, for example speaker_1")
+    parser.add_argument("--target-speaker-id", default=None, help="Target speaker ID when merging identities")
+    parser.add_argument("--segment-index", type=int, default=None, help="Zero-based transcript segment index")
     parser.add_argument("--name", default=None, help="Display name to assign to that Meeting speaker")
     parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
     parser.add_argument("--action", choices=("list", "add", "remove"), help="Dictionary action")
@@ -58,7 +61,7 @@ def main() -> None:
         raise SystemExit(_set_key(args))
     if args.command == "subscribe":
         raise SystemExit(_stream_events(args))
-    payload: dict[str, str] = {"command": args.command.replace("set-provider", "set_backend").replace("set-model", "set_model").replace("set-live-engine", "set_live_engine").replace("set-live-model", "set_live_model").replace("set-mic", "set_mic").replace("set-streaming", "set_streaming")}
+    payload: dict[str, Any] = {"command": args.command.replace("set-provider", "set_backend").replace("set-model", "set_model").replace("set-live-engine", "set_live_engine").replace("set-live-model", "set_live_model").replace("set-mic", "set_mic").replace("set-streaming", "set_streaming")}
     if args.command == "events":
         payload = {"command": "events", "since": args.since}
         if args.session:
@@ -93,6 +96,21 @@ def main() -> None:
         payload["session_id"] = args.session
         payload["speaker_id"] = args.speaker_id
         payload["name"] = args.name
+    elif args.command == "label-segment":
+        if not args.session or args.segment_index is None:
+            parser.error("label-segment requires --session ID --segment-index N")
+        payload["command"] = "assign_segment_speaker"
+        payload["session_id"] = args.session
+        payload["segment_index"] = args.segment_index
+        if args.speaker_id is not None:
+            payload["speaker_id"] = args.speaker_id
+    elif args.command == "merge-speakers":
+        if not args.session or not args.speaker_id or not args.target_speaker_id:
+            parser.error("merge-speakers requires --session ID --speaker-id SOURCE --target-speaker-id TARGET")
+        payload["command"] = "merge_speakers"
+        payload["session_id"] = args.session
+        payload["source_id"] = args.speaker_id
+        payload["target_id"] = args.target_speaker_id
     elif args.command == "export-session":
         if not args.session:
             parser.error("export-session requires --session ID")
@@ -187,6 +205,11 @@ def main() -> None:
         print("Retry started; local session transcription is processing")
     elif args.command == "rename-speaker":
         print(f"Renamed {response.get('speaker_id', 'speaker')} to {response.get('name', '')}")
+    elif args.command == "label-segment":
+        speaker = response.get("speaker_id") or "unassigned"
+        print(f"Segment {response.get('segment_index')} assigned to {speaker}")
+    elif args.command == "merge-speakers":
+        print(f"Merged {response.get('source_id')} into {response.get('target_id')}")
     elif args.command == "export-session":
         print(response.get("export_path", ""))
     elif args.command == "export-session-audio":

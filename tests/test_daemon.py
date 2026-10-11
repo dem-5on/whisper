@@ -149,6 +149,42 @@ class DaemonTests(unittest.TestCase):
         listed = self.daemon.command("sessions", {"mode": "meeting"})["sessions"]
         self.assertEqual(listed[0]["speaker_names"], {"speaker_1": "Dr. Mensah"})
 
+    def test_meeting_speaker_correction_commands_update_segments(self) -> None:
+        meeting = self.daemon._session_store.create("meeting")
+        self.daemon._session_store.update(meeting.id, segments=[
+            {"start_seconds": 0, "end_seconds": 1, "text": "Hello", "speaker_id": "speaker_1"},
+            {"start_seconds": 1, "end_seconds": 2, "text": "Hi", "speaker_id": "speaker_2"},
+            {"start_seconds": 2, "end_seconds": 3, "text": "Again", "speaker_id": None},
+        ])
+
+        corrected = self.daemon.command("assign_segment_speaker", {
+            "session_id": meeting.id, "segment_index": 2, "speaker_id": "speaker_2",
+        })
+        self.daemon.command("rename_speaker", {
+            "session_id": meeting.id, "speaker_id": "speaker_2", "name": "Ama",
+        })
+        merged = self.daemon.command("merge_speakers", {
+            "session_id": meeting.id, "source_id": "speaker_1", "target_id": "speaker_2",
+        })
+
+        self.assertEqual(corrected["ok"], "true")
+        self.assertEqual(merged["ok"], "true")
+        saved = self.daemon._session_store.get(meeting.id)
+        self.assertEqual([segment["speaker_id"] for segment in saved.segments], [
+            "speaker_2", "speaker_2", "speaker_2",
+        ])
+        self.assertEqual(saved.outputs["speaker_names"], {"speaker_2": "Ama"})
+
+    def test_speaker_correction_rejects_non_meeting_session(self) -> None:
+        lecture = self.daemon._session_store.create("lecture")
+
+        response = self.daemon.command("assign_segment_speaker", {
+            "session_id": lecture.id, "segment_index": 0, "speaker_id": "speaker_1",
+        })
+
+        self.assertEqual(response["ok"], "false")
+        self.assertIn("Meeting", response["error"])
+
     def test_get_session_returns_timestamped_segments(self) -> None:
         meeting = self.daemon._session_store.create("meeting")
         self.daemon._session_store.update(meeting.id, segments=[{

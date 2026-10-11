@@ -162,6 +162,31 @@ class SessionStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.rename_speaker(meeting.id, "speaker_1", "")
 
+    def test_meeting_speaker_assignments_can_be_corrected_cleared_and_merged(self) -> None:
+        meeting = self.store.create("meeting")
+        self.store.update(meeting.id, segments=[
+            {"start_seconds": 0, "end_seconds": 1, "text": "First", "speaker_id": "speaker_1"},
+            {"start_seconds": 1, "end_seconds": 2, "text": "Second", "speaker_id": "speaker_2"},
+            {"start_seconds": 2, "end_seconds": 3, "text": "Third", "speaker_id": None},
+        ])
+        self.store.rename_speaker(meeting.id, "speaker_2", "Professor")
+
+        corrected = self.store.assign_segment_speaker(meeting.id, 2, "speaker_2")
+        self.assertEqual(corrected.segments[2]["speaker_id"], "speaker_2")
+        merged = self.store.merge_speakers(meeting.id, "speaker_1", "speaker_2")
+        cleared = self.store.assign_segment_speaker(meeting.id, 2, None)
+
+        self.assertEqual([segment["speaker_id"] for segment in merged.segments], [
+            "speaker_2", "speaker_2", "speaker_2",
+        ])
+        self.assertIsNone(cleared.segments[2]["speaker_id"])
+        self.assertEqual(merged.outputs["speaker_names"], {"speaker_2": "Professor"})
+
+        with self.assertRaisesRegex(ValueError, "outside"):
+            self.store.assign_segment_speaker(meeting.id, 4, "speaker_1")
+        with self.assertRaisesRegex(ValueError, "different"):
+            self.store.merge_speakers(meeting.id, "speaker_2", "speaker_2")
+
     def test_update_rejects_invalid_state_and_non_json_outputs(self) -> None:
         session = self.store.create("meeting")
         with self.assertRaises(ValueError):

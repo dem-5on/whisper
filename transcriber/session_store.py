@@ -329,6 +329,52 @@ class SessionStore:
         speaker_names = {**speaker_names, speaker_id: display_name}
         return self.update(session_id, outputs={**session.outputs, "speaker_names": speaker_names})
 
+    def assign_segment_speaker(
+        self, session_id: str, segment_index: int, speaker_id: str | None,
+    ) -> StoredSession:
+        """Correct or clear one Meeting segment's speaker assignment."""
+        if not isinstance(segment_index, int) or isinstance(segment_index, bool) or segment_index < 0:
+            raise ValueError("segment_index must be a non-negative integer")
+        if speaker_id is not None and (
+            not isinstance(speaker_id, str)
+            or not re.fullmatch(r"speaker_[1-9][0-9]*", speaker_id)
+        ):
+            raise ValueError("speaker_id must look like speaker_1 or be omitted to clear the label")
+        session = self.get(session_id)
+        if session.mode != "meeting":
+            raise ValueError("speaker assignments are only supported for Meeting sessions")
+        if segment_index >= len(session.segments):
+            raise ValueError("segment_index is outside this transcript")
+        segments = [dict(segment) for segment in session.segments]
+        segments[segment_index]["speaker_id"] = speaker_id
+        return self.update(session_id, segments=segments)
+
+    def merge_speakers(self, session_id: str, source_id: str, target_id: str) -> StoredSession:
+        """Merge one Meeting speaker identity into another across all segments."""
+        for speaker_id in (source_id, target_id):
+            if not isinstance(speaker_id, str) or not re.fullmatch(r"speaker_[1-9][0-9]*", speaker_id):
+                raise ValueError("speaker IDs must look like speaker_1")
+        if source_id == target_id:
+            raise ValueError("source and target speaker IDs must be different")
+        session = self.get(session_id)
+        if session.mode != "meeting":
+            raise ValueError("speaker identities can only be merged for Meeting sessions")
+        if not any(segment["speaker_id"] == source_id for segment in session.segments):
+            raise ValueError("source speaker is not assigned to any transcript segment")
+        segments = [
+            {**segment, "speaker_id": target_id if segment["speaker_id"] == source_id else segment["speaker_id"]}
+            for segment in session.segments
+        ]
+        speaker_names = session.outputs.get("speaker_names", {})
+        if not isinstance(speaker_names, dict):
+            speaker_names = {}
+        merged_names = dict(speaker_names)
+        if target_id not in merged_names and source_id in merged_names:
+            merged_names[target_id] = merged_names[source_id]
+        merged_names.pop(source_id, None)
+        outputs = {**session.outputs, "speaker_names": merged_names}
+        return self.update(session_id, segments=segments, outputs=outputs)
+
     def delete(self, session_id: str) -> None:
         """Delete one session and its audio, never accepting an external file path."""
         record = self.get(session_id)
