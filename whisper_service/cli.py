@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from .auth import add_user_token, revoke_user_tokens
+from .entitlements import grant_feature, list_features, revoke_feature
 from .hardware import HardwareDetectionError, detect_hardware
 from .sessions import ModelProfile, SessionLimits, SessionManager
 
@@ -32,6 +33,20 @@ def main() -> None:
     revoke = token_commands.add_parser("revoke", help="revoke all tokens for a user")
     revoke.add_argument("--user", required=True)
     revoke.add_argument("--file", type=Path, default=_default_token_file())
+    entitlement = subparsers.add_parser("entitlement", help="manage paid feature access on this host")
+    entitlement_commands = entitlement.add_subparsers(dest="entitlement_command", required=True)
+    grant = entitlement_commands.add_parser("grant", help="grant one feature to a user")
+    grant.add_argument("--user", required=True)
+    grant.add_argument("--feature", choices=("cloud_transcription", "diarization"), required=True)
+    grant.add_argument("--expires-at", help="optional ISO-8601 expiry, e.g. 2026-12-31T23:59:59Z")
+    grant.add_argument("--file", type=Path, default=_default_entitlement_file())
+    entitlement_revoke = entitlement_commands.add_parser("revoke", help="revoke one feature from a user")
+    entitlement_revoke.add_argument("--user", required=True)
+    entitlement_revoke.add_argument("--feature", choices=("cloud_transcription", "diarization"), required=True)
+    entitlement_revoke.add_argument("--file", type=Path, default=_default_entitlement_file())
+    entitlement_list = entitlement_commands.add_parser("list", help="list feature grants")
+    entitlement_list.add_argument("--user")
+    entitlement_list.add_argument("--file", type=Path, default=_default_entitlement_file())
     serve = subparsers.add_parser("serve", help="run the authenticated live WebSocket service")
     serve.add_argument("--host", default="127.0.0.1", help="bind address; use a TLS reverse proxy for public access")
     serve.add_argument("--port", type=int, default=8765)
@@ -39,6 +54,7 @@ def main() -> None:
     serve.add_argument("--model", default="base", help="server-owned faster-whisper model profile")
     serve.add_argument("--profile", default="default", help="client-visible allow-listed profile ID")
     serve.add_argument("--token-file", type=Path, default=_default_token_file())
+    serve.add_argument("--entitlements-file", type=Path, default=_default_entitlement_file())
     serve.add_argument("--max-session-seconds", type=int, default=300)
     serve.add_argument("--max-concurrent", type=int, default=1)
     serve.add_argument("--max-starts-per-window", type=int, default=10)
@@ -80,6 +96,15 @@ def main() -> None:
             else:
                 removed = revoke_user_tokens(args.file, args.user)
                 print(f"Revoked {removed} token(s) for {args.user}.")
+        elif args.command == "entitlement":
+            if args.entitlement_command == "grant":
+                grant_feature(args.file, args.user, args.feature, expires_at=args.expires_at)
+                print(f"Granted {args.feature} to {args.user}.")
+            elif args.entitlement_command == "revoke":
+                removed = revoke_feature(args.file, args.user, args.feature)
+                print(f"Revoked {args.feature} from {args.user}." if removed else "No matching grant existed.")
+            else:
+                print(json.dumps(list_features(args.file, args.user), indent=2))
         else:
             logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
             asyncio.run(_run_service(args))
@@ -90,10 +115,12 @@ def main() -> None:
 
 async def _run_service(args: argparse.Namespace) -> None:
     from .auth import TokenAuthenticator
+    from .entitlements import EntitlementStore
     from .server import serve_websocket
     from .worker import prepare_worker
 
     authenticator = TokenAuthenticator.from_file(args.token_file)
+    entitlements = EntitlementStore(args.entitlements_file)
     profile = ModelProfile(args.profile, args.model, ("cpu", "cuda"))
     selection, worker = await prepare_worker(
         args.device, profile,
@@ -114,7 +141,8 @@ async def _run_service(args: argparse.Namespace) -> None:
     )
     manager = SessionManager(worker, (profile,), device=selection.device, limits=limits)
     if not args.enable_diarization:
-        await serve_websocket(authenticator, manager, host=args.host, port=args.port)
+        await serve_websocket(authenticator, manager, entitlements=entitlements,
+                              host=args.host, port=args.port)
         return
 
     from .diarization import PyannoteDiarizationWorker
@@ -127,8 +155,10 @@ async def _run_service(args: argparse.Namespace) -> None:
         max_jobs=args.diarization_max_jobs, workers=args.diarization_workers,
     )
     await asyncio.gather(
-        serve_websocket(authenticator, manager, host=args.host, port=args.port),
+        serve_websocket(authenticator, manager, entitlements=entitlements,
+                        host=args.host, port=args.port),
         serve_http(authenticator, diarization_jobs,
+                   entitlements=entitlements,
                    host=args.http_host or args.host, port=args.http_port),
     )
 
@@ -139,6 +169,14 @@ def _default_token_file() -> Path:
         return Path(override)
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return config_home / "whisper-server" / "tokens.json"
+
+
+def _default_entitlement_file() -> Path:
+    override = os.environ.get("WHISPER_ENTITLEMENTS_FILE")
+    if override:
+        return Path(override)
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return config_home / "whisper-server" / "entitlements.json"
 
 
 if __name__ == "__main__":

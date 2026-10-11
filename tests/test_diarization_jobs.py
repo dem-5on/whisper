@@ -14,6 +14,7 @@ from whisper_service.auth import TokenAuthenticator
 from whisper_service.diarization_api import JOBS_PATH, make_app
 from whisper_service.diarization_api import _validate_wav
 from whisper_service.diarization_jobs import DiarizationJobManager
+from whisper_service.entitlements import EntitlementStore, grant_feature, revoke_feature
 from whisper_service.sessions import ServiceError
 
 
@@ -107,11 +108,14 @@ class DiarizationHttpApiTests(unittest.IsolatedAsyncioTestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.manager = DiarizationJobManager(Worker(), temp_dir=Path(self.tempdir.name))
         await self.manager.start()
+        self.entitlement_path = Path(self.tempdir.name) / "entitlements.json"
+        grant_feature(self.entitlement_path, "user-a", "diarization")
+        grant_feature(self.entitlement_path, "user-b", "diarization")
         auth = TokenAuthenticator({
             hashlib.sha256(b"user-a-token").hexdigest(): "user-a",
             hashlib.sha256(b"user-b-token").hexdigest(): "user-b",
         })
-        self.client = TestClient(TestServer(make_app(auth, self.manager)))
+        self.client = TestClient(TestServer(make_app(auth, self.manager, EntitlementStore(self.entitlement_path))))
         await self.client.start_server()
 
     async def asyncTearDown(self) -> None:
@@ -122,6 +126,25 @@ class DiarizationHttpApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_requires_bearer_authentication(self) -> None:
         response = await self.client.post(JOBS_PATH, data=wav_bytes(), headers={"Content-Type": "audio/wav"})
         self.assertEqual(response.status, 401)
+
+    async def test_requires_active_diarization_entitlement_before_reading_upload(self) -> None:
+        revoke_feature(self.entitlement_path, "user-a", "diarization")
+        response = await self.client.post(
+            JOBS_PATH, data=wav_bytes(),
+            headers={"Authorization": "Bearer user-a-token", "Content-Type": "audio/wav"},
+        )
+        self.assertEqual(response.status, 402)
+        self.assertEqual((await response.json())["error"], "subscription_required")
+        self.assertEqual(list(Path(self.tempdir.name).glob("wicx-diarization-*.wav")), [])
+
+    async def test_fails_closed_when_entitlement_database_is_invalid(self) -> None:
+        self.entitlement_path.write_text("not json", encoding="utf-8")
+        response = await self.client.post(
+            JOBS_PATH, data=wav_bytes(),
+            headers={"Authorization": "Bearer user-a-token", "Content-Type": "audio/wav"},
+        )
+        self.assertEqual(response.status, 503)
+        self.assertEqual((await response.json())["error"], "entitlement_unavailable")
 
     async def test_rejects_wrong_content_type_and_invalid_wav(self) -> None:
         headers = {"Authorization": "Bearer user-a-token"}

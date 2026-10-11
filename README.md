@@ -210,6 +210,16 @@ set `HF_TOKEN` for the service. Set `WHISPER_ENABLE_DIARIZATION=1` to expose
 mono PCM16 WAV at 16 kHz; uploads are capped at 1 GB and four hours, queue size is
 bounded, and audio is deleted once processing finishes. Job state is currently
 held in memory, so an interrupted server requires the client to retry the upload.
+Job creation fails closed unless the authenticated user has the `diarization`
+feature grant in the owner-only `/data/entitlements.json` file. The live cloud
+transcription WebSocket likewise requires a separate `cloud_transcription`
+grant. For prototype testing, operators can grant or revoke either feature with
+`docker compose exec whisper-server whisper-server entitlement grant --user USER_ID --feature diarization`
+or `docker compose exec whisper-server whisper-server entitlement grant --user USER_ID --feature cloud_transcription`
+(use `entitlement revoke` with the same arguments to remove a grant); grants may
+have an `--expires-at` ISO-8601 timestamp. This manual grant store is not a
+billing integration: payment-provider synchronization and automatic
+expiry/update from subscriptions still need to be built.
 The `whisper-server diarize-file --audio meeting.wav --device cpu` command remains
 available for a local model smoke test. Model weights download from Hugging Face;
 meeting audio is processed by the Wicx host, not sent to a third-party API.

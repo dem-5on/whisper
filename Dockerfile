@@ -5,7 +5,8 @@ ARG WHISPER_DIARIZATION=0
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/data/huggingface \
-    WHISPER_TOKENS_FILE=/data/tokens.json
+    WHISPER_TOKENS_FILE=/data/tokens.json \
+    WHISPER_ENTITLEMENTS_FILE=/data/entitlements.json
 
 WORKDIR /app
 COPY pyproject.toml README.md ./

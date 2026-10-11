@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+from pathlib import Path
+import tempfile
 import unittest
 
 try:
@@ -13,6 +16,7 @@ except ImportError:  # pragma: no cover - exercised when server extra is absent
     InvalidStatus = Exception  # type: ignore[assignment,misc]
 
 from whisper_service.auth import TokenAuthenticator
+from whisper_service.entitlements import EntitlementStore, grant_feature, revoke_feature
 from whisper_service.server import LIVE_PATH, make_handler, make_process_request
 from whisper_service.sessions import ModelProfile, SessionManager
 
@@ -48,14 +52,17 @@ class FakeWorker:
 class LiveWebSocketTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.token = "test-token-for-local-integration"
-        import hashlib
-
         auth = TokenAuthenticator({hashlib.sha256(self.token.encode()).hexdigest(): "user-a"})
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.entitlement_path = Path(self.tempdir.name) / "entitlements.json"
+        grant_feature(self.entitlement_path, "user-a", "cloud_transcription")
+        self.entitlements = EntitlementStore(self.entitlement_path)
         self.worker = FakeWorker()
         manager = SessionManager(self.worker, (ModelProfile("default", "whisper-base"),), device="cpu")
         self.server = await serve(
-            make_handler(auth, manager), "127.0.0.1", 0,
-            process_request=make_process_request(auth),
+            make_handler(auth, manager, self.entitlements), "127.0.0.1", 0,
+            process_request=make_process_request(auth, self.entitlements),
             max_size=64 * 1024,
             max_queue=8,
             compression=None,
@@ -91,6 +98,13 @@ class LiveWebSocketTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(InvalidStatus) as raised:
             await connect(self.uri)
         self.assertEqual(raised.exception.response.status_code, 401)
+        self.assertEqual(self.worker.sessions, [])
+
+    async def test_authenticated_user_without_paid_entitlement_is_rejected(self) -> None:
+        revoke_feature(self.entitlement_path, "user-a", "cloud_transcription")
+        with self.assertRaises(InvalidStatus) as raised:
+            await connect(self.uri, additional_headers={"Authorization": f"Bearer {self.token}"})
+        self.assertEqual(raised.exception.response.status_code, 402)
         self.assertEqual(self.worker.sessions, [])
 
     async def test_health_endpoint_is_available_without_authentication(self) -> None:

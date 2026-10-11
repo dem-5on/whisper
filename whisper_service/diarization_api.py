@@ -12,6 +12,7 @@ from typing import Any
 
 from .auth import TokenAuthenticator
 from .diarization_jobs import DiarizationJobManager, create_audio_tempfile
+from .entitlements import EntitlementConfigError, EntitlementStore
 from .sessions import ServiceError
 
 
@@ -22,7 +23,8 @@ MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
-def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager) -> Any:
+def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager,
+             entitlements: EntitlementStore) -> Any:
     try:
         from aiohttp import web
     except ImportError as exc:
@@ -37,6 +39,16 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager) -> 
         return await handler(request)
 
     async def create_job(request: Any) -> Any:
+        try:
+            entitled = entitlements.has_feature(request["user_id"], "diarization")
+        except EntitlementConfigError as exc:
+            logger.error("Diarization entitlement check unavailable (%s)", type(exc).__name__)
+            return web.json_response({"error": "entitlement_unavailable"}, status=503)
+        if not entitled:
+            return web.json_response({
+                "error": "subscription_required",
+                "message": "An active subscription is required for speaker analysis.",
+            }, status=402)
         if request.content_type != "audio/wav":
             return web.json_response({"error": "content_type", "message": "Upload a WAV recording."}, status=415)
         if request.content_length is not None and request.content_length > MAX_UPLOAD_BYTES:
@@ -99,13 +111,14 @@ def _validate_wav(path: Path) -> None:
 
 
 async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobManager, *,
+                     entitlements: EntitlementStore,
                      host: str = "127.0.0.1", port: int = 8766) -> None:
     try:
         from aiohttp import web
     except ImportError as exc:
         raise RuntimeError("Install universal-transcriber[server] to enable the diarization HTTP API") from exc
     await jobs.start()
-    runner = web.AppRunner(make_app(authenticator, jobs), access_log=None)
+    runner = web.AppRunner(make_app(authenticator, jobs, entitlements), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     try:

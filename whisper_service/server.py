@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from .auth import TokenAuthenticator
+from .entitlements import EntitlementConfigError, EntitlementStore
 from .protocol import encode_event, parse_control, parse_session_start
 from .sessions import ServiceError, SessionManager
 
@@ -18,7 +19,7 @@ LIVE_PATH = "/v1/live"
 MAX_WEBSOCKET_MESSAGE_BYTES = 64 * 1024
 
 
-def make_process_request(authenticator: TokenAuthenticator) -> Any:
+def make_process_request(authenticator: TokenAuthenticator, entitlements: EntitlementStore) -> Any:
     """Reject wrong paths and unauthenticated clients before WS upgrade."""
     async def process_request(connection: Any, request: Any) -> Any:
         if request.path == "/healthz" and request.method == "GET":
@@ -28,15 +29,32 @@ def make_process_request(authenticator: TokenAuthenticator) -> Any:
         user_id = authenticator.authenticate(request.headers.get("Authorization"))
         if user_id is None:
             return connection.respond(HTTPStatus.UNAUTHORIZED, "Unauthorized\n")
+        try:
+            entitled = entitlements.has_feature(user_id, "cloud_transcription")
+        except EntitlementConfigError as exc:
+            logger.error("Live transcription entitlement check unavailable (%s)", type(exc).__name__)
+            return connection.respond(HTTPStatus.SERVICE_UNAVAILABLE, "Entitlement check unavailable\n")
+        if not entitled:
+            return connection.respond(HTTPStatus.PAYMENT_REQUIRED, "Active subscription required\n")
         return None
     return process_request
 
 
-def make_handler(authenticator: TokenAuthenticator, sessions: SessionManager) -> Any:
+def make_handler(authenticator: TokenAuthenticator, sessions: SessionManager,
+                 entitlements: EntitlementStore) -> Any:
     async def handler(connection: Any) -> None:
         user_id = authenticator.authenticate(connection.request.headers.get("Authorization"))
         if user_id is None:  # Defense in depth if handler use changes later.
             await connection.close(code=4401, reason="Unauthorized")
+            return
+        try:
+            entitled = entitlements.has_feature(user_id, "cloud_transcription")
+        except EntitlementConfigError as exc:
+            logger.error("Live transcription entitlement check unavailable (%s)", type(exc).__name__)
+            await connection.close(code=1011, reason="entitlement_unavailable")
+            return
+        if not entitled:
+            await connection.close(code=4403, reason="subscription_required")
             return
 
         session = None
@@ -98,6 +116,7 @@ async def _send_error(connection: Any, error: ServiceError) -> None:
 
 
 async def serve_websocket(authenticator: TokenAuthenticator, sessions: SessionManager, *,
+                          entitlements: EntitlementStore,
                           host: str = "127.0.0.1", port: int = 8765) -> None:
     """Run the live endpoint; deploy behind a TLS-terminating reverse proxy."""
     try:
@@ -106,8 +125,8 @@ async def serve_websocket(authenticator: TokenAuthenticator, sessions: SessionMa
         raise RuntimeError("Install universal-transcriber[server] to run the hosted service") from exc
 
     async with serve(
-        make_handler(authenticator, sessions), host, port,
-        process_request=make_process_request(authenticator),
+        make_handler(authenticator, sessions, entitlements), host, port,
+        process_request=make_process_request(authenticator, entitlements),
         max_size=MAX_WEBSOCKET_MESSAGE_BYTES,
         max_queue=8,
         compression=None,
