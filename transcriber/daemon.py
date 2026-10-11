@@ -121,6 +121,14 @@ class TranscriberDaemon:
         self._last_duration: float | None = None
         self._data_dir = data_dir or default_data_dir()
         self._session_store = SessionStore(self._data_dir)
+        try:
+            recovered = self._session_store.recover_interrupted()
+            if recovered:
+                LOG.warning("Marked %d unfinished long-form session(s) as interrupted", recovered)
+        except SessionStoreError:
+            # Keep the daemon usable even if recovery metadata cannot be
+            # updated; the underlying session files remain untouched.
+            LOG.error("Could not mark interrupted local sessions for recovery")
         self._stored_session_id: str | None = None
         self._active_mode = "dictation"
         self._config_path = config_path

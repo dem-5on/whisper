@@ -154,6 +154,30 @@ class SessionStore:
             raise SessionStoreError("Could not list local sessions") from exc
         return [self.get(row["id"]) for row in rows]
 
+    def recover_interrupted(self) -> int:
+        """Mark unfinished long-form sessions as interrupted without deleting audio.
+
+        A daemon restart cannot safely resume microphone capture or assume a
+        partially written WAV is complete. Keep the record and audio for later
+        user review/recovery, but don't leave the session appearing active.
+        """
+        now = self._now()
+        try:
+            with self._connect() as connection:
+                cursor = connection.execute(
+                    """UPDATE sessions
+                       SET state = 'error',
+                           error = 'Wicx closed before this session finished. The saved recording may be incomplete.',
+                           updated_at = ?,
+                           finished_at = COALESCE(finished_at, ?)
+                       WHERE mode IN ('lecture', 'meeting')
+                         AND state IN ('recording', 'transcribing', 'processing')""",
+                    (now, now),
+                )
+                return cursor.rowcount
+        except sqlite3.Error as exc:
+            raise SessionStoreError("Could not recover interrupted local sessions") from exc
+
     def update(
         self,
         session_id: str,

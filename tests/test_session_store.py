@@ -63,6 +63,28 @@ class SessionStoreTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             self.store.get(session.id)
 
+    def test_recovery_marks_unfinished_long_sessions_and_preserves_audio(self) -> None:
+        lecture = self.store.create("lecture")
+        lecture.audio_path.write_bytes(b"partial wave")
+        meeting = self.store.create("meeting")
+        self.store.update(meeting.id, state="transcribing", finished=True)
+        ready = self.store.create("lecture")
+        self.store.update(ready.id, state="ready", finished=True)
+        dictation = self.store.create("dictation")
+
+        self.assertEqual(self.store.recover_interrupted(), 2)
+
+        recovered_lecture = self.store.get(lecture.id)
+        recovered_meeting = self.store.get(meeting.id)
+        self.assertEqual(recovered_lecture.state, "error")
+        self.assertIn("may be incomplete", recovered_lecture.error)
+        self.assertTrue(recovered_lecture.audio_path.is_file())
+        self.assertEqual(recovered_lecture.audio_path.read_bytes(), b"partial wave")
+        self.assertEqual(recovered_meeting.state, "error")
+        self.assertEqual(self.store.get(ready.id).state, "ready")
+        self.assertEqual(self.store.get(dictation.id).state, "recording")
+        self.assertEqual(self.store.recover_interrupted(), 0)
+
     def test_unknown_mode_and_missing_session_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             self.store.create("podcast")
