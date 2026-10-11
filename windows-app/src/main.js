@@ -56,6 +56,8 @@ function setActionContent(button, iconName, label) {
 
 const ui = {
   connection: document.querySelector("#connection"),
+  audioMic: document.querySelector("#audio-mic"),
+  audioStatus: document.querySelector("#audio-status"),
   reconnect: document.querySelector("#reconnect"),
   focusResult: document.querySelector("#focus-result"),
   error: document.querySelector("#error"),
@@ -95,6 +97,8 @@ function setConnection(text, connected = false) {
   dot.className = "state-dot";
   ui.connection.append(dot, document.createTextNode(text));
   ui.connection.dataset.connected = String(connected);
+  ui.audioStatus.textContent = connected ? "Service ready" : "Waiting for daemon";
+  ui.audioStatus.dataset.connected = String(connected);
   ui.reconnect.hidden = connected;
   const controls = deriveControlState(currentStatus, connected, focusTestBuild);
   ui.toggle.disabled = controls.toggleDisabled;
@@ -180,7 +184,9 @@ function updateStatus(status) {
   ui.cancel.disabled = controls.cancelDisabled;
   document.querySelector("#provider-value").textContent = providerLabel(currentStatus.backend);
   document.querySelector("#model-value").textContent = currentStatus.model || "base";
-  document.querySelector("#mic-value").textContent = microphoneLabel(currentStatus.mic, microphoneSources);
+  const micLabel = microphoneLabel(currentStatus.mic, microphoneSources);
+  document.querySelector("#mic-value").textContent = micLabel;
+  ui.audioMic.textContent = micLabel;
   setTileTitle("provider", providerLabel(currentStatus.backend));
   setTileTitle("model", currentStatus.model || "base");
   setTileTitle("mic", microphoneLabel(currentStatus.mic, microphoneSources));
@@ -233,6 +239,7 @@ function updateMicrophoneSources(sources) {
   if (currentStatus) {
     const label = microphoneLabel(currentStatus.mic, microphoneSources);
     document.querySelector("#mic-value").textContent = label;
+    ui.audioMic.textContent = label;
     setTileTitle("mic", label);
   }
 }

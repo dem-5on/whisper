@@ -9,7 +9,7 @@
   <body>
     <main class="panel" aria-label="Whisper panel">
       <header class="heading">
-        <div class="brand-mark" aria-hidden="true"><span></span></div>
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
         <div>
           <h1>Whisper</h1>
           <p>Push-to-talk transcription</p>
@@ -26,6 +26,11 @@
         <button id="toggle" class="action primary" disabled>Start recording</button>
         <button id="cancel" class="action" disabled>Cancel</button>
       </section>
+
+      <div class="audio-monitor" aria-live="polite">
+        <span class="audio-source"><span class="audio-dot"></span>Input: <strong id="audio-mic">Default</strong></span>
+        <span class="audio-status" id="audio-status">Waiting for daemon</span>
+      </div>
 
       <section class="configuration" aria-label="Engine and hardware settings">
         <div class="section-heading"><span>Engine &amp; hardware</span><small>Click to change</small></div>
@@ -56,7 +61,7 @@
 
       <section class="live-section" aria-label="Live transcription settings">
         <label class="live-toggle" for="streaming-toggle">
-          <span>Live transcription</span>
+          <span class="live-copy"><strong>Live transcription</strong><small>Stream voice tokens as you speak</small></span>
           <input id="streaming-toggle" type="checkbox" disabled />
           <span class="switch-track" aria-hidden="true"></span>
         </label>
