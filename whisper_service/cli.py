@@ -12,8 +12,10 @@ import time
 from pathlib import Path
 
 from .auth import add_user_token, revoke_user_tokens
+from .billing import BillingStore
 from .entitlements import grant_feature, list_features, revoke_feature
 from .hardware import HardwareDetectionError, detect_hardware
+from .paystack import PaystackPlan
 from .sessions import ModelProfile, SessionLimits, SessionManager
 
 
@@ -64,6 +66,9 @@ def main() -> None:
     serve.add_argument("--enable-diarization", action="store_true",
                        default=os.environ.get("WHISPER_ENABLE_DIARIZATION", "").lower() in {"1", "true", "yes"},
                        help="enable the optional authenticated self-hosted meeting/lecture speaker-analysis API")
+    serve.add_argument("--enable-billing", action="store_true",
+                       default=os.environ.get("WHISPER_ENABLE_BILLING", "").lower() in {"1", "true", "yes"},
+                       help="enable the Paystack subscription webhook endpoint on the HTTP service")
     serve.add_argument("--http-host", default=None, help="diarization API bind address (defaults to --host)")
     serve.add_argument("--http-port", type=int, default=8766)
     serve.add_argument("--diarization-device", choices=("cpu", "cuda"), default="cpu")
@@ -71,6 +76,7 @@ def main() -> None:
     serve.add_argument("--diarization-workers", type=int, default=1)
     serve.add_argument("--diarization-temp-dir", type=Path, default=None,
                        help="private temporary directory for in-flight audio uploads")
+    serve.add_argument("--billing-database", type=Path, default=_default_billing_database())
     args = parser.parse_args()
     try:
         if args.command == "hardware":
@@ -140,25 +146,42 @@ async def _run_service(args: argparse.Namespace) -> None:
         rate_window_seconds=args.rate_window_seconds,
     )
     manager = SessionManager(worker, (profile,), device=selection.device, limits=limits)
-    if not args.enable_diarization:
+    if not args.enable_diarization and not args.enable_billing:
         await serve_websocket(authenticator, manager, entitlements=entitlements,
                               host=args.host, port=args.port)
         return
 
-    from .diarization import PyannoteDiarizationWorker
     from .diarization_api import serve_http
-    diarizer = PyannoteDiarizationWorker(device=args.diarization_device)
-    diarizer.prepare()
-    from .diarization_jobs import DiarizationJobManager
-    diarization_jobs = DiarizationJobManager(
-        diarizer, temp_dir=args.diarization_temp_dir,
-        max_jobs=args.diarization_max_jobs, workers=args.diarization_workers,
-    )
+    diarization_jobs = None
+    http_entitlements = None
+    if args.enable_diarization:
+        from .diarization import PyannoteDiarizationWorker
+        from .diarization_jobs import DiarizationJobManager
+
+        diarizer = PyannoteDiarizationWorker(device=args.diarization_device)
+        diarizer.prepare()
+        diarization_jobs = DiarizationJobManager(
+            diarizer, temp_dir=args.diarization_temp_dir,
+            max_jobs=args.diarization_max_jobs, workers=args.diarization_workers,
+        )
+        http_entitlements = entitlements
+
+    billing_store = None
+    paystack_secret = os.environ.get("WHISPER_PAYSTACK_SECRET_KEY")
+    paystack_plans = _paystack_plans_from_environment() if args.enable_billing else {}
+    if args.enable_billing:
+        if not paystack_secret:
+            raise RuntimeError("WHISPER_PAYSTACK_SECRET_KEY is required when billing is enabled")
+        billing_store = BillingStore(args.billing_database)
+
     await asyncio.gather(
         serve_websocket(authenticator, manager, entitlements=entitlements,
                         host=args.host, port=args.port),
         serve_http(authenticator, diarization_jobs,
-                   entitlements=entitlements,
+                   entitlements=http_entitlements,
+                   billing_store=billing_store,
+                   paystack_secret=paystack_secret if args.enable_billing else None,
+                   paystack_plans=paystack_plans if args.enable_billing else None,
                    host=args.http_host or args.host, port=args.http_port),
     )
 
@@ -177,6 +200,44 @@ def _default_entitlement_file() -> Path:
         return Path(override)
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return config_home / "whisper-server" / "entitlements.json"
+
+
+def _default_billing_database() -> Path:
+    override = os.environ.get("WHISPER_BILLING_DATABASE")
+    if override:
+        return Path(override)
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return data_home / "whisper-server" / "billing.sqlite3"
+
+
+def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
+    raw = os.environ.get("WHISPER_PAYSTACK_PLANS", "")
+    if not raw:
+        return {}
+    try:
+        configured = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("WHISPER_PAYSTACK_PLANS must be a JSON object") from exc
+    if not isinstance(configured, dict) or not configured:
+        raise RuntimeError("WHISPER_PAYSTACK_PLANS must be a non-empty JSON object")
+    plans: dict[str, PaystackPlan] = {}
+    for plan_id, details in configured.items():
+        if (not isinstance(plan_id, str) or not isinstance(details, dict) or
+                not isinstance(details.get("code"), str) or not details["code"].strip() or
+                not isinstance(details.get("amount_minor"), int) or
+                isinstance(details.get("amount_minor"), bool) or details["amount_minor"] <= 0 or
+                not isinstance(details.get("currency"), str) or
+                len(details["currency"]) != 3 or not details["currency"].isupper()):
+            raise RuntimeError(
+                "WHISPER_PAYSTACK_PLANS values need code, positive amount_minor, and uppercase currency"
+            )
+        plans[plan_id] = PaystackPlan(
+            plan_id=plan_id,
+            paystack_code=details["code"],
+            amount_minor=details["amount_minor"],
+            currency=details["currency"],
+        )
+    return plans
 
 
 if __name__ == "__main__":

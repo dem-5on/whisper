@@ -218,8 +218,36 @@ grant. For prototype testing, operators can grant or revoke either feature with
 or `docker compose exec whisper-server whisper-server entitlement grant --user USER_ID --feature cloud_transcription`
 (use `entitlement revoke` with the same arguments to remove a grant); grants may
 have an `--expires-at` ISO-8601 timestamp. This manual grant store is not a
-billing integration: payment-provider synchronization and automatic
-expiry/update from subscriptions still need to be built.
+billing integration. Paystack is selected for desktop/web subscriptions: Wicx
+will own the branded plans and checkout page, while Paystack securely collects
+payment. The hosted service now has an optional Paystack webhook endpoint at
+`POST /v1/billing/paystack/webhook` (`WHISPER_ENABLE_BILLING=1`) that verifies
+Paystack's HMAC-SHA512 signature and records account-linked subscription events
+in a private SQLite ledger with replay deduplication. Configure
+`WHISPER_PAYSTACK_SECRET_KEY` and persist `WHISPER_BILLING_DATABASE` across
+restarts. An authenticated `POST /v1/billing/checkout` endpoint can initialize
+Paystack checkout when `WHISPER_PAYSTACK_PLANS` is configured as a JSON mapping
+from Wicx plan IDs to Paystack recurring plan codes, expected amount in the
+smallest currency unit, and currency (for example,
+`{"pro-monthly":{"code":"PLN_...","amount_minor":1250,"currency":"GHS"}}`).
+Use the actual approved pricing and Paystack plan codes in deployment config;
+the example is illustrative only. The server supplies the plan code and account
+metadata; clients cannot set the amount or account ID. Signed successful-charge
+events that do not match the configured plan code, amount, and currency are
+ignored. The request currently
+uses an email as payer contact because stable Google/Apple account identities
+are not implemented yet. This remains a billing foundation, not production
+entitlement: Paystack transaction-reference verification, stable sign-in
+identities, and projection of verified subscription state into product
+entitlements still need to be implemented. Do not grant
+features from this ledger yet. Never grant access from a frontend success
+callback or store raw card details. Paystack's transaction initialization API
+accepts a server-side recurring plan code and returns a hosted authorization
+URL; see [Paystack's transaction API](https://paystack.com/docs/api/transaction/).
+Paystack
+supports recurring card billing; Ghana mobile-money payments are one-time, so
+they need a manual renewal flow. iOS App Store and Google Play billing will be
+separate adapters later and must feed the same account entitlement system.
 The `whisper-server diarize-file --audio meeting.wav --device cpu` command remains
 available for a local model smoke test. Model weights download from Hugging Face;
 meeting audio is processed by the Wicx host, not sent to a third-party API.

@@ -15,7 +15,11 @@ services:
       HF_HOME: /data/huggingface
       WHISPER_TOKENS_FILE: /data/tokens.json
       WHISPER_ENTITLEMENTS_FILE: /data/entitlements.json
+      WHISPER_BILLING_DATABASE: /data/billing.sqlite3
       WHISPER_ENABLE_DIARIZATION: "${WHISPER_ENABLE_DIARIZATION:-0}"
+      WHISPER_ENABLE_BILLING: "${WHISPER_ENABLE_BILLING:-0}"
+      WHISPER_PAYSTACK_SECRET_KEY: "${WHISPER_PAYSTACK_SECRET_KEY:-}"
+      WHISPER_PAYSTACK_PLANS: "${WHISPER_PAYSTACK_PLANS:-}"
       HF_TOKEN: "${HF_TOKEN:-}"
     command:
       - whisper-server
