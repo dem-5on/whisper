@@ -200,14 +200,19 @@ can tune them in the Compose environment (for example, in a local `.env` file):
 `WHISPER_MAX_SESSION_SECONDS`, `WHISPER_MAX_CONCURRENT`,
 `WHISPER_MAX_STARTS_PER_WINDOW`, and `WHISPER_RATE_WINDOW_SECONDS`.
 
-Self-hosted Meeting diarization is being developed as a separate post-session
-worker. The initial model adapter uses pyannote Community-1 and is kept out of
-the normal desktop and server installs. To evaluate it on a WAV on the server,
-install `.[server,diarization]`, accept the model conditions on Hugging Face, set
-`HF_TOKEN` on the server, then run `whisper-server diarize-file --audio
-meeting.wav --device cpu` (or `cuda`). This operator command is an inference
-smoke test, not yet the authenticated desktop job API; model weights download
-from Hugging Face, but the audio is processed locally by the Wicx host.
+Self-hosted Meeting diarization runs as a separate, authenticated post-session
+HTTP job API; it does not enter the live-dictation path. The initial worker uses
+pyannote Community-1, which is intentionally optional. To enable it, build with
+`WHISPER_DIARIZATION_BUILD=1`, accept the model conditions on Hugging Face, and
+set `HF_TOKEN` for the service. Set `WHISPER_ENABLE_DIARIZATION=1` to expose
+`POST /v1/diarization/jobs` and `GET /v1/diarization/jobs/{job_id}` on port 8766
+(Bearer token authentication is the same as the live service). Upload uncompressed
+mono PCM16 WAV at 16 kHz; uploads are capped at 1 GB and four hours, queue size is
+bounded, and audio is deleted once processing finishes. Job state is currently
+held in memory, so an interrupted server requires the client to retry the upload.
+The `whisper-server diarize-file --audio meeting.wav --device cpu` command remains
+available for a local model smoke test. Model weights download from Hugging Face;
+meeting audio is processed by the Wicx host, not sent to a third-party API.
 
 The local model is loaded once at daemon startup (warmed with silence),
 not per recording. Event types are `partial`, `committed`, `final`,

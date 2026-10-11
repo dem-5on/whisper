@@ -5,13 +5,17 @@ services:
       context: .
       args:
         WHISPER_CUDA: "0"
+        WHISPER_DIARIZATION: "${WHISPER_DIARIZATION_BUILD:-0}"
     init: true
     restart: unless-stopped
     ports:
       - "${WHISPER_BIND:-127.0.0.1}:${WHISPER_PORT:-8765}:8765"
+      - "${WHISPER_HTTP_BIND:-127.0.0.1}:${WHISPER_HTTP_PORT:-8766}:8766"
     environment:
       HF_HOME: /data/huggingface
       WHISPER_TOKENS_FILE: /data/tokens.json
+      WHISPER_ENABLE_DIARIZATION: "${WHISPER_ENABLE_DIARIZATION:-0}"
+      HF_TOKEN: "${HF_TOKEN:-}"
     command:
       - whisper-server
       - serve

@@ -45,6 +45,16 @@ def main() -> None:
     serve.add_argument("--rate-window-seconds", type=int, default=3600)
     serve.add_argument("--partial-interval", type=float, default=1.0)
     serve.add_argument("--rolling-window", type=int, default=8)
+    serve.add_argument("--enable-diarization", action="store_true",
+                       default=os.environ.get("WHISPER_ENABLE_DIARIZATION", "").lower() in {"1", "true", "yes"},
+                       help="enable the optional authenticated self-hosted meeting/lecture speaker-analysis API")
+    serve.add_argument("--http-host", default=None, help="diarization API bind address (defaults to --host)")
+    serve.add_argument("--http-port", type=int, default=8766)
+    serve.add_argument("--diarization-device", choices=("cpu", "cuda"), default="cpu")
+    serve.add_argument("--diarization-max-jobs", type=int, default=4)
+    serve.add_argument("--diarization-workers", type=int, default=1)
+    serve.add_argument("--diarization-temp-dir", type=Path, default=None,
+                       help="private temporary directory for in-flight audio uploads")
     args = parser.parse_args()
     try:
         if args.command == "hardware":
@@ -103,7 +113,24 @@ async def _run_service(args: argparse.Namespace) -> None:
         rate_window_seconds=args.rate_window_seconds,
     )
     manager = SessionManager(worker, (profile,), device=selection.device, limits=limits)
-    await serve_websocket(authenticator, manager, host=args.host, port=args.port)
+    if not args.enable_diarization:
+        await serve_websocket(authenticator, manager, host=args.host, port=args.port)
+        return
+
+    from .diarization import PyannoteDiarizationWorker
+    from .diarization_api import serve_http
+    diarizer = PyannoteDiarizationWorker(device=args.diarization_device)
+    diarizer.prepare()
+    from .diarization_jobs import DiarizationJobManager
+    diarization_jobs = DiarizationJobManager(
+        diarizer, temp_dir=args.diarization_temp_dir,
+        max_jobs=args.diarization_max_jobs, workers=args.diarization_workers,
+    )
+    await asyncio.gather(
+        serve_websocket(authenticator, manager, host=args.host, port=args.port),
+        serve_http(authenticator, diarization_jobs,
+                   host=args.http_host or args.host, port=args.http_port),
+    )
 
 
 def _default_token_file() -> Path:
