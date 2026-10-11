@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from .auth import add_user_token, revoke_user_tokens
@@ -20,6 +21,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     hardware = subparsers.add_parser("hardware", help="detect the inference device/runtime")
     hardware.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    diarize = subparsers.add_parser("diarize-file", help="evaluate self-hosted speaker analysis on a local WAV")
+    diarize.add_argument("--audio", type=Path, required=True)
+    diarize.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     token = subparsers.add_parser("token", help="manage invite-only user credentials")
     token_commands = token.add_subparsers(dest="token_command", required=True)
     add = token_commands.add_parser("add", help="issue a user token; it is printed once")
@@ -45,6 +49,20 @@ def main() -> None:
     try:
         if args.command == "hardware":
             print(json.dumps(detect_hardware(args.device).as_dict(), indent=2))
+        elif args.command == "diarize-file":
+            from .diarization import PyannoteDiarizationWorker
+
+            if not args.audio.is_file():
+                raise RuntimeError("The WAV file was not found")
+            worker = PyannoteDiarizationWorker(device=args.device)
+            worker.prepare()
+            started = time.monotonic()
+            turns = worker.diarize(args.audio)
+            print(json.dumps({
+                "audio": args.audio.name,
+                "turns": turns,
+                "processing_seconds": round(time.monotonic() - started, 3),
+            }, indent=2))
         elif args.command == "token":
             if args.token_command == "add":
                 issued = add_user_token(args.file, args.user)

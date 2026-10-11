@@ -200,6 +200,15 @@ can tune them in the Compose environment (for example, in a local `.env` file):
 `WHISPER_MAX_SESSION_SECONDS`, `WHISPER_MAX_CONCURRENT`,
 `WHISPER_MAX_STARTS_PER_WINDOW`, and `WHISPER_RATE_WINDOW_SECONDS`.
 
+Self-hosted Meeting diarization is being developed as a separate post-session
+worker. The initial model adapter uses pyannote Community-1 and is kept out of
+the normal desktop and server installs. To evaluate it on a WAV on the server,
+install `.[server,diarization]`, accept the model conditions on Hugging Face, set
+`HF_TOKEN` on the server, then run `whisper-server diarize-file --audio
+meeting.wav --device cpu` (or `cuda`). This operator command is an inference
+smoke test, not yet the authenticated desktop job API; model weights download
+from Hugging Face, but the audio is processed locally by the Wicx host.
+
 The local model is loaded once at daemon startup (warmed with silence),
 not per recording. Event types are `partial`, `committed`, `final`,
 `speech_started`, and `speech_ended`, each with a session ID and revision:
