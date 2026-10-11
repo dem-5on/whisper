@@ -25,6 +25,39 @@ class TranscriptionBackend(Protocol):
     def transcribe(self, audio: Path) -> str: ...
 
 
+def transcribe_long_audio(backend: Any, audio: Path, *, chunk_seconds: int = 300) -> str:
+    """Decode long PCM WAV files in bounded chunks when the backend supports it."""
+    transcribe_samples = getattr(backend, "transcribe_samples", None)
+    if not callable(transcribe_samples):
+        return backend.transcribe(audio)
+    if not isinstance(chunk_seconds, int) or isinstance(chunk_seconds, bool) or chunk_seconds < 1:
+        raise ValueError("chunk_seconds must be a positive integer")
+    try:
+        import numpy as np
+
+        chunks: list[str] = []
+        with wave.open(str(audio), "rb") as source:
+            if source.getnchannels() != 1 or source.getsampwidth() != 2 or source.getframerate() != 16_000:
+                raise TranscriptionError("Long-session audio must be 16 kHz mono PCM WAV")
+            frames_per_chunk = chunk_seconds * source.getframerate()
+            while True:
+                frames = source.readframes(frames_per_chunk)
+                if not frames:
+                    break
+                samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+                text = transcribe_samples(samples)
+                if text and text.strip():
+                    chunks.append(text.strip())
+        if not chunks:
+            raise TranscriptionError("No speech detected")
+        return " ".join(chunks)
+    except TranscriptionError:
+        raise
+    except (OSError, wave.Error, ImportError, ValueError) as exc:
+        detail = str(exc).replace("\n", " ")[:300]
+        raise TranscriptionError(f"Could not decode long-session audio: {detail or type(exc).__name__}") from exc
+
+
 # Process-wide WhisperModel cache keyed by (model, device, compute_type).
 # ``FasterWhisperBackend.transcribe()`` used to construct a WhisperModel on
 # every recording (multi-second startup latency); wrappers are still cheap

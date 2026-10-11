@@ -276,7 +276,9 @@ class FakeStreamingRecorder:
         self._audio = audio
         self.cancelled = False
 
-    def start(self) -> Path:
+    def start(self, destination: Path | None = None) -> Path:
+        if destination is not None:
+            self._audio = destination
         return self._audio
 
     def read_frame(self, timeout: float | None = None) -> bytes | None:
@@ -352,6 +354,39 @@ class DaemonLiveTests(unittest.TestCase):
                 live = self.daemon.command("status")
                 self.assertEqual(live["live_text"], "hello world")
                 self.assertGreater(live["live_revision"], 0)
+            finally:
+                self.daemon.command("cancel")
+
+    def test_lecture_uses_local_live_engine_even_when_remote_is_configured(self) -> None:
+        import dataclasses
+
+        streaming = dataclasses.replace(
+            self.daemon.config.streaming,
+            engine="hosted-whisper",
+            model="default",
+            server_url="wss://host.example.test/v1/live",
+        )
+        transcription = dataclasses.replace(
+            self.daemon.config.transcription,
+            backend="openrouter",
+            model="openai/whisper-large-v3",
+        )
+        self.daemon.config = dataclasses.replace(
+            self.daemon.config, streaming=streaming, transcription=transcription,
+        )
+        self.daemon.recorder = FakeStreamingRecorder([], self.audio)  # type: ignore[assignment]
+        fake_engine = type("FakeEngine", (), {"run": lambda *_args: None})()
+        with patch("transcriber.daemon.make_live_engine", return_value=fake_engine) as make_engine:
+            status = self.daemon.command("start_session", {
+                "mode": "lecture", "consent_acknowledged": True,
+            })
+            try:
+                self.assertEqual(status["state"], "RECORDING")
+                self.assertEqual(status["session_mode"], "lecture")
+                self.assertEqual(status["effective_backend"], "local")
+                self.assertFalse(self.daemon._hosted_live_session)
+                self.assertEqual(make_engine.call_args.args[0].backend, "local")
+                self.assertEqual(make_engine.call_args.args[1].engine, "local")
             finally:
                 self.daemon.command("cancel")
 

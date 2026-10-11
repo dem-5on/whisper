@@ -36,14 +36,19 @@ class SoxRecorder:
         self._process: subprocess.Popen[bytes] | None = None
         self._path: Path | None = None
 
-    def start(self) -> Path:
+    def start(self, destination: Path | None = None) -> Path:
         if self._process is not None:
             raise AudioError("Recording is already active")
-        fd, filename = tempfile.mkstemp(prefix="transcriber-", suffix=".wav")
-        # SoX creates the file itself; close the reservation without retaining audio.
-        os.close(fd)
-        self._path = Path(filename)
-        self._path.unlink()
+        if destination is None:
+            fd, filename = tempfile.mkstemp(prefix="transcriber-", suffix=".wav")
+            # SoX creates the file itself; close the reservation without retaining audio.
+            os.close(fd)
+            self._path = Path(filename)
+            self._path.unlink()
+        else:
+            self._path = Path(destination)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.unlink(missing_ok=True)
         command = [
             "rec", "-q", "-r", str(self.config.sample_rate), "-c", str(self.config.channels),
             "-b", "16", str(self._path),
@@ -137,13 +142,18 @@ class StreamingRecorder:
     def live_available(self) -> bool:
         return self._process is not None
 
-    def start(self) -> Path:
+    def start(self, destination: Path | None = None) -> Path:
         if self._process is not None:
             raise AudioError("Recording is already active")
-        fd, filename = tempfile.mkstemp(prefix="transcriber-", suffix=".wav")
-        os.close(fd)
-        self._path = Path(filename)
-        self._path.unlink()
+        if destination is None:
+            fd, filename = tempfile.mkstemp(prefix="transcriber-", suffix=".wav")
+            os.close(fd)
+            self._path = Path(filename)
+            self._path.unlink()
+        else:
+            self._path = Path(destination)
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.unlink(missing_ok=True)
         command = [
             "rec", "-q", "-r", str(self.config.sample_rate), "-c", str(self.config.channels),
             "-b", "16", "-e", "signed-integer", "-L", "-t", "raw", "-",

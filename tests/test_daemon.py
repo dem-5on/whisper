@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
 import os
@@ -59,8 +60,10 @@ class FakeRecorder:
         self.cancelled = False
         self.config = None
 
-    def start(self) -> Path:
+    def start(self, destination: Path | None = None) -> Path:
         self.started = True
+        if destination is not None:
+            self.audio = destination
         return self.audio
 
     def stop(self) -> Path:
@@ -194,6 +197,44 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(response["ok"], "false")
         self.assertEqual(response["error"], "Cannot delete the active session")
         self.daemon.command("cancel")
+
+    def test_long_session_requires_consent_and_preserves_audio_without_typing_it(self) -> None:
+        refused = self.daemon.command("start_session", {"mode": "meeting"})
+        self.assertEqual(refused["ok"], "false")
+        self.assertIn("informed", refused["error"])
+        self.assertFalse(self.recorder.started)
+
+        remote_config = dataclasses.replace(
+            self.daemon.config.transcription, backend="openrouter", model="openai/whisper-large-v3"
+        )
+        self.daemon.config = dataclasses.replace(self.daemon.config, transcription=remote_config)
+        delivery = FakeDelivery()
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("lecture words")) as backend, patch(
+            "transcriber.daemon.make_delivery", return_value=delivery
+        ) as make_delivery:
+            started = self.daemon.command("start_session", {
+                "mode": "meeting", "consent_acknowledged": True,
+            })
+            self.assertEqual(started["state"], "RECORDING")
+            self.assertIsNone(self.daemon._timer)
+            session_id = self.daemon._stored_session_id
+            audio_path = self.recorder.audio
+            self.assertEqual(audio_path, self.data / "sessions" / session_id / "recording.wav")
+            finished = self.daemon.command("stop_session")
+            self.assertEqual(finished["state"], "PROCESSING")
+            self.wait_for(State.IDLE)
+
+        backend.assert_called_once()
+        self.assertEqual(backend.call_args.args[0].backend, "local")
+        make_delivery.assert_not_called()
+        self.assertEqual(delivery.inserted, [])
+        saved = self.daemon._session_store.get(session_id)
+        self.assertEqual(saved.mode, "meeting")
+        self.assertEqual(saved.source_transcript, "lecture words")
+        session_list = self.daemon.command("sessions")["sessions"]
+        self.assertEqual(session_list[0]["mode"], "meeting")
+        self.assertTrue(session_list[0]["audio_available"])
+        self.assertEqual(audio_path.read_bytes(), b"wav")
 
     def test_processing_failure_enters_error_with_reason(self) -> None:
         with patch("transcriber.daemon.make_backend", side_effect=RuntimeError("boom")):

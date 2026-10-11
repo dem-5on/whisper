@@ -46,7 +46,7 @@ from .processing import process_transcript
 from .state import State
 from .session_store import SessionStore, SessionStoreError
 from .streaming import LiveSession
-from .transcription import TranscriptionError, make_backend, preload_local_model
+from .transcription import TranscriptionError, make_backend, preload_local_model, transcribe_long_audio
 from .vad import SpeechEndpoint, create_vad
 
 LOG = logging.getLogger("transcriber")
@@ -122,6 +122,7 @@ class TranscriberDaemon:
         self._data_dir = data_dir or default_data_dir()
         self._session_store = SessionStore(self._data_dir)
         self._stored_session_id: str | None = None
+        self._active_mode = "dictation"
         self._config_path = config_path
         # Live session: partial/committed/final events with session ID +
         # revision. Partials are panel-only; delivery uses final text only.
@@ -156,6 +157,15 @@ class TranscriberDaemon:
             return self._ok()
         if command == "toggle":
             return self._toggle()
+        if command == "start_session":
+            return self._start_session(params)
+        if command == "stop_session":
+            with self._lock:
+                if self._active_mode == "dictation":
+                    return {**self._status_locked(), "ok": "false", "error": "No Lecture or Meeting session is active"}
+                if self._state != State.RECORDING:
+                    return {**self._status_locked(), "ok": "false", "error": "No active session to finish"}
+                return self._stop_locked()
         if command == "cancel":
             return self._cancel()
         if command in {"retry", "retranscribe"}:
@@ -164,6 +174,8 @@ class TranscriberDaemon:
             return self._get_last()
         if command == "history":
             return self._get_history(params.get("limit", 50))
+        if command == "sessions":
+            return self._get_sessions(params.get("limit", 50))
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
         if command == "mics":
@@ -237,34 +249,7 @@ class TranscriberDaemon:
     def _toggle(self) -> dict[str, Any]:
         with self._lock:
             if self._state in (State.IDLE, State.ERROR):
-                try:
-                    self.recorder.start()
-                except Exception:
-                    LOG.error("Audio capture could not start")
-                    return self._fail_locked("Could not start recording; is rec installed?")
-                try:
-                    stored_session = self._session_store.create("dictation")
-                except SessionStoreError:
-                    try:
-                        self.recorder.cancel()
-                    except Exception:
-                        LOG.error("Audio capture could not be cancelled after session storage failed")
-                    return self._fail_locked("Could not prepare local transcript history")
-                self._stored_session_id = stored_session.id
-                self._generation += 1
-                generation = self._generation
-                self._timer = threading.Timer(
-                    self.config.audio.max_duration_seconds, self._auto_stop, args=(generation,)
-                )
-                self._timer.daemon = True
-                self._timer.start()
-                self._error = None
-                self._recording_started = time.monotonic()
-                self._processing_started = None
-                self._set_state(State.RECORDING)
-                self._start_live_session_locked(generation)
-                LOG.info("Recording started")
-                return self._ok_locked()
+                return self._start_recording_locked("dictation")
             if self._state == State.RECORDING:
                 return self._stop_locked()
             return {
@@ -272,6 +257,52 @@ class TranscriberDaemon:
                 "ok": "false",
                 "error": "A recording is already being processed",
             }
+
+    def _start_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        mode = str(params.get("mode", "")).strip().lower()
+        if mode not in {"lecture", "meeting"}:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session mode must be lecture or meeting"}
+        if params.get("consent_acknowledged") is not True:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Confirm that people being recorded have been informed"}
+        with self._lock:
+            if self._state not in {State.IDLE, State.ERROR}:
+                return {**self._status_locked(), "ok": "false", "error": "A recording or transcription is already in progress"}
+            return self._start_recording_locked(mode)
+
+    def _start_recording_locked(self, mode: str) -> dict[str, Any]:
+        try:
+            stored_session = self._session_store.create(mode)
+        except SessionStoreError:
+            return self._fail_locked("Could not prepare local session storage")
+        try:
+            destination = stored_session.audio_path if mode in {"lecture", "meeting"} else None
+            self.recorder.start(destination)
+        except Exception:
+            try:
+                self._session_store.delete(stored_session.id)
+            except (SessionStoreError, KeyError):
+                LOG.error("Could not remove session after capture failed")
+            LOG.error("Audio capture could not start")
+            return self._fail_locked("Could not start recording; check microphone access and recorder setup")
+        self._stored_session_id = stored_session.id
+        self._active_mode = mode
+        self._generation += 1
+        generation = self._generation
+        if mode == "dictation":
+            self._timer = threading.Timer(
+                self.config.audio.max_duration_seconds, self._auto_stop, args=(generation,)
+            )
+            self._timer.daemon = True
+            self._timer.start()
+        self._error = None
+        self._recording_started = time.monotonic()
+        self._processing_started = None
+        self._set_state(State.RECORDING)
+        self._start_live_session_locked(generation)
+        LOG.info("%s recording started", mode.title())
+        return self._ok_locked()
 
     def _auto_stop(self, generation: int) -> None:
         with self._lock:
@@ -308,7 +339,7 @@ class TranscriberDaemon:
         worker = threading.Thread(
             target=self._process_and_deliver,
             args=(audio,),
-            kwargs={"session_id": self._stored_session_id},
+            kwargs={"session_id": self._stored_session_id, "mode": self._active_mode},
             name="transcriber-worker",
             daemon=True,
         )
@@ -404,6 +435,40 @@ class TranscriberDaemon:
                     "state": item.state,
                     "created_at": item.created_at,
                     "transcript": item.source_transcript,
+                }
+                for item in sessions
+            ],
+        }
+
+    def _get_sessions(self, raw_limit: Any) -> dict[str, Any]:
+        try:
+            limit = int(raw_limit)
+            if isinstance(raw_limit, bool):
+                raise ValueError
+            sessions = self._session_store.list(limit=limit)
+        except (TypeError, ValueError):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session limit must be between 1 and 1000"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local sessions"}
+        with self._lock:
+            status = self._status_locked()
+        return {
+            **status,
+            "ok": "true",
+            "sessions": [
+                {
+                    "id": item.id,
+                    "mode": item.mode,
+                    "state": item.state,
+                    "created_at": item.created_at,
+                    "finished_at": item.finished_at,
+                    "source_transcript": item.source_transcript,
+                    "english_translation": item.english_translation,
+                    "outputs": item.outputs,
+                    "audio_available": item.audio_path.is_file(),
+                    "error": item.error,
                 }
                 for item in sessions
             ],
@@ -697,13 +762,14 @@ class TranscriberDaemon:
     def _recorder_is_streaming(self) -> bool:
         return self.config.streaming.enabled and hasattr(self.recorder, "read_frame")
 
-    def _live_capability_locked(self) -> tuple[bool, str]:
+    def _live_capability_locked(self, *, force_local: bool = False) -> tuple[bool, str]:
         """Whether this configuration can emit rolling partial hypotheses."""
         if not self.config.streaming.enabled:
             return False, "Live transcription is disabled"
         if not hasattr(self.recorder, "read_frame"):
             return False, "The selected recorder does not support streaming audio"
-        if self.config.streaming.engine == "hosted-whisper":
+        engine = "local" if force_local else self.config.streaming.engine
+        if engine == "hosted-whisper":
             if not self.config.streaming.server_url:
                 return False, "Hosted transcription URL is not configured"
             if not os.environ.get("WHISPER_SERVICE_TOKEN"):
@@ -711,13 +777,13 @@ class TranscriberDaemon:
             from .hosted_whisper import hosted_dependency_available
             if not hosted_dependency_available():
                 return False, "Install Wicx's optional realtime support for a hosted transcription service"
-        elif self.config.transcription.backend in {"groq", "openrouter"}:
+        elif not force_local and self.config.transcription.backend in {"groq", "openrouter"}:
             provider = "Groq" if self.config.transcription.backend == "groq" else "OpenRouter"
             return False, f"{provider} supports batch transcription only. Select Local or OpenAI for live transcription."
-        elif self.config.streaming.engine == "local":
+        elif engine == "local":
             if self.config.transcription.local_engine != "faster-whisper":
                 return False, "Live partials require the faster-whisper engine"
-        elif self.config.streaming.engine == "openai-realtime":
+        elif engine == "openai-realtime":
             if not os.environ.get("OPENAI_API_KEY"):
                 return False, "OPENAI_API_KEY is not configured"
             from .openai_realtime import realtime_dependency_available
@@ -742,17 +808,27 @@ class TranscriberDaemon:
         self._hosted_final_event.clear()
         if not self._recorder_is_streaming():
             return
-        capable, reason = self._live_capability_locked()
+        force_local = self._active_mode in {"lecture", "meeting"}
+        capable, reason = self._live_capability_locked(force_local=force_local)
         if not capable:
             LOG.info("Live partials unavailable: %s", reason)
             return
+        live_streaming = self.config.streaming
+        live_transcription = self.config.transcription
+        if force_local:
+            local_model = live_streaming.model if live_streaming.engine == "local" else "base"
+            live_streaming = dataclasses.replace(live_streaming, engine="local", model=local_model)
+            local_final_model = live_transcription.model if live_transcription.backend == "local" else "base"
+            live_transcription = dataclasses.replace(
+                live_transcription, backend="local", model=local_final_model,
+            )
         session_id = self._session.session_id
         callbacks = LocalEngineCallbacks(
             is_active=self._live_session_active,
             has_speech=lambda: self._live_has_speech(session_id),
             window_bytes=self._live_window_bytes,
             create_backend=lambda: make_backend(dataclasses.replace(
-                self.config.transcription, backend="local", model=self.config.streaming.model,
+                live_transcription, backend="local", model=live_streaming.model,
             )),
             decode=self._decode_live_samples,
             publish_partial=self._publish_live_partial,
@@ -764,11 +840,11 @@ class TranscriberDaemon:
             report_metrics=self._report_live_metrics,
         )
         try:
-            self._live_engine = make_live_engine(self.config.transcription, self.config.streaming, callbacks, remote_callbacks)
+            self._live_engine = make_live_engine(live_transcription, live_streaming, callbacks, remote_callbacks)
         except LiveEngineUnavailable as exc:
             LOG.info("Live partials unavailable: %s", exc)
             return
-        self._hosted_live_session = self.config.streaming.engine == "hosted-whisper"
+        self._hosted_live_session = not force_local and self.config.streaming.engine == "hosted-whisper"
         vad_thread = threading.Thread(
             target=self._live_vad_loop, args=(generation, session_id),
             name="transcriber-vad", daemon=True,
@@ -981,11 +1057,14 @@ class TranscriberDaemon:
 
     def _process_and_deliver(
         self, audio: Path, is_preserved: bool = False, session_id: str | None = None,
+        mode: str = "dictation",
     ) -> None:
         started = time.monotonic()
         backend_name = self.config.transcription.backend
+        if mode in {"lecture", "meeting"}:
+            backend_name = "local"
         try:
-            if not is_preserved:
+            if not is_preserved and mode == "dictation":
                 self._preserve_audio(audio)
             try:
                 with self._lock:
@@ -1000,8 +1079,20 @@ class TranscriberDaemon:
                         raise TranscriptionError(hosted_error or "Hosted transcription service did not return a final transcript")
                     backend_name = "hosted-whisper"
                 else:
+                    transcription_config = self.config.transcription
+                    if mode in {"lecture", "meeting"} and transcription_config.backend != "local":
+                        # Long sessions are captured and transcribed locally;
+                        # paid cloud analysis is a later post-session stage.
+                        transcription_config = dataclasses.replace(
+                            transcription_config, backend="local", model="base",
+                        )
                     with self._inference_lock:
-                        transcript = make_backend(self.config.transcription).transcribe(audio)
+                        backend = make_backend(transcription_config)
+                        transcript = (
+                            transcribe_long_audio(backend, audio)
+                            if mode in {"lecture", "meeting"}
+                            else backend.transcribe(audio)
+                        )
             except Exception as exc:
                 LOG.error("Transcription failed: %s", _safe_error(exc))
                 self._fail(f"Transcription failed ({_short_reason(exc)})")
@@ -1028,35 +1119,40 @@ class TranscriberDaemon:
                     )
                 except (SessionStoreError, KeyError):
                     LOG.error("Could not save transcript to local history")
-            with self._lock:
-                self._last_transcript = text
-                self._last_backend = backend_name
-                self._last_duration = duration
-                self._persist_last_locked()
-                self._set_state(State.DELIVERING)
+            if mode == "dictation":
+                with self._lock:
+                    self._last_transcript = text
+                    self._last_backend = backend_name
+                    self._last_duration = duration
+                    self._persist_last_locked()
+                    self._set_state(State.DELIVERING)
             # The live session reconciles to the final transcript; only this
             # finalized text is delivered to the focused app.
             if not use_hosted_final:
                 self._finalize_live(text)
-            try:
-                delivery = make_delivery(self.config.delivery)
-                delivery.insert(text)
-                if self.config.delivery.submit_after_insert:
-                    delivery.submit()
-                LOG.info("Transcript delivered via backend=%s in %.1fs", backend_name, duration)
-            except Exception as exc:
-                LOG.error("Delivery failed: %s", _safe_error(exc))
-                self._fail(f"Delivery failed ({_short_reason(exc)}); transcript kept for copy")
-                return
+            if mode == "dictation":
+                try:
+                    delivery = make_delivery(self.config.delivery)
+                    delivery.insert(text)
+                    if self.config.delivery.submit_after_insert:
+                        delivery.submit()
+                    LOG.info("Transcript delivered via backend=%s in %.1fs", backend_name, duration)
+                except Exception as exc:
+                    LOG.error("Delivery failed: %s", _safe_error(exc))
+                    self._fail(f"Delivery failed ({_short_reason(exc)}); transcript kept for copy")
+                    return
+            else:
+                LOG.info("%s transcript saved locally in %.1fs", mode.title(), duration)
         except Exception:
             LOG.error("Unexpected pipeline failure")
             self._fail("Unexpected failure")
         finally:
-            if not is_preserved:
+            if not is_preserved and mode == "dictation":
                 audio.unlink(missing_ok=True)
             with self._lock:
                 if session_id and self._stored_session_id == session_id:
                     self._stored_session_id = None
+                    self._active_mode = "dictation"
                 if self._state != State.ERROR:
                     self._processing_started = None
                     self._set_state(State.IDLE)
@@ -1106,8 +1202,17 @@ class TranscriberDaemon:
         if self.config.ui.show_last_transcript and self._last_transcript:
             preview = self._last_transcript[: self.config.ui.preview_chars]
         session = self._session
-        live_available, live_unavailable_reason = self._live_capability_locked()
+        force_local_live = self._active_mode in {"lecture", "meeting"}
+        live_available, live_unavailable_reason = self._live_capability_locked(force_local=force_local_live)
         live_active = self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING) and session is not None
+        retained_session_active = live_active and self._active_mode in {"lecture", "meeting"}
+        effective_model = self.config.transcription.model
+        effective_live_model = self.config.streaming.model
+        if retained_session_active:
+            if self.config.transcription.backend != "local":
+                effective_model = "base"
+            if self.config.streaming.engine != "local":
+                effective_live_model = "base"
         show_partials = self.config.streaming.show_partials
         committed = session.committed_text if live_active and session else ""
         provisional = session.provisional_text if live_active and session else ""
@@ -1123,6 +1228,9 @@ class TranscriberDaemon:
             "error": self._error or "",
             "soft_error": self._soft_error,
             "backend": self.config.transcription.backend,
+            "session_mode": self._active_mode if live_active else "",
+            "effective_backend": "local" if retained_session_active else self.config.transcription.backend,
+            "effective_model": effective_model,
             "local_engine": self.config.transcription.local_engine,
             "model": self.config.transcription.model,
             "mic": self.config.audio.input_device or "default",
@@ -1148,6 +1256,8 @@ class TranscriberDaemon:
             "speech_active": bool(session.speech_active) if live_active and session else False,
             "streaming": self.config.streaming.enabled,
             "live_engine": self.config.streaming.engine,
+            "effective_live_engine": "local" if force_local_live else self.config.streaming.engine,
+            "effective_live_model": effective_live_model,
             "live_model": self.config.streaming.model,
             # Endpoint configuration isn't secret; expose it so desktop
             # settings UIs can edit a hosted service without reading YAML.

@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "delete-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -32,6 +32,8 @@ def main() -> None:
     parser.add_argument("--since", default="0", help="Event revision to stream from (events/subscribe)")
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
     parser.add_argument("--session", default=None, help="Session id for events or delete-session")
+    parser.add_argument("--mode", choices=("lecture", "meeting"), help="Mode for start-session")
+    parser.add_argument("--consent", action="store_true", help="Confirm people being recorded have been informed")
     parser.add_argument("--key", default=None, help="API key value (omit for a hidden prompt)")
     parser.add_argument("--clear", action="store_true", help="Remove the stored key with set-key")
     parser.add_argument("--json", action="store_true", help="Print the full daemon response")
@@ -53,13 +55,23 @@ def main() -> None:
         payload = {"command": "events", "since": args.since}
         if args.session:
             payload["session_id"] = args.session
-    elif args.command == "history":
+    elif args.command in {"history", "sessions"}:
         payload["limit"] = str(args.limit)
     elif args.command == "delete-session":
         if not args.session:
             parser.error("delete-session requires --session ID")
         payload["command"] = "delete_session"
         payload["session_id"] = args.session
+    elif args.command == "start-session":
+        if not args.mode:
+            parser.error("start-session requires --mode lecture|meeting")
+        if not args.consent:
+            parser.error("start-session requires --consent after informing people who may be recorded")
+        payload["command"] = "start_session"
+        payload["mode"] = args.mode
+        payload["consent_acknowledged"] = True
+    elif args.command == "stop-session":
+        payload["command"] = "stop_session"
     if payload["command"] == "set_backend":
         if not args.provider:
             print("wicx: --provider is required", file=sys.stderr)
@@ -104,6 +116,10 @@ def main() -> None:
     elif args.command == "history":
         for item in response.get("history", []):
             print(f"{item.get('created_at', '')}  {item.get('transcript', '')}")
+    elif args.command == "sessions":
+        for item in response.get("sessions", []):
+            transcript = item.get("english_translation") or item.get("source_transcript", "")
+            print(f"{item.get('id', '')}  {item.get('created_at', '')}  {item.get('mode', '')}  {item.get('state', '')}  {transcript}")
     elif args.command == "mics":
         for mic in response.get("mics", []):
             marker = "*" if mic.get("default") else " "
