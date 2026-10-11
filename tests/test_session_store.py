@@ -27,6 +27,24 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual({item.mode for item in self.store.list()}, {"meeting", "lecture"})
         self.assertEqual([item.id for item in self.store.list(mode="lecture")], [lecture.id])
 
+    def test_session_pages_are_ordered_and_report_remaining_results(self) -> None:
+        created = [self.store.create("lecture") for _ in range(3)]
+        expected = [item.id for item in self.store.list(limit=10)]
+
+        first, first_has_more = self.store.list_page(limit=2, offset=0)
+        second, second_has_more = self.store.list_page(limit=2, offset=2)
+
+        self.assertEqual([item.id for item in first], expected[:2])
+        self.assertEqual([item.id for item in second], expected[2:])
+        self.assertTrue(first_has_more)
+        self.assertFalse(second_has_more)
+        self.assertEqual(set(expected), {item.id for item in created})
+
+    def test_session_page_rejects_invalid_offset(self) -> None:
+        for offset in (-1, True, "1"):
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                self.store.list_page(offset=offset)  # type: ignore[arg-type]
+
     def test_connection_context_closes_handle_after_transaction(self) -> None:
         connection = sqlite3.connect(":memory:")
         with patch.object(self.store, "_connect", return_value=connection):

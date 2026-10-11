@@ -186,7 +186,7 @@ class TranscriberDaemon:
         if command == "history":
             return self._get_history(params.get("limit", 50))
         if command == "sessions":
-            return self._get_sessions(params.get("limit", 50))
+            return self._get_sessions(params.get("limit", 50), params.get("offset", 0))
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
         if command == "export_session":
@@ -459,15 +459,19 @@ class TranscriberDaemon:
             ],
         }
 
-    def _get_sessions(self, raw_limit: Any) -> dict[str, Any]:
+    def _get_sessions(self, raw_limit: Any, raw_offset: Any = 0) -> dict[str, Any]:
         try:
             limit = int(raw_limit)
-            if isinstance(raw_limit, bool):
+            offset = int(raw_offset)
+            if isinstance(raw_limit, bool) or isinstance(raw_offset, bool):
                 raise ValueError
-            sessions = self._session_store.list(limit=limit)
+            sessions, has_more = self._session_store.list_page(limit=limit, offset=offset)
         except (TypeError, ValueError):
             with self._lock:
-                return {**self._status_locked(), "ok": "false", "error": "Session limit must be between 1 and 1000"}
+                return {
+                    **self._status_locked(), "ok": "false",
+                    "error": "Session page requires a limit between 1 and 1000 and a non-negative offset",
+                }
         except SessionStoreError:
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "Could not read local sessions"}
@@ -476,6 +480,9 @@ class TranscriberDaemon:
         return {
             **status,
             "ok": "true",
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
             "sessions": [
                 {
                     "id": item.id,

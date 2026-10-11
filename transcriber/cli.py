@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--enabled", default=None, help="true/false for set-streaming (omit to flip)")
     parser.add_argument("--since", default="0", help="Event revision to stream from (events/subscribe)")
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
+    parser.add_argument("--offset", type=int, default=0, help="Skip this many older session entries (sessions)")
     parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or exports")
     parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
     parser.add_argument("--action", choices=("list", "add", "remove"), help="Dictionary action")
@@ -60,6 +61,8 @@ def main() -> None:
             payload["session_id"] = args.session
     elif args.command in {"history", "sessions"}:
         payload["limit"] = str(args.limit)
+        if args.command == "sessions":
+            payload["offset"] = str(args.offset)
     elif args.command == "delete-session":
         if not args.session:
             parser.error("delete-session requires --session ID")
@@ -151,6 +154,9 @@ def main() -> None:
         for item in response.get("sessions", []):
             transcript = item.get("english_translation") or item.get("source_transcript", "")
             print(f"{item.get('id', '')}  {item.get('created_at', '')}  {item.get('mode', '')}  {item.get('state', '')}  {transcript}")
+        if response.get("has_more"):
+            next_offset = response.get("offset", args.offset) + response.get("limit", args.limit)
+            print(f"More sessions available; continue with --offset {next_offset}")
     elif args.command == "retry-session":
         print("Retry started; local session transcription is processing")
     elif args.command == "export-session":

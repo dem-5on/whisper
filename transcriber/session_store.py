@@ -145,25 +145,39 @@ class SessionStore:
             error=row["error"], audio_path=self.sessions_dir / row["id"] / "recording.wav",
         )
 
-    def list(self, *, limit: int = 100, mode: str | None = None) -> list[StoredSession]:
+    def list(
+        self, *, limit: int = 100, offset: int = 0, mode: str | None = None,
+    ) -> list[StoredSession]:
+        """List a stable page of sessions, newest first."""
+        sessions, _has_more = self.list_page(limit=limit, offset=offset, mode=mode)
+        return sessions
+
+    def list_page(
+        self, *, limit: int = 100, offset: int = 0, mode: str | None = None,
+    ) -> tuple[list[StoredSession], bool]:
+        """Return one history page and whether another page is available."""
         if not 1 <= limit <= 1000:
             raise ValueError("limit must be between 1 and 1000")
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
         if mode is not None and mode not in SESSION_MODES:
             raise ValueError(f"mode must be one of: {', '.join(sorted(SESSION_MODES))}")
         try:
             with self._connection() as connection:
                 if mode is None:
                     rows = connection.execute(
-                        "SELECT id FROM sessions ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)
+                        "SELECT id FROM sessions ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                        (limit + 1, offset),
                     ).fetchall()
                 else:
                     rows = connection.execute(
-                        "SELECT id FROM sessions WHERE mode = ? ORDER BY created_at DESC, id DESC LIMIT ?",
-                        (mode, limit),
+                        "SELECT id FROM sessions WHERE mode = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                        (mode, limit + 1, offset),
                     ).fetchall()
         except sqlite3.Error as exc:
             raise SessionStoreError("Could not list local sessions") from exc
-        return [self.get(row["id"]) for row in rows]
+        has_more = len(rows) > limit
+        return [self.get(row["id"]) for row in rows[:limit]], has_more
 
     def recover_interrupted(self) -> int:
         """Mark unfinished long-form sessions as interrupted without deleting audio.

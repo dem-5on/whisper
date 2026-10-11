@@ -118,6 +118,21 @@ class DaemonTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail(f"daemon did not reach {states}; at {self.daemon.state}")
 
+    def test_sessions_command_exposes_page_metadata(self) -> None:
+        first = self.daemon._session_store.create("lecture")
+        self.daemon._session_store.create("meeting")
+
+        page = self.daemon.command("sessions", {"limit": 1, "offset": 0})
+
+        self.assertEqual(page["ok"], "true")
+        self.assertEqual(page["offset"], 0)
+        self.assertEqual(page["limit"], 1)
+        self.assertTrue(page["has_more"])
+        self.assertEqual(len(page["sessions"]), 1)
+        last_page = self.daemon.command("sessions", {"limit": 1, "offset": 1})
+        self.assertFalse(last_page["has_more"])
+        self.assertNotEqual(page["sessions"][0]["id"], first.id)
+
     def test_existing_daemon_adoption_is_limited_to_authenticated_windows_sidecars(self) -> None:
         self.assertEqual(_existing_daemon_exit_code("nt", "per-user-token"), 75)
         self.assertEqual(_existing_daemon_exit_code("nt", None), 1)
