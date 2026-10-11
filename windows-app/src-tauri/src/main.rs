@@ -445,7 +445,7 @@ fn main() {
     let builder = {
         use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
-        let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR);
+        let shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::Space);
         let handler_shortcut = shortcut.clone();
         tauri::Builder::default()
             .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -518,7 +518,7 @@ fn main() {
             let shortcut_status = {
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
-                let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR);
+                let shortcut = Shortcut::new(Some(Modifiers::CONTROL), Code::Space);
                 if app.global_shortcut().register(shortcut).is_ok() {
                     "available"
                 } else {
@@ -546,7 +546,7 @@ fn main() {
             let toggle = MenuItem::with_id(
                 app,
                 "toggle",
-                "Start / stop recording · Ctrl+Alt+R",
+                "Start / stop recording · Ctrl+Space",
                 recording_enabled,
                 None::<&str>,
             )?;

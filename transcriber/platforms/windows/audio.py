@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import queue
+import math
 import os
+import queue
+import struct
 import tempfile
 import threading
 import wave
@@ -11,6 +13,19 @@ from pathlib import Path
 
 from ...audio import AudioError, AudioSource
 from ...config import AudioConfig
+
+
+def pcm_audio_level(pcm: bytes) -> float:
+    """Map little-endian signed 16-bit PCM RMS to a perceptual 0..1 meter."""
+    sample_count = len(pcm) // 2
+    if not sample_count:
+        return 0.0
+    samples = struct.iter_unpack("<h", pcm[: sample_count * 2])
+    mean_square = sum(sample[0] * sample[0] for sample in samples) / sample_count
+    rms = math.sqrt(mean_square) / 32768.0
+    if rms <= 10 ** (-55 / 20):
+        return 0.0
+    return min(1.0, max(0.0, (20 * math.log10(rms) + 55) / 55))
 
 
 class WindowsRecorder:
@@ -35,10 +50,16 @@ class WindowsRecorder:
         self._path: Path | None = None
         self._captured_frames = 0
         self._capture_error: str | None = None
+        self._audio_level = 0.0
 
     @property
     def live_available(self) -> bool:
         return self._stream is not None
+
+    @property
+    def audio_level(self) -> float:
+        with self._lock:
+            return self._audio_level
 
     def start(self) -> Path:
         if self._stream is not None:
@@ -64,6 +85,8 @@ class WindowsRecorder:
         self._rolling.clear()
         self._captured_frames = 0
         self._capture_error = None
+        with self._lock:
+            self._audio_level = 0.0
         self._writer = threading.Thread(target=self._write_audio, name="whisper-audio-writer", daemon=True)
         self._writer.start()
 
@@ -116,11 +139,16 @@ class WindowsRecorder:
             except (OSError, wave.Error) as exc:
                 self._capture_error = str(exc)
                 continue
+            measured_level = pcm_audio_level(data)
             with self._lock:
                 self._captured_frames += len(data) // (2 * self.config.channels)
                 self._rolling.extend(data)
                 if len(self._rolling) > self._rolling_limit:
                     del self._rolling[:-self._rolling_limit]
+                # Fast attack and slower release keep the meter responsive
+                # while smoothing the 20ms capture blocks.
+                blend = 0.62 if measured_level > self._audio_level else 0.24
+                self._audio_level += (measured_level - self._audio_level) * blend
             try:
                 self._frames.put_nowait(data)
             except queue.Full:

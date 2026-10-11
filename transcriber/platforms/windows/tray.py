@@ -67,7 +67,7 @@ def main() -> None:
     menu = pystray.Menu(
         pystray.MenuItem("Start / stop recording", toggle, default=True),
         pystray.MenuItem("Cancel recording", cancel),
-        pystray.MenuItem("Shortcut: Ctrl+Alt+R", None, enabled=False),
+        pystray.MenuItem("Shortcut: Ctrl+Space", None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit Whisper tray", quit_tray),
     )
@@ -82,10 +82,10 @@ def main() -> None:
         user32 = ctypes.WinDLL("user32", use_last_error=True)
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         hotkey_thread_id[0] = kernel32.GetCurrentThreadId()
-        registered = user32.RegisterHotKey(None, 1, 0x0002 | 0x0008, ord("R"))  # MOD_CONTROL | MOD_ALT
+        registered = user32.RegisterHotKey(None, 1, 0x0002, 0x20)  # MOD_CONTROL | VK_SPACE
         if not registered:
             if icon is not None:
-                icon.notify("Ctrl+Alt+R is already in use by another app.", "Whisper")
+                icon.notify("Ctrl+Space is already in use by another app.", "Whisper")
             return
         message = wintypes.MSG()
         while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:

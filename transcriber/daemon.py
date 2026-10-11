@@ -1010,6 +1010,9 @@ class TranscriberDaemon:
         if not show_partials:
             provisional = ""
             live_text = committed
+        audio_level = 0.0
+        if self._state == State.RECORDING:
+            audio_level = min(1.0, max(0.0, float(getattr(self.recorder, "audio_level", 0.0))))
         return {
             "state": self._state.value,
             "error": self._error or "",
@@ -1019,6 +1022,9 @@ class TranscriberDaemon:
             "model": self.config.transcription.model,
             "mic": self.config.audio.input_device or "default",
             "recording_elapsed": round(recording_elapsed, 1),
+            # This is only a normalized amplitude level; captured audio stays
+            # on the existing transcription pipeline and is never sent to UI.
+            "audio_level": round(audio_level, 3),
             "processing_elapsed": round(processing_elapsed, 1),
             "last_audio": bool(self.last_audio_path.exists()),
             "last_backend": self._last_backend or "",

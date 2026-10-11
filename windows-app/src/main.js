@@ -58,6 +58,7 @@ const ui = {
   connection: document.querySelector("#connection"),
   audioMic: document.querySelector("#audio-mic"),
   audioStatus: document.querySelector("#audio-status"),
+  audioMeter: document.querySelector("#audio-meter"),
   reconnect: document.querySelector("#reconnect"),
   focusResult: document.querySelector("#focus-result"),
   error: document.querySelector("#error"),
@@ -90,6 +91,21 @@ let microphoneSources = [];
 let pendingHotkeyToggles = 0;
 let pendingHotkeyTimer = null;
 const pending = new Map();
+const meterBarGain = [0.55, 0.82, 1, 0.82, 0.55];
+
+function renderAudioMeter(level, active) {
+  const normalized = active && Number.isFinite(Number(level))
+    ? Math.min(1, Math.max(0, Number(level)))
+    : 0;
+  const percentage = Math.round(normalized * 100);
+  ui.audioMeter.dataset.active = String(active);
+  ui.audioMeter.setAttribute("aria-valuenow", String(percentage));
+  ui.audioMeter.setAttribute("aria-valuetext", active ? `Input level ${percentage}%` : "Not recording");
+  ui.audioMeter.querySelectorAll(".meter-bar").forEach((bar, index) => {
+    const height = 2 + normalized * 15 * meterBarGain[index];
+    bar.style.height = `${height.toFixed(1)}px`;
+  });
+}
 
 function setConnection(text, connected = false) {
   ui.connection.replaceChildren();
@@ -99,6 +115,7 @@ function setConnection(text, connected = false) {
   ui.connection.dataset.connected = String(connected);
   ui.audioStatus.textContent = connected ? "Service ready" : "Waiting for daemon";
   ui.audioStatus.dataset.connected = String(connected);
+  if (!connected) renderAudioMeter(0, false);
   ui.reconnect.hidden = connected;
   const controls = deriveControlState(currentStatus, connected, focusTestBuild);
   ui.toggle.disabled = controls.toggleDisabled;
@@ -137,9 +154,9 @@ async function loadBuildMode() {
     try {
       const shortcutStatus = await invoke("recording_shortcut_status");
       const messages = {
-        available: "Ctrl+Alt+R · Start or stop recording",
-        unavailable: "Ctrl+Alt+R is unavailable because another app is using it",
-        development: "Ctrl+Alt+R is enabled in the installed app",
+        available: "Ctrl+Space · Start or stop recording",
+        unavailable: "Ctrl+Space is unavailable because another app is using it",
+        development: "Ctrl+Space is enabled in the installed app",
       };
       ui.shortcutNote.textContent = messages[shortcutStatus] || "";
       ui.shortcutNote.hidden = !ui.shortcutNote.textContent;
@@ -177,6 +194,7 @@ function updateStatus(status) {
         : "Ready";
   setConnection(label, active);
   ui.connection.dataset.recording = String(recording);
+  renderAudioMeter(currentStatus.audio_level, recording && active);
   setActionContent(ui.toggle, recording ? "stop" : "mic", recording
     ? "Stop recording"
     : state === "ERROR" ? "Try again" : "Start recording");

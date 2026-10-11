@@ -79,7 +79,10 @@ async def handle_connection(daemon: TranscriberDaemon, websocket: Any) -> None:
             await send({"type": "status", "status": previous_status})
             while True:
                 events, revision = await asyncio.to_thread(
-                    daemon.wait_events_since, last_revision, session_id, 0.5
+                    daemon.wait_events_since,
+                    last_revision,
+                    session_id,
+                    0.1 if previous_status.get("state") == "RECORDING" else 0.5,
                 )
                 for event in events:
                     await send({"type": "daemon_event", "event": event})

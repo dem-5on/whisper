@@ -29,6 +29,9 @@
 
       <div class="audio-monitor" aria-live="polite">
         <span class="audio-source"><span class="audio-dot"></span>Input: <strong id="audio-mic">Default</strong></span>
+        <div id="audio-meter" class="audio-meter" role="meter" aria-label="Microphone input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="Not recording" data-active="false">
+          <span class="meter-bar"></span><span class="meter-bar"></span><span class="meter-bar"></span><span class="meter-bar"></span><span class="meter-bar"></span>
+        </div>
         <span class="audio-status" id="audio-status">Waiting for daemon</span>
       </div>
 

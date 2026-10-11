@@ -277,7 +277,7 @@ def test_recording_controls_stay_gated_until_focus_spike_passes():
     assert 'if (focusTestBuild) return;' in source
     assert 'if (!focusTestBuild) void cancelRecording();' in source
     assert 'let recording_enabled = !cfg!(feature = "focus-test");' in rust
-    assert '"toggle",\n                "Start / stop recording · Ctrl+Alt+R",\n                recording_enabled' in rust
+    assert '"toggle",\n                "Start / stop recording · Ctrl+Space",\n                recording_enabled' in rust
     assert 'cfg!(feature = "focus-test")' in rust
 
 
@@ -493,8 +493,9 @@ def test_packaged_tauri_app_registers_global_recording_shortcut():
     frontend = (ROOT / "windows-app/src/main.js").read_text()
 
     assert 'tauri-plugin-global-shortcut = "2"' in manifest
-    assert "Modifiers::CONTROL | Modifiers::ALT" in rust
-    assert "Code::KeyR" in rust
+    assert "Shortcut::new(Some(Modifiers::CONTROL), Code::Space)" in rust
+    assert 'available: "Ctrl+Space · Start or stop recording"' in frontend
+    assert 'unavailable: "Ctrl+Space is unavailable because another app is using it"' in frontend
     assert 'app.emit("recording-hotkey", ())' in rust
     assert 'listen("recording-hotkey"' in frontend
     assert 'const toggleRecording = () => sendCommandAndHide("toggle")' in frontend
@@ -507,12 +508,15 @@ def test_packaged_tauri_app_registers_global_recording_shortcut():
 def test_tray_menu_keeps_recording_and_cancel_actions_available():
     rust = (ROOT / "windows-app/src-tauri/src/main.rs").read_text()
     frontend = (ROOT / "windows-app/src/main.js").read_text()
+    tray = (ROOT / "transcriber/platforms/windows/tray.py").read_text()
 
-    assert '"Start / stop recording · Ctrl+Alt+R"' in rust
+    assert '"Start / stop recording · Ctrl+Space"' in rust
     assert '"Cancel recording"' in rust
     assert 'app.emit("recording-hotkey", ())' in rust
     assert 'app.emit("cancel-recording", ())' in rust
     assert 'listen("cancel-recording"' in frontend
+    assert 'pystray.MenuItem("Shortcut: Ctrl+Space"' in tray
+    assert 'RegisterHotKey(None, 1, 0x0002, 0x20)' in tray
 
 
 def test_packaged_app_uses_single_instance_and_reopens_without_focus_stealing():

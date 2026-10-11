@@ -10,7 +10,11 @@ from types import SimpleNamespace
 from transcriber.audio import AudioError, AudioSource, make_recorder
 from transcriber.config import AudioConfig, Config, DeliveryConfig
 from transcriber.delivery import _detect_wayland, make_delivery
-from transcriber.platforms.windows.audio import WindowsRecorder, list_sources as windows_list_sources
+from transcriber.platforms.windows.audio import (
+    WindowsRecorder,
+    list_sources as windows_list_sources,
+    pcm_audio_level,
+)
 from transcriber.platforms.windows.delivery import (
     KEYEVENTF_KEYUP,
     KEYEVENTF_UNICODE,
@@ -21,6 +25,18 @@ from transcriber.platforms.windows.delivery import (
 
 
 class WindowsBackendTests(unittest.TestCase):
+    def test_pcm_audio_level_maps_silence_and_voice_to_bounded_meter_values(self) -> None:
+        silence = bytes(640)
+        quiet_voice = b"\x00\x10" * 320
+        loud_voice = b"\x00\x40" * 320
+
+        self.assertEqual(pcm_audio_level(silence), 0.0)
+        quiet_level = pcm_audio_level(quiet_voice)
+        loud_level = pcm_audio_level(loud_voice)
+        self.assertGreater(quiet_level, 0.0)
+        self.assertGreater(loud_level, quiet_level)
+        self.assertLessEqual(loud_level, 1.0)
+
     def test_shared_audio_factory_selects_windows_recorder(self) -> None:
         with patch("transcriber.audio.os.name", "nt"):
             recorder = make_recorder(AudioConfig())
@@ -80,6 +96,7 @@ class WindowsBackendTests(unittest.TestCase):
             frame = recorder.read_frame(timeout=1)
             self.assertEqual(frame, bytes(640))
             self.assertEqual(recorder.window_bytes(), bytes(640))
+            self.assertEqual(recorder.audio_level, 0.0)
             wav_path = recorder.stop()
         try:
             self.assertEqual(path, wav_path)
@@ -88,6 +105,34 @@ class WindowsBackendTests(unittest.TestCase):
             self.assertEqual(header[:4], b"RIFF")
             self.assertEqual(header[8:12], b"WAVE")
             self.assertEqual(recorder.captured_seconds(), 0.02)
+        finally:
+            wav_path.unlink(missing_ok=True)
+
+    def test_recorder_exposes_level_measured_from_captured_pcm(self) -> None:
+        pcm = b"\x00\x40" * 320
+
+        class FakeStream:
+            def __init__(self, **kwargs):
+                self.callback = kwargs["callback"]
+
+            def start(self):
+                self.callback(pcm, 320, None, None)
+
+            def stop(self):
+                pass
+
+            def close(self):
+                pass
+
+        with patch.dict(sys.modules, {"sounddevice": MagicMock(InputStream=FakeStream)}):
+            recorder = WindowsRecorder(AudioConfig(), frame_ms=20)
+            recorder.start()
+            self.assertEqual(recorder.read_frame(timeout=1), pcm)
+            level = recorder.audio_level
+            wav_path = recorder.stop()
+        try:
+            self.assertGreater(level, 0.0)
+            self.assertLessEqual(level, 1.0)
         finally:
             wav_path.unlink(missing_ok=True)
 

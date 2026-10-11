@@ -172,10 +172,12 @@ class RecordingDaemon:
         return {
             "state": "RECORDING",
             "recording_elapsed": round(self.ticks * 0.5, 1),
+            "audio_level": min(self.ticks * 0.1, 1.0),
             "live_revision": 0,
         }
 
     def wait_events_since(self, since, session_id=None, timeout=1.0):
+        self.last_wait_timeout = timeout
         if self.ticks >= self.ticks_before_end:
             raise RuntimeError("end test event stream")
         return ([], since)
@@ -224,6 +226,8 @@ def test_windows_websocket_pushes_daemon_elapsed_time_while_recording(monkeypatc
         statuses = [payload for payload in websocket.sent if payload.get("type") == "status"]
         assert len(statuses) >= 2
         assert all("recording_elapsed" in status["status"] for status in statuses)
+        assert all("audio_level" in status["status"] for status in statuses)
+        assert daemon.last_wait_timeout == 0.1
         elapsed = [status["status"]["recording_elapsed"] for status in statuses]
         assert elapsed == sorted(elapsed)
         assert elapsed[-1] > elapsed[0]
