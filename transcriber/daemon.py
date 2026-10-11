@@ -186,7 +186,10 @@ class TranscriberDaemon:
         if command == "history":
             return self._get_history(params.get("limit", 50))
         if command == "sessions":
-            return self._get_sessions(params.get("limit", 50), params.get("offset", 0))
+            return self._get_sessions(
+                params.get("limit", 50), params.get("offset", 0),
+                params.get("mode"), params.get("search"),
+            )
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
         if command == "export_session":
@@ -459,13 +462,18 @@ class TranscriberDaemon:
             ],
         }
 
-    def _get_sessions(self, raw_limit: Any, raw_offset: Any = 0) -> dict[str, Any]:
+    def _get_sessions(
+        self, raw_limit: Any, raw_offset: Any = 0,
+        mode: Any = None, search: Any = None,
+    ) -> dict[str, Any]:
         try:
             limit = int(raw_limit)
             offset = int(raw_offset)
             if isinstance(raw_limit, bool) or isinstance(raw_offset, bool):
                 raise ValueError
-            sessions, has_more = self._session_store.list_page(limit=limit, offset=offset)
+            sessions, has_more = self._session_store.list_page(
+                limit=limit, offset=offset, mode=mode, search=search,
+            )
         except (TypeError, ValueError):
             with self._lock:
                 return {
@@ -483,6 +491,8 @@ class TranscriberDaemon:
             "offset": offset,
             "limit": limit,
             "has_more": has_more,
+            "mode": mode,
+            "search": search.strip() if isinstance(search, str) else "",
             "sessions": [
                 {
                     "id": item.id,

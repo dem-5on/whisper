@@ -147,13 +147,15 @@ class SessionStore:
 
     def list(
         self, *, limit: int = 100, offset: int = 0, mode: str | None = None,
+        search: str | None = None,
     ) -> list[StoredSession]:
         """List a stable page of sessions, newest first."""
-        sessions, _has_more = self.list_page(limit=limit, offset=offset, mode=mode)
+        sessions, _has_more = self.list_page(limit=limit, offset=offset, mode=mode, search=search)
         return sessions
 
     def list_page(
         self, *, limit: int = 100, offset: int = 0, mode: str | None = None,
+        search: str | None = None,
     ) -> tuple[list[StoredSession], bool]:
         """Return one history page and whether another page is available."""
         if not 1 <= limit <= 1000:
@@ -162,18 +164,26 @@ class SessionStore:
             raise ValueError("offset must be a non-negative integer")
         if mode is not None and mode not in SESSION_MODES:
             raise ValueError(f"mode must be one of: {', '.join(sorted(SESSION_MODES))}")
+        if search is not None and (not isinstance(search, str) or len(search) > 200):
+            raise ValueError("search must be text no longer than 200 characters")
+        search = search.strip() if search else None
+        clauses: list[str] = []
+        values: list[Any] = []
+        if mode is not None:
+            clauses.append("mode = ?")
+            values.append(mode)
+        if search:
+            escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append("(source_transcript LIKE ? ESCAPE '\\' OR english_translation LIKE ? ESCAPE '\\')")
+            values.extend((f"%{escaped}%", f"%{escaped}%"))
+        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
+        values.extend((limit + 1, offset))
         try:
             with self._connection() as connection:
-                if mode is None:
-                    rows = connection.execute(
-                        "SELECT id FROM sessions ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                        (limit + 1, offset),
-                    ).fetchall()
-                else:
-                    rows = connection.execute(
-                        "SELECT id FROM sessions WHERE mode = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                        (mode, limit + 1, offset),
-                    ).fetchall()
+                rows = connection.execute(
+                    f"SELECT id FROM sessions {where}ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                    values,
+                ).fetchall()
         except sqlite3.Error as exc:
             raise SessionStoreError("Could not list local sessions") from exc
         has_more = len(rows) > limit

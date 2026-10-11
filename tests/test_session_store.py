@@ -45,6 +45,25 @@ class SessionStoreTests(unittest.TestCase):
             with self.subTest(offset=offset), self.assertRaises(ValueError):
                 self.store.list_page(offset=offset)  # type: ignore[arg-type]
 
+    def test_session_pages_filter_by_mode_and_search_literal_transcript_text(self) -> None:
+        lecture = self.store.create("lecture")
+        self.store.update(lecture.id, source_transcript="Use Kubernetes at 100% capacity")
+        meeting = self.store.create("meeting")
+        self.store.update(meeting.id, english_translation="Discuss Kubernetes next week")
+        self.store.create("dictation")
+
+        by_mode, _ = self.store.list_page(mode="lecture")
+        by_source, _ = self.store.list_page(search="100%")
+        by_translation, _ = self.store.list_page(search="next week")
+
+        self.assertEqual([item.id for item in by_mode], [lecture.id])
+        self.assertEqual([item.id for item in by_source], [lecture.id])
+        self.assertEqual([item.id for item in by_translation], [meeting.id])
+
+    def test_session_search_rejects_oversized_query(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.list_page(search="x" * 201)
+
     def test_connection_context_closes_handle_after_transaction(self) -> None:
         connection = sqlite3.connect(":memory:")
         with patch.object(self.store, "_connect", return_value=connection):

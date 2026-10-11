@@ -120,6 +120,7 @@ class DaemonTests(unittest.TestCase):
 
     def test_sessions_command_exposes_page_metadata(self) -> None:
         first = self.daemon._session_store.create("lecture")
+        self.daemon._session_store.update(first.id, source_transcript="Kubernetes lecture")
         self.daemon._session_store.create("meeting")
 
         page = self.daemon.command("sessions", {"limit": 1, "offset": 0})
@@ -132,6 +133,9 @@ class DaemonTests(unittest.TestCase):
         last_page = self.daemon.command("sessions", {"limit": 1, "offset": 1})
         self.assertFalse(last_page["has_more"])
         self.assertNotEqual(page["sessions"][0]["id"], first.id)
+        filtered = self.daemon.command("sessions", {"mode": "lecture", "search": "kubernetes"})
+        self.assertEqual([item["id"] for item in filtered["sessions"]], [first.id])
+        self.assertEqual(filtered["mode"], "lecture")
 
     def test_existing_daemon_adoption_is_limited_to_authenticated_windows_sidecars(self) -> None:
         self.assertEqual(_existing_daemon_exit_code("nt", "per-user-token"), 75)

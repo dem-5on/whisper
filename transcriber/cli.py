@@ -32,11 +32,13 @@ def main() -> None:
     parser.add_argument("--since", default="0", help="Event revision to stream from (events/subscribe)")
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
     parser.add_argument("--offset", type=int, default=0, help="Skip this many older session entries (sessions)")
+    parser.add_argument("--search", default=None, help="Find text in saved source transcripts or translations (sessions)")
     parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or exports")
     parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
     parser.add_argument("--action", choices=("list", "add", "remove"), help="Dictionary action")
     parser.add_argument("--term", default=None, help="One custom vocabulary term")
     parser.add_argument("--mode", choices=("lecture", "meeting"), help="Mode for start-session")
+    parser.add_argument("--session-mode", choices=("dictation", "lecture", "meeting"), help="Filter saved sessions by mode")
     parser.add_argument("--consent", action="store_true", help="Confirm people being recorded have been informed")
     parser.add_argument("--key", default=None, help="API key value (omit for a hidden prompt)")
     parser.add_argument("--clear", action="store_true", help="Remove the stored key with set-key")
@@ -63,6 +65,10 @@ def main() -> None:
         payload["limit"] = str(args.limit)
         if args.command == "sessions":
             payload["offset"] = str(args.offset)
+            if args.session_mode:
+                payload["mode"] = args.session_mode
+            if args.search is not None:
+                payload["search"] = args.search
     elif args.command == "delete-session":
         if not args.session:
             parser.error("delete-session requires --session ID")

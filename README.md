@@ -98,7 +98,7 @@ wicx status [--json]
 wicx retry            # re-transcribe the preserved last recording
 wicx last             # print the last transcript (for copy/recovery)
 wicx history [--limit 50]  # list recent Dictation transcripts saved on this device
-wicx sessions [--limit 50]  # list saved Dictation, Lecture, and Meeting sessions
+wicx sessions [--limit 50] [--offset 0] [--session-mode lecture] [--search "term"]  # page/filter saved sessions
 wicx delete-session --session <id>  # permanently delete that local history record
 wicx retry-session --session <id>  # explicitly retry a failed Lecture/Meeting from its saved audio
 wicx export-session --session <id> --output ./lecture.md  # export transcript and generated outputs as Markdown
