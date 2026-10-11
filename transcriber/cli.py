@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "retry-session", "export-session", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "retry-session", "export-session", "export-session-audio", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -31,8 +31,8 @@ def main() -> None:
     parser.add_argument("--enabled", default=None, help="true/false for set-streaming (omit to flip)")
     parser.add_argument("--since", default="0", help="Event revision to stream from (events/subscribe)")
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
-    parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or export-session")
-    parser.add_argument("--output", type=Path, default=None, help="Destination Markdown file for export-session (must not already exist)")
+    parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or exports")
+    parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
     parser.add_argument("--mode", choices=("lecture", "meeting"), help="Mode for start-session")
     parser.add_argument("--consent", action="store_true", help="Confirm people being recorded have been informed")
     parser.add_argument("--key", default=None, help="API key value (omit for a hidden prompt)")
@@ -74,6 +74,14 @@ def main() -> None:
         if args.output is None:
             parser.error("export-session requires --output PATH")
         payload["command"] = "export_session"
+        payload["session_id"] = args.session
+        payload["output"] = str(args.output.expanduser().resolve())
+    elif args.command == "export-session-audio":
+        if not args.session:
+            parser.error("export-session-audio requires --session ID")
+        if args.output is None:
+            parser.error("export-session-audio requires --output PATH")
+        payload["command"] = "export_session_audio"
         payload["session_id"] = args.session
         payload["output"] = str(args.output.expanduser().resolve())
     elif args.command == "start-session":
@@ -137,6 +145,8 @@ def main() -> None:
     elif args.command == "retry-session":
         print("Retry started; local session transcription is processing")
     elif args.command == "export-session":
+        print(response.get("export_path", ""))
+    elif args.command == "export-session-audio":
         print(response.get("export_path", ""))
     elif args.command == "mics":
         for mic in response.get("mics", []):

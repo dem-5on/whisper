@@ -192,6 +192,7 @@ class DaemonTests(unittest.TestCase):
 
     def test_export_session_writes_markdown_without_overwriting(self) -> None:
         stored = self.daemon._session_store.create("lecture")
+        stored.audio_path.write_bytes(b"RIFF" + b"\x00" * 40 + b"audio")
         self.daemon._session_store.update(
             stored.id,
             state="ready",
@@ -209,6 +210,12 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(exported["ok"], "true")
         self.assertEqual(Path(exported["export_path"]), destination)
         self.assertIn("The lesson begins.", destination.read_text(encoding="utf-8"))
+        audio_destination = self.data / "exports" / "lecture.wav"
+        audio_export = self.daemon.command("export_session_audio", {
+            "session_id": stored.id, "output": str(audio_destination),
+        })
+        self.assertEqual(audio_export["ok"], "true")
+        self.assertEqual(audio_destination.read_bytes(), stored.audio_path.read_bytes())
         refused = self.daemon.command("export_session", {
             "session_id": stored.id, "output": str(destination),
         })

@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from transcriber.session_export import export_session_markdown, render_session_markdown
+from transcriber.session_export import export_session_audio, export_session_markdown, render_session_markdown
 from transcriber.session_store import SessionStore
 
 
@@ -42,6 +42,30 @@ class SessionExportTests(unittest.TestCase):
                 export_session_markdown(session, target)
 
             self.assertEqual(target.read_text(encoding="utf-8"), "keep this")
+
+    def test_audio_export_copies_retained_recording_and_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("meeting")
+            recording = b"RIFF" + b"\x00" * 40 + b"audio-data"
+            session.audio_path.write_bytes(recording)
+            target = Path(directory) / "meeting.wav"
+
+            exported = export_session_audio(session, target)
+
+            self.assertEqual(exported.read_bytes(), recording)
+            self.assertEqual(session.audio_path.read_bytes(), recording)
+            with self.assertRaises(FileExistsError):
+                export_session_audio(session, target)
+            self.assertEqual(target.read_bytes(), recording)
+
+    def test_audio_export_rejects_dictation_without_retained_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("dictation")
+
+            with self.assertRaises(FileNotFoundError):
+                export_session_audio(session, Path(directory) / "dictation.wav")
 
 
 if __name__ == "__main__":

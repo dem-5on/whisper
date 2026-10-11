@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 from .session_store import StoredSession
 
 
@@ -53,6 +54,29 @@ def export_session_markdown(session: StoredSession, output: str | Path) -> Path:
     except OSError:
         # If writing failed after exclusive creation, remove only the partial
         # file this call created; never touch a pre-existing export.
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        raise
+    return target
+
+
+def export_session_audio(session: StoredSession, output: str | Path) -> Path:
+    """Copy retained session audio, refusing to overwrite an existing file."""
+    if session.mode not in {"lecture", "meeting"}:
+        raise FileNotFoundError("Audio is not retained for this session")
+    source = session.audio_path
+    if not source.is_file() or source.stat().st_size <= 44:
+        raise FileNotFoundError("The session recording is missing or empty")
+    target = Path(output).expanduser()
+    try:
+        with source.open("rb") as audio, target.open("xb") as exported:
+            shutil.copyfileobj(audio, exported, length=1024 * 1024)
+    except FileExistsError:
+        raise
+    except OSError:
         if target.exists():
             try:
                 target.unlink()

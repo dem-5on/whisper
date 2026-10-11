@@ -45,7 +45,7 @@ from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallback
 from .processing import process_transcript
 from .state import State
 from .session_store import SessionStore, SessionStoreError
-from .session_export import export_session_markdown
+from .session_export import export_session_audio, export_session_markdown
 from .streaming import LiveSession
 from .transcription import TranscriptionError, make_backend, preload_local_model, transcribe_long_audio
 from .vad import SpeechEndpoint, create_vad
@@ -189,6 +189,8 @@ class TranscriberDaemon:
             return self._delete_session(str(params.get("session_id", "")))
         if command == "export_session":
             return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
+        if command == "export_session_audio":
+            return self._export_session_audio(str(params.get("session_id", "")), str(params.get("output", "")))
         if command == "retry_session":
             return self._retry_session(str(params.get("session_id", "")))
         if command == "mics":
@@ -525,6 +527,32 @@ class TranscriberDaemon:
         except OSError:
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "Could not write the session export; check the path and permissions"}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
+
+    def _export_session_audio(self, session_id: str, output: str) -> dict[str, Any]:
+        if not session_id or not output:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier and output path are required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        try:
+            exported = export_session_audio(stored, output)
+        except FileExistsError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The export file already exists; choose another path"}
+        except FileNotFoundError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The session recording is not available for export"}
+        except OSError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not export the session recording; check the path and permissions"}
         with self._lock:
             return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
 
