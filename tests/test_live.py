@@ -390,6 +390,46 @@ class DaemonLiveTests(unittest.TestCase):
             finally:
                 self.daemon.command("cancel")
 
+    def test_retry_session_retranscribes_retained_audio_locally_without_inserting_text(self) -> None:
+        import wave
+
+        stored = self.daemon._session_store.create("lecture")
+        with wave.open(str(stored.audio_path), "wb") as target:
+            target.setnchannels(1)
+            target.setsampwidth(2)
+            target.setframerate(16_000)
+            target.writeframes(b"\x00\x00" * 16_000)
+        self.daemon._session_store.update(
+            stored.id, state="error", source_transcript="previous transcript", error="interrupted", finished=True,
+        )
+
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("recovered lecture")) as make_backend, patch(
+            "transcriber.daemon.make_delivery"
+        ) as make_delivery:
+            response = self.daemon.command("retry_session", {"session_id": stored.id})
+            self.assertEqual(response["state"], "PROCESSING")
+            self.wait_for(State.IDLE)
+
+        retried = self.daemon._session_store.get(stored.id)
+        self.assertEqual(retried.state, "ready")
+        self.assertEqual(retried.source_transcript, "recovered lecture")
+        self.assertTrue(retried.audio_path.is_file())
+        make_backend.assert_called_once()
+        self.assertEqual(make_backend.call_args.args[0].backend, "local")
+        make_delivery.assert_not_called()
+
+    def test_retry_session_rejects_dictation_and_missing_recordings(self) -> None:
+        dictation = self.daemon._session_store.create("dictation")
+        missing_audio = self.daemon._session_store.create("meeting")
+        self.daemon._session_store.update(dictation.id, state="error")
+        self.daemon._session_store.update(missing_audio.id, state="error")
+
+        wrong_mode = self.daemon.command("retry_session", {"session_id": dictation.id})
+        no_audio = self.daemon.command("retry_session", {"session_id": missing_audio.id})
+
+        self.assertEqual(wrong_mode["ok"], "false")
+        self.assertEqual(no_audio["ok"], "false")
+
     def test_groq_provider_is_batch_only_even_if_local_live_engine_is_configured(self) -> None:
         import dataclasses
 

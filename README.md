@@ -100,6 +100,7 @@ wicx last             # print the last transcript (for copy/recovery)
 wicx history [--limit 50]  # list recent Dictation transcripts saved on this device
 wicx sessions [--limit 50]  # list saved Dictation, Lecture, and Meeting sessions
 wicx delete-session --session <id>  # permanently delete that local history record
+wicx retry-session --session <id>  # explicitly retry a failed Lecture/Meeting from its saved audio
 wicx start-session --mode lecture|meeting --consent  # start a retained long-form session
 wicx stop-session  # finish the active Lecture or Meeting and transcribe locally
 wicx mics [--json]    # list PipeWire/Pulse capture sources

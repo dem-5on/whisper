@@ -186,6 +186,8 @@ class TranscriberDaemon:
             return self._get_sessions(params.get("limit", 50))
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
+        if command == "retry_session":
+            return self._retry_session(str(params.get("session_id", "")))
         if command == "mics":
             return self._get_mics()
         if command == "models":
@@ -499,6 +501,49 @@ class TranscriberDaemon:
                 return {**self._status_locked(), "ok": "false", "error": "Could not delete local session data"}
         with self._lock:
             return {**self._status_locked(), "ok": "true", "deleted_session_id": session_id}
+
+    def _retry_session(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        if stored.mode not in {"lecture", "meeting"}:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Only Lecture and Meeting sessions can be retried"}
+        if stored.state != "error":
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Only an interrupted or failed session can be retried"}
+        try:
+            has_audio = stored.audio_path.is_file() and stored.audio_path.stat().st_size > 44
+        except OSError:
+            has_audio = False
+        if not has_audio:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The saved session recording is missing or empty"}
+        with self._lock:
+            if self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}:
+                return {**self._status_locked(), "ok": "false", "error": "Another recording or transcription is in progress"}
+            self._stored_session_id = session_id
+            self._active_mode = stored.mode
+            self._error = None
+            self._processing_started = time.monotonic()
+            self._set_state(State.PROCESSING)
+            worker = threading.Thread(
+                target=self._process_and_deliver,
+                args=(stored.audio_path,),
+                kwargs={"is_preserved": True, "session_id": session_id, "mode": stored.mode, "publish_live": False},
+                name="wicx-session-retry",
+                daemon=True,
+            )
+            worker.start()
+            return self._ok_locked()
 
     def _get_mics(self) -> dict[str, Any]:
         with self._lock:
@@ -1065,7 +1110,7 @@ class TranscriberDaemon:
 
     def _process_and_deliver(
         self, audio: Path, is_preserved: bool = False, session_id: str | None = None,
-        mode: str = "dictation",
+        mode: str = "dictation", publish_live: bool = True,
     ) -> None:
         started = time.monotonic()
         backend_name = self.config.transcription.backend
@@ -1136,7 +1181,7 @@ class TranscriberDaemon:
                     self._set_state(State.DELIVERING)
             # The live session reconciles to the final transcript; only this
             # finalized text is delivered to the focused app.
-            if not use_hosted_final:
+            if not use_hosted_final and publish_live:
                 self._finalize_live(text)
             if mode == "dictation":
                 try:

@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "retry-session", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -31,7 +31,7 @@ def main() -> None:
     parser.add_argument("--enabled", default=None, help="true/false for set-streaming (omit to flip)")
     parser.add_argument("--since", default="0", help="Event revision to stream from (events/subscribe)")
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
-    parser.add_argument("--session", default=None, help="Session id for events or delete-session")
+    parser.add_argument("--session", default=None, help="Session id for events, delete-session, or retry-session")
     parser.add_argument("--mode", choices=("lecture", "meeting"), help="Mode for start-session")
     parser.add_argument("--consent", action="store_true", help="Confirm people being recorded have been informed")
     parser.add_argument("--key", default=None, help="API key value (omit for a hidden prompt)")
@@ -61,6 +61,11 @@ def main() -> None:
         if not args.session:
             parser.error("delete-session requires --session ID")
         payload["command"] = "delete_session"
+        payload["session_id"] = args.session
+    elif args.command == "retry-session":
+        if not args.session:
+            parser.error("retry-session requires --session ID")
+        payload["command"] = "retry_session"
         payload["session_id"] = args.session
     elif args.command == "start-session":
         if not args.mode:
@@ -120,6 +125,8 @@ def main() -> None:
         for item in response.get("sessions", []):
             transcript = item.get("english_translation") or item.get("source_transcript", "")
             print(f"{item.get('id', '')}  {item.get('created_at', '')}  {item.get('mode', '')}  {item.get('state', '')}  {transcript}")
+    elif args.command == "retry-session":
+        print("Retry started; local session transcription is processing")
     elif args.command == "mics":
         for mic in response.get("mics", []):
             marker = "*" if mic.get("default") else " "
