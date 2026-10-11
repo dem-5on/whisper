@@ -187,6 +187,50 @@ class SessionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different"):
             self.store.merge_speakers(meeting.id, "speaker_2", "speaker_2")
 
+    def test_automatic_diarization_aligns_confident_turns_and_preserves_corrections(self) -> None:
+        meeting = self.store.create("meeting")
+        self.store.update(meeting.id, segments=[
+            {"start_seconds": 0, "end_seconds": 1, "text": "First", "speaker_id": None},
+            {"start_seconds": 1, "end_seconds": 2, "text": "Overlapping speech", "speaker_id": None},
+            {"start_seconds": 2, "end_seconds": 3, "text": "Corrected by user", "speaker_id": "speaker_3"},
+            {"start_seconds": 4, "end_seconds": 5, "text": "No matching turn", "speaker_id": None},
+        ])
+
+        result = self.store.apply_diarization(meeting.id, [
+            {"start_seconds": 0, "end_seconds": 1, "speaker_id": "speaker_1"},
+            {"start_seconds": 1, "end_seconds": 1.5, "speaker_id": "speaker_1"},
+            {"start_seconds": 1.5, "end_seconds": 2, "speaker_id": "speaker_2"},
+            {"start_seconds": 2, "end_seconds": 3, "speaker_id": "speaker_1"},
+        ])
+
+        self.assertEqual([segment["speaker_id"] for segment in result.segments], [
+            "speaker_1", None, "speaker_3", None,
+        ])
+        self.assertEqual(result.outputs["diarization"], {"state": "complete", "speaker_count": 1})
+        # A rerun never overwrites an existing automatic or manual assignment.
+        repeated = self.store.apply_diarization(meeting.id, [
+            {"start_seconds": 0, "end_seconds": 1, "speaker_id": "speaker_2"},
+        ])
+        self.assertEqual(repeated.segments[0]["speaker_id"], "speaker_1")
+        self.assertEqual(repeated.segments[2]["speaker_id"], "speaker_3")
+        self.store.assign_segment_speaker(meeting.id, 0, None)
+        cleared_then_reanalyzed = self.store.apply_diarization(meeting.id, [
+            {"start_seconds": 0, "end_seconds": 1, "speaker_id": "speaker_2"},
+        ])
+        self.assertIsNone(cleared_then_reanalyzed.segments[0]["speaker_id"])
+
+    def test_automatic_diarization_rejects_non_meeting_and_malformed_turns(self) -> None:
+        lecture = self.store.create("lecture")
+        meeting = self.store.create("meeting")
+        for turns in (
+            [{"start_seconds": 1, "end_seconds": 1, "speaker_id": "speaker_1"}],
+            [{"start_seconds": 0, "end_seconds": 1, "speaker_id": "speaker_0"}],
+        ):
+            with self.subTest(turns=turns), self.assertRaises(ValueError):
+                self.store.apply_diarization(meeting.id, turns)
+        with self.assertRaisesRegex(ValueError, "only supported for Meeting"):
+            self.store.apply_diarization(lecture.id, [])
+
     def test_update_rejects_invalid_state_and_non_json_outputs(self) -> None:
         session = self.store.create("meeting")
         with self.assertRaises(ValueError):

@@ -347,7 +347,12 @@ class SessionStore:
             raise ValueError("segment_index is outside this transcript")
         segments = [dict(segment) for segment in session.segments]
         segments[segment_index]["speaker_id"] = speaker_id
-        return self.update(session_id, segments=segments)
+        overrides = session.outputs.get("speaker_overrides", {})
+        if not isinstance(overrides, dict):
+            overrides = {}
+        overrides = {**overrides, str(segment_index): speaker_id}
+        return self.update(session_id, segments=segments,
+                           outputs={**session.outputs, "speaker_overrides": overrides})
 
     def merge_speakers(self, session_id: str, source_id: str, target_id: str) -> StoredSession:
         """Merge one Meeting speaker identity into another across all segments."""
@@ -372,8 +377,91 @@ class SessionStore:
         if target_id not in merged_names and source_id in merged_names:
             merged_names[target_id] = merged_names[source_id]
         merged_names.pop(source_id, None)
-        outputs = {**session.outputs, "speaker_names": merged_names}
+        overrides = session.outputs.get("speaker_overrides", {})
+        if not isinstance(overrides, dict):
+            overrides = {}
+        overrides = dict(overrides)
+        for index, segment in enumerate(session.segments):
+            if segment["speaker_id"] == source_id:
+                overrides[str(index)] = target_id
+        for index, speaker_id in tuple(overrides.items()):
+            if speaker_id == source_id:
+                overrides[index] = target_id
+        outputs = {
+            **session.outputs,
+            "speaker_names": merged_names,
+            "speaker_overrides": overrides,
+        }
         return self.update(session_id, segments=segments, outputs=outputs)
+
+    def apply_diarization(
+        self, session_id: str, turns: list[dict[str, Any]],
+    ) -> StoredSession:
+        """Align automatic speaker turns to timestamped Meeting segments.
+
+        A segment is labeled only when one speaker covers a strict majority of
+        its duration. Existing labels are preserved so a repeated analysis
+        cannot overwrite a user's corrections.
+        """
+        if not isinstance(turns, list) or len(turns) > MAX_TRANSCRIPT_SEGMENTS:
+            raise ValueError(f"turns must be a list of at most {MAX_TRANSCRIPT_SEGMENTS} entries")
+        normalized_turns: list[tuple[float, float, str]] = []
+        for index, turn in enumerate(turns):
+            if not isinstance(turn, dict):
+                raise ValueError(f"turn {index} must be a mapping")
+            start = turn.get("start_seconds")
+            end = turn.get("end_seconds")
+            speaker_id = turn.get("speaker_id")
+            if (isinstance(start, bool) or not isinstance(start, (int, float))
+                    or isinstance(end, bool) or not isinstance(end, (int, float))
+                    or not math.isfinite(start) or not math.isfinite(end)
+                    or start < 0 or end <= start
+                    or not isinstance(speaker_id, str)
+                    or not re.fullmatch(r"speaker_[1-9][0-9]*", speaker_id)):
+                raise ValueError(f"turn {index} has invalid timestamps or speaker ID")
+            normalized_turns.append((float(start), float(end), speaker_id))
+        normalized_turns.sort(key=lambda turn: (turn[0], turn[1], turn[2]))
+
+        session = self.get(session_id)
+        if session.mode != "meeting":
+            raise ValueError("automatic speaker assignments are only supported for Meeting sessions")
+        segments = [dict(segment) for segment in session.segments]
+        ordered_segments = sorted(
+            ((index, segment) for index, segment in enumerate(segments)),
+            key=lambda item: (item[1]["start_seconds"], item[1]["end_seconds"], item[0]),
+        )
+        active: list[tuple[float, float, str]] = []
+        turn_index = 0
+        assigned_speakers: set[str] = set()
+        overrides = session.outputs.get("speaker_overrides", {})
+        if not isinstance(overrides, dict):
+            overrides = {}
+        for segment_index, segment in ordered_segments:
+            segment_start = segment["start_seconds"]
+            segment_end = segment["end_seconds"]
+            if (str(segment_index) in overrides or segment.get("speaker_id") is not None
+                    or segment_end <= segment_start):
+                continue
+            while turn_index < len(normalized_turns) and normalized_turns[turn_index][0] < segment_end:
+                active.append(normalized_turns[turn_index])
+                turn_index += 1
+            active = [turn for turn in active if turn[1] > segment_start]
+            overlap_by_speaker: dict[str, float] = {}
+            for turn_start, turn_end, speaker_id in active:
+                overlap = min(segment_end, turn_end) - max(segment_start, turn_start)
+                if overlap > 0:
+                    overlap_by_speaker[speaker_id] = overlap_by_speaker.get(speaker_id, 0.0) + overlap
+            if not overlap_by_speaker:
+                continue
+            ranked = sorted(overlap_by_speaker.items(), key=lambda item: (-item[1], item[0]))
+            best_speaker, best_overlap = ranked[0]
+            tied = len(ranked) > 1 and math.isclose(best_overlap, ranked[1][1], rel_tol=1e-9, abs_tol=1e-9)
+            if not tied and best_overlap > (segment_end - segment_start) / 2:
+                segments[segment_index]["speaker_id"] = best_speaker
+                assigned_speakers.add(best_speaker)
+
+        diarization = {"state": "complete", "speaker_count": len(assigned_speakers)}
+        return self.update(session_id, segments=segments, outputs={**session.outputs, "diarization": diarization})
 
     def delete(self, session_id: str) -> None:
         """Delete one session and its audio, never accepting an external file path."""
