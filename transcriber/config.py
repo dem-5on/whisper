@@ -290,7 +290,7 @@ def _parse(raw: dict[str, Any]) -> Config:
     if stream.engine == "local" and stream.model not in {"tiny", "base", "small", "medium", "large-v3", "turbo"}:
         raise ConfigurationError("Local live model must be tiny, base, small, medium, large-v3, or turbo")
     if stream.engine == "hosted-whisper" and (not stream.model.strip() or any(ch.isspace() for ch in stream.model)):
-        raise ConfigurationError("Hosted Whisper profile must be a non-empty profile ID without spaces")
+        raise ConfigurationError("Hosted transcription profile must be a non-empty profile ID without spaces")
     if (not isinstance(stream.frame_ms, int) or isinstance(stream.frame_ms, bool)
             or stream.frame_ms < 20 or stream.frame_ms > 100):
         raise ConfigurationError("streaming.frame_ms must be an integer in 20..100")

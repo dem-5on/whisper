@@ -1,4 +1,4 @@
-"""Per-user Windows locations for Whisper configuration, data, and IPC."""
+"""Per-user Windows locations for Wicx configuration, data, and IPC."""
 
 from __future__ import annotations
 

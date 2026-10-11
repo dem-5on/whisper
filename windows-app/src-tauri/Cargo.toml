@@ -1,8 +1,8 @@
 [package]
 name = "whisper-windows-ui"
 version = "2026.10.10"
-description = "Whisper Windows tray interface"
-authors = ["Whisper contributors"]
+description = "Wicx Windows tray interface"
+authors = ["Wicx contributors"]
 edition = "2021"
 rust-version = "1.90"
 

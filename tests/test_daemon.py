@@ -137,6 +137,14 @@ class DaemonTests(unittest.TestCase):
         self.assertFalse(self.audio.exists())
         self.assertTrue((self.data / "last.wav").exists())
         self.assertEqual((self.data / "last.txt").read_text(), " kubectl get pods ")
+        history = self.daemon.command("history")
+        self.assertEqual(history["ok"], "true")
+        self.assertEqual(history["history"][0]["mode"], "dictation")
+        self.assertEqual(history["history"][0]["transcript"], " kubectl get pods ")
+        dictation_audio = self.data / "sessions" / history["history"][0]["id"] / "recording.wav"
+        self.assertFalse(dictation_audio.exists())
+        restarted = TranscriberDaemon(Config(), data_dir=self.data)
+        self.assertEqual(restarted.command("history")["history"][0]["transcript"], " kubectl get pods ")
 
     def test_hosted_final_is_delivered_without_a_second_batch_transcription(self) -> None:
         delivery = FakeDelivery()
@@ -159,6 +167,33 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(response["state"], "IDLE")
         self.assertTrue(self.recorder.cancelled)
         backend.assert_not_called()
+        self.assertEqual(self.daemon.command("history")["history"], [])
+
+    def test_history_rejects_invalid_limit(self) -> None:
+        response = self.daemon.command("history", {"limit": 0})
+        self.assertEqual(response["ok"], "false")
+        self.assertIn("between 1 and 1000", response["error"])
+
+    def test_delete_session_removes_saved_dictation_history(self) -> None:
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("saved text")), patch(
+            "transcriber.daemon.make_delivery", return_value=FakeDelivery()
+        ):
+            self.daemon.command("toggle")
+            self.daemon.command("toggle")
+            self.wait_for(State.IDLE)
+        session_id = self.daemon.command("history")["history"][0]["id"]
+        deleted = self.daemon.command("delete_session", {"session_id": session_id})
+        self.assertEqual(deleted["ok"], "true")
+        self.assertEqual(self.daemon.command("history")["history"], [])
+        self.assertEqual(self.daemon.command("delete_session", {"session_id": session_id})["ok"], "false")
+
+    def test_active_session_cannot_be_deleted(self) -> None:
+        self.daemon.command("toggle")
+        session_id = self.daemon._stored_session_id
+        response = self.daemon.command("delete_session", {"session_id": session_id})
+        self.assertEqual(response["ok"], "false")
+        self.assertEqual(response["error"], "Cannot delete the active session")
+        self.daemon.command("cancel")
 
     def test_processing_failure_enters_error_with_reason(self) -> None:
         with patch("transcriber.daemon.make_backend", side_effect=RuntimeError("boom")):

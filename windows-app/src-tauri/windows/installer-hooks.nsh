@@ -1,5 +1,6 @@
 !macro NSIS_HOOK_POSTINSTALL
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Whisper" '"$INSTDIR\whisper-windows-ui.exe"'
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Whisper"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Wicx" '"$INSTDIR\whisper-windows-ui.exe"'
   Exec '"$INSTDIR\whisper-windows-ui.exe"'
 !macroend
 
@@ -9,5 +10,6 @@
   ; NSIS continues regardless.
   ExecWait 'taskkill /F /IM whisper-windows-ui.exe /T'
   ExecWait '"$INSTDIR\whisper-windows-ui.exe" --whisper-uninstall'
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Wicx"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Whisper"
 !macroend

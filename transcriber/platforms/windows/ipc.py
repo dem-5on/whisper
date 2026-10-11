@@ -16,6 +16,7 @@ from typing import Any, Iterator
 from .paths import data_dir
 
 LOG = logging.getLogger("transcriber.windows.ipc")
+# Keep the existing pipe name so upgraded clients can communicate with running daemons.
 PIPE_NAME = r"\\.\pipe\Whisper-" + hashlib.sha256(
     os.environ.get("USERPROFILE", str(Path.home())).casefold().encode("utf-8")
 ).hexdigest()[:20]
@@ -52,14 +53,14 @@ def request(payload: dict[str, Any], timeout: float = 2.0) -> dict[str, Any]:
             connection.send_bytes(json.dumps(payload).encode("utf-8"))
             return json.loads(connection.recv_bytes(65536))
     except AuthenticationError as exc:
-        raise OSError("Whisper named-pipe authentication failed") from exc
+        raise OSError("Wicx named-pipe authentication failed") from exc
 
 
 def stream(payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
     try:
         connection = Client(PIPE_NAME, family="AF_PIPE", authkey=_authkey())
     except AuthenticationError as exc:
-        raise OSError("Whisper named-pipe authentication failed") from exc
+        raise OSError("Wicx named-pipe authentication failed") from exc
     with connection:
         connection.send_bytes(json.dumps(payload).encode("utf-8"))
         while True:

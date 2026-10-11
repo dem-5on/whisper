@@ -101,19 +101,19 @@ fn load_or_create_websocket_token(path: &Path) -> Result<String, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(format!(
-                "Could not read Whisper's local connection token: {error}"
+                "Could not read Wicx's local connection token: {error}"
             ));
         }
     }
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
-            format!("Could not prepare Whisper's local settings folder: {error}")
+            format!("Could not prepare Wicx's local settings folder: {error}")
         })?;
     }
     let token = uuid::Uuid::new_v4().to_string();
     fs::write(path, &token)
-        .map_err(|error| format!("Could not save Whisper's local connection token: {error}"))?;
+        .map_err(|error| format!("Could not save Wicx's local connection token: {error}"))?;
     Ok(token)
 }
 
@@ -121,7 +121,7 @@ fn load_or_create_websocket_token(path: &Path) -> Result<String, String> {
 fn show_key_settings(app: tauri::AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("keys")
-        .ok_or_else(|| "Whisper key settings are unavailable".to_string())?;
+        .ok_or_else(|| "Wicx key settings are unavailable".to_string())?;
     window.show().map_err(|error| error.to_string())?;
     window.set_focus().map_err(|error| error.to_string())
 }
@@ -134,16 +134,16 @@ fn open_diagnostics_folder() -> Result<(), String> {
             .ok_or_else(|| "Windows did not provide the local app-data folder".to_string())?;
         let log_directory = Path::new(&local_app_data).join("Whisper").join("logs");
         fs::create_dir_all(&log_directory)
-            .map_err(|error| format!("Could not create Whisper's diagnostics folder: {error}"))?;
+            .map_err(|error| format!("Could not create Wicx's diagnostics folder: {error}"))?;
         std::process::Command::new("explorer.exe")
             .arg(log_directory)
             .spawn()
-            .map_err(|error| format!("Could not open Whisper's diagnostics folder: {error}"))?;
+            .map_err(|error| format!("Could not open Wicx's diagnostics folder: {error}"))?;
         Ok(())
     }
     #[cfg(not(windows))]
     {
-        Err("Whisper's diagnostics folder is only available on Windows".to_string())
+        Err("Wicx's diagnostics folder is only available on Windows".to_string())
     }
 }
 
@@ -365,11 +365,11 @@ fn resize_panel(
 ) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
-        .ok_or_else(|| "Whisper panel is unavailable".to_string())?;
+        .ok_or_else(|| "Wicx panel is unavailable".to_string())?;
     let (tray_x, tray_y) = *anchor
         .0
         .lock()
-        .map_err(|_| "Whisper panel position is unavailable".to_string())?;
+        .map_err(|_| "Wicx panel position is unavailable".to_string())?;
     let height = if expanded {
         EXPANDED_PANEL_HEIGHT
     } else {
@@ -557,12 +557,12 @@ fn main() {
                 recording_enabled,
                 None::<&str>,
             )?;
-            let open = MenuItem::with_id(app, "open", "Show / hide Whisper", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Whisper", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Show / hide Wicx", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Wicx", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle, &cancel, &open, &quit])?;
             let tray = TrayIconBuilder::with_id("whisper")
                 .icon(mic_tray_icon([132, 135, 145, 255]))
-                .tooltip("Whisper")
+                .tooltip("Wicx")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event(move |_tray, event| {
@@ -617,7 +617,7 @@ fn main() {
             open_diagnostics_folder
         ])
         .build(tauri::generate_context!())
-        .expect("Whisper tray UI failed to start")
+        .expect("Wicx tray UI failed to start")
         .run(|app, event| {
             #[cfg(feature = "packaged-daemon")]
             if matches!(event, RunEvent::Exit) {

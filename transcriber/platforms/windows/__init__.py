@@ -1,1 +1,1 @@
-"""Native Windows adapters for Whisper's shared transcription engine."""
+"""Native Windows adapters for Wicx's shared transcription engine."""

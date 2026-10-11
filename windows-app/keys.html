@@ -4,15 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#202127" />
-    <title>Whisper settings</title>
+    <title>Wicx settings</title>
   </head>
   <body>
     <main class="key-settings">
       <header class="key-heading">
         <div class="key-brand" aria-hidden="true">W</div>
         <div class="key-heading-copy">
-          <h1>Whisper settings</h1>
-          <p>Close this window to keep Whisper running in the tray.</p>
+          <h1>Wicx settings</h1>
+          <p>Close this window to keep Wicx running in the tray.</p>
         </div>
       </header>
 
@@ -21,7 +21,7 @@
         <option value="openai">OpenAI</option>
         <option value="groq">Groq</option>
         <option value="openrouter">OpenRouter</option>
-        <option value="hosted-whisper">Hosted Whisper service</option>
+        <option value="hosted-whisper">Hosted transcription service</option>
       </select>
 
       <p id="key-state" class="key-state" aria-live="polite">Checking saved key…</p>
@@ -49,15 +49,15 @@
         <select id="live-engine">
           <option value="local">Local on this computer</option>
           <option value="openai-realtime">OpenAI Realtime</option>
-          <option value="hosted-whisper">Hosted Whisper server</option>
+          <option value="hosted-whisper">Hosted transcription server</option>
         </select>
         <div id="live-url-row" hidden>
           <label class="key-label" for="live-server-url">WebSocket server URL</label>
-          <input id="live-server-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="wss://whisper.example.com/v1/live" />
+          <input id="live-server-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="wss://transcription.example.com/v1/live" />
         </div>
         <label class="key-label" for="live-model">Live model or profile</label>
         <input id="live-model" type="text" maxlength="120" autocomplete="off" spellcheck="false" />
-        <p class="key-help">Local and OpenAI engines use their supported model IDs. For Hosted Whisper, enter the profile configured on your server.</p>
+        <p class="key-help">Local and OpenAI engines use their supported model IDs. For a hosted transcription server, enter the profile configured on that server.</p>
         <button id="save-live-settings" class="key-save live-save" type="button">Save live settings</button>
       </section>
 

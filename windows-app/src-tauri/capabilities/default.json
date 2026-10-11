@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the local Whisper tray panel.",
+  "description": "Permissions for the local Wicx tray panel.",
   "windows": ["main", "keys"],
   "permissions": [
     "core:default",

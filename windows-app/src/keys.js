@@ -7,7 +7,7 @@ const PROVIDERS = {
   openai: { name: "OpenAI", field: "has_openai_key" },
   groq: { name: "Groq", field: "has_groq_key" },
   openrouter: { name: "OpenRouter", field: "has_openrouter_key" },
-  "hosted-whisper": { name: "Hosted Whisper service", field: "has_whisper_service_token" },
+  "hosted-whisper": { name: "Hosted transcription service", field: "has_whisper_service_token" },
 };
 
 const ui = {
@@ -51,7 +51,7 @@ function setFeedback(message, isError = false) {
 }
 
 async function connect() {
-  ui.state.textContent = "Connecting to Whisper…";
+  ui.state.textContent = "Connecting to Wicx…";
   let socketUrl = SOCKET_URL;
   try {
     const token = await invoke("websocket_token");
@@ -79,10 +79,10 @@ async function connect() {
   connection.addEventListener("close", () => {
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timeout);
-      waiter.reject(new Error("Whisper daemon disconnected"));
+      waiter.reject(new Error("Wicx transcription service disconnected"));
     }
     pending.clear();
-    ui.state.textContent = "Whisper is unavailable. Reconnecting…";
+    ui.state.textContent = "Wicx is unavailable. Reconnecting…";
     window.setTimeout(connect, retryDelay);
     retryDelay = Math.min(5000, retryDelay * 1.7);
   });
@@ -91,13 +91,13 @@ async function connect() {
 
 function request(command, parameters = {}) {
   if (!connection || connection.readyState !== WebSocket.OPEN) {
-    return Promise.reject(new Error("Whisper daemon is unavailable"));
+    return Promise.reject(new Error("Wicx transcription service is unavailable"));
   }
   const requestId = ++sequence;
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error("Whisper did not respond in time"));
+      reject(new Error("Wicx did not respond in time"));
     }, 10000);
     pending.set(requestId, { resolve, reject, timeout });
     connection.send(JSON.stringify({ command, request_id: requestId, ...parameters }));
@@ -203,7 +203,7 @@ ui.clear.addEventListener("click", async () => {
 document.querySelector("#open-diagnostics").addEventListener("click", async () => {
   try {
     await invoke("open_diagnostics_folder");
-    setFeedback("Opened Whisper's diagnostics folder.");
+    setFeedback("Opened Wicx's diagnostics folder.");
   } catch (error) {
     setFeedback(error.message, true);
   }

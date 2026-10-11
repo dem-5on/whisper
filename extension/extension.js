@@ -1,11 +1,11 @@
-/* Whisper GNOME panel: idle / recording + timer + live partial /
+/* Wicx GNOME panel: idle / recording + timer + live partial /
  * processing spinner / error + retry. Daemon owns the work; this only
- * displays status (from `whisper status --json`) and sends commands
+ * displays status (from `wicx status --json`) and sends commands
  * (`toggle`, `cancel`, `retry`, `set-provider`, `set-model`, `set-mic`).
  * The transcript switch shows/hides the full completed transcript (fetched
- * via `whisper last`); while recording, the daemon's rolling-window
+ * via `wicx last`); while recording, the daemon's rolling-window
  * decode streams partial/committed text via status.live_text (polled here)
- * or `whisper subscribe` for push clients. Partials stay in the panel:
+ * or `wicx subscribe` for push clients. Partials stay in the panel:
  * only the finalized transcript is typed into the focused app.
  */
 
@@ -39,7 +39,7 @@ function runTranscriber(argv) {
     return new Promise(resolve => {
         try {
             const proc = Gio.Subprocess.new(
-                [userCommand('whisper'), ...argv],
+                [userCommand('wicx'), ...argv],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
             );
             proc.communicate_utf8_async(null, null, (p, res) => {
@@ -76,7 +76,7 @@ function formatElapsed(seconds) {
 const TranscriberIndicator = GObject.registerClass(
 class TranscriberIndicator extends PanelMenu.Button {
     _init() {
-        super._init(0.0, 'Transcriber', false);
+        super._init(0.0, 'Wicx', false);
 
         this._state = 'UNAVAILABLE';
         this._status = null;
@@ -319,11 +319,11 @@ class TranscriberIndicator extends PanelMenu.Button {
     async _copyLast() {
         const r = await runTranscriber(['last']);
         if (!r.ok || !r.stdout) {
-            Main.notify('Transcriber', 'No previous transcript to copy');
+            Main.notify('Wicx', 'No previous transcript to copy');
             return;
         }
         St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, r.stdout);
-        Main.notify('Transcriber', 'Transcript copied to clipboard');
+        Main.notify('Wicx', 'Transcript copied to clipboard');
     }
 
     _startDaemon() {
@@ -335,9 +335,9 @@ class TranscriberIndicator extends PanelMenu.Button {
             );
         } catch {
             try {
-                Gio.Subprocess.new([userCommand('whisper-daemon')], Gio.SubprocessFlags.NONE);
+                Gio.Subprocess.new([userCommand('wicx-daemon')], Gio.SubprocessFlags.NONE);
             } catch (e) {
-                Main.notify('Transcriber', 'Could not start daemon');
+                Main.notify('Wicx', 'Could not start the transcription service');
             }
         }
     }
@@ -463,7 +463,7 @@ class TranscriberIndicator extends PanelMenu.Button {
 
     async _fetchFullTranscript(key) {
         // Fetch once per completed run; polling every second must not spawn
-        // `whisper last` on every tick.
+        // `wicx last` on every tick.
         if (this._lastKey === key)
             return;
         this._lastKey = key;
@@ -763,13 +763,13 @@ class TranscriberIndicator extends PanelMenu.Button {
         // Presence only; values never leave the daemon.
         if (s.live_engine === 'hosted-whisper' && !s.has_whisper_service_token) {
             this._keyItem.visible = true;
-            this._keyItem.label.text = 'Hosted Whisper token missing — run: whisper set-key --provider hosted-whisper';
+            this._keyItem.label.text = 'Hosted transcription token missing — run: wicx set-key --provider hosted-whisper';
             return;
         }
         if (s.live_engine === 'hosted-whisper' && !s.live_available
-                && s.live_unavailable_reason === 'Hosted Whisper URL is not configured') {
+                && s.live_unavailable_reason === 'Hosted transcription URL is not configured') {
             this._keyItem.visible = true;
-            this._keyItem.label.text = 'Set server URL: whisper set-live-engine --live-engine hosted-whisper --url wss://<host>/v1/live';
+            this._keyItem.label.text = 'Set server URL: wicx set-live-engine --live-engine hosted-whisper --url wss://<host>/v1/live';
             return;
         }
         const missing = (s.backend === 'groq' && !s.has_groq_key)
@@ -778,7 +778,7 @@ class TranscriberIndicator extends PanelMenu.Button {
         if (missing) {
             this._keyItem.visible = true;
             const provider = s.backend;
-            this._keyItem.label.text = `${provider} key missing — run: whisper set-key --provider ${provider}`;
+            this._keyItem.label.text = `${provider} key missing — run: wicx set-key --provider ${provider}`;
         } else {
             this._keyItem.visible = false;
         }
@@ -832,11 +832,11 @@ class TranscriberIndicator extends PanelMenu.Button {
 
     _notifyTransitions(previous, s) {
         if (previous === 'RECORDING' && (s.state === 'PROCESSING' || s.state === 'DELIVERING'))
-            Main.notify('Transcriber', 'Recording stopped; transcribing…');
+            Main.notify('Wicx', 'Recording stopped; transcribing…');
         else if ((previous === 'PROCESSING' || previous === 'DELIVERING') && s.state === 'IDLE')
-            Main.notify('Transcriber', this._doneBody(s));
+            Main.notify('Wicx', this._doneBody(s));
         else if (s.state === 'ERROR' && previous !== 'ERROR')
-            Main.notify('Transcriber', s.soft_error
+            Main.notify('Wicx', s.soft_error
                 ? `No speech detected — try again`
                 : `Failed: ${s.error || 'unknown error'}`);
     }

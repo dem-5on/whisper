@@ -16,21 +16,22 @@ from .daemon import default_socket_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Control the Whisper transcription daemon")
+    parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "delete-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
     parser.add_argument("--provider", choices=("local", "groq", "openrouter", "openai", "hosted-whisper"), default=None)
     parser.add_argument("--live-engine", choices=("local", "openai-realtime", "hosted-whisper"), default=None)
-    parser.add_argument("--url", default=None, help="Hosted Whisper WebSocket URL (wss://host/v1/live)")
+    parser.add_argument("--url", default=None, help="Hosted transcription WebSocket URL (wss://host/v1/live)")
     parser.add_argument("--model", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--enabled", default=None, help="true/false for set-streaming (omit to flip)")
     parser.add_argument("--since", default="0", help="Event revision to stream from (events/subscribe)")
-    parser.add_argument("--session", default=None, help="Filter events to one live session id")
+    parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
+    parser.add_argument("--session", default=None, help="Session id for events or delete-session")
     parser.add_argument("--key", default=None, help="API key value (omit for a hidden prompt)")
     parser.add_argument("--clear", action="store_true", help="Remove the stored key with set-key")
     parser.add_argument("--json", action="store_true", help="Print the full daemon response")
@@ -52,31 +53,38 @@ def main() -> None:
         payload = {"command": "events", "since": args.since}
         if args.session:
             payload["session_id"] = args.session
+    elif args.command == "history":
+        payload["limit"] = str(args.limit)
+    elif args.command == "delete-session":
+        if not args.session:
+            parser.error("delete-session requires --session ID")
+        payload["command"] = "delete_session"
+        payload["session_id"] = args.session
     if payload["command"] == "set_backend":
         if not args.provider:
-            print("whisper: --provider is required", file=sys.stderr)
+            print("wicx: --provider is required", file=sys.stderr)
             raise SystemExit(2)
         payload["backend"] = args.provider
     if payload["command"] == "set_model":
         if not args.model:
-            print("whisper: --model is required (e.g. tiny, base, small, medium, large-v3, turbo)", file=sys.stderr)
+            print("wicx: --model is required (e.g. tiny, base, small, medium, large-v3, turbo)", file=sys.stderr)
             raise SystemExit(2)
         payload["model"] = args.model
     if payload["command"] == "set_live_engine":
         if not args.live_engine:
-            print("whisper: --live-engine is required (local, openai-realtime, or hosted-whisper)", file=sys.stderr)
+            print("wicx: --live-engine is required (local, openai-realtime, or hosted-whisper)", file=sys.stderr)
             raise SystemExit(2)
         payload["engine"] = args.live_engine
         if args.url is not None:
             payload["server_url"] = args.url
     if payload["command"] == "set_live_model":
         if not args.model:
-            print("whisper: --model is required", file=sys.stderr)
+            print("wicx: --model is required", file=sys.stderr)
             raise SystemExit(2)
         payload["model"] = args.model
     if payload["command"] == "set_mic":
         if args.device is None:
-            print("whisper: --device is required (use default for the default source)", file=sys.stderr)
+            print("wicx: --device is required (use default for the default source)", file=sys.stderr)
             raise SystemExit(2)
         payload["device"] = args.device
     if payload["command"] == "set_streaming" and args.enabled is not None:
@@ -84,15 +92,18 @@ def main() -> None:
     try:
         response = _request_daemon(args, payload)
     except (OSError, EOFError, json.JSONDecodeError, ValueError):
-        print("whisper: daemon unavailable", file=sys.stderr)
+        print("wicx: daemon unavailable", file=sys.stderr)
         raise SystemExit(1)
     if response.get("ok") != "true":
-        print(f"whisper: {response.get('error', 'command failed')} ({response.get('state', 'unknown')})", file=sys.stderr)
+        print(f"wicx: {response.get('error', 'command failed')} ({response.get('state', 'unknown')})", file=sys.stderr)
         raise SystemExit(1)
     if args.json:
         print(json.dumps(response, indent=2))
     elif args.command == "last":
         print(response.get("transcript", ""))
+    elif args.command == "history":
+        for item in response.get("history", []):
+            print(f"{item.get('created_at', '')}  {item.get('transcript', '')}")
     elif args.command == "mics":
         for mic in response.get("mics", []):
             marker = "*" if mic.get("default") else " "
@@ -106,7 +117,7 @@ def main() -> None:
     elif args.command == "events":
         print(json.dumps(response.get("events", []), indent=2 if args.json else None))
     elif args.command == "shutdown":
-        print("Whisper daemon is stopping")
+        print("Wicx transcription service is stopping")
     else:
         print(response.get("state", "unknown"))
 
@@ -142,7 +153,7 @@ def _stream_events(args: argparse.Namespace) -> int:
                 print(json.dumps(event))
                 sys.stdout.flush()
     except OSError as exc:
-        print(f"whisper: daemon unavailable ({exc})", file=sys.stderr)
+        print(f"wicx: daemon unavailable ({exc})", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         pass
@@ -163,26 +174,26 @@ def _request_daemon(args: argparse.Namespace, payload: dict[str, object]) -> dic
 def _set_key(args: argparse.Namespace) -> int:
     """Store or remove a provider API key locally, then reload the daemon."""
     if not args.provider or args.provider == "local":
-        print("whisper: --provider is required (groq, openrouter, openai, or hosted-whisper)", file=sys.stderr)
+        print("wicx: --provider is required (groq, openrouter, openai, or hosted-whisper)", file=sys.stderr)
         return 2
     name = KEY_ENV[args.provider]
     if args.clear:
         try:
             write_key(None, name, None)
         except OSError as exc:
-            print(f"whisper: could not update keys file: {exc}", file=sys.stderr)
+            print(f"wicx: could not update keys file: {exc}", file=sys.stderr)
             return 1
         print(f"Removed {name}; restarting daemon")
         return _restart_daemon()
     key = args.key or getpass.getpass(f"{name}: ")
     key = key.strip()
     if not key:
-        print("whisper: empty key; nothing stored", file=sys.stderr)
+        print("wicx: empty key; nothing stored", file=sys.stderr)
         return 2
     try:
         write_key(None, name, key)
     except OSError as exc:
-        print(f"whisper: could not update keys file: {exc}", file=sys.stderr)
+        print(f"wicx: could not update keys file: {exc}", file=sys.stderr)
         return 1
     print(f"Stored {name} (…{key[-4:]}); restarting daemon")
     return _restart_daemon()
@@ -195,7 +206,7 @@ def _restart_daemon() -> int:
         try:
             restart_daemon()
         except (OSError, RuntimeError) as exc:
-            print(f"whisper: could not restart the daemon: {exc}", file=sys.stderr)
+            print(f"wicx: could not restart the daemon: {exc}", file=sys.stderr)
             return 1
         return 0
     try:
@@ -204,6 +215,6 @@ def _restart_daemon() -> int:
             check=True, capture_output=True,
         )
     except (OSError, subprocess.CalledProcessError):
-        print("whisper: automatic restart failed; run `systemctl --user restart transcriber`", file=sys.stderr)
+        print("wicx: automatic restart failed; run `systemctl --user restart wicx`", file=sys.stderr)
         return 1
     return 0

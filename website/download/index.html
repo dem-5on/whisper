@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111813">
-  <meta name="description" content="Choose your operating system and follow the Whisper download and setup walkthrough.">
-  <title>Download Whisper</title>
+  <meta name="description" content="Choose your operating system and follow the Wicx download and setup walkthrough.">
+  <title>Download Wicx</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #111813; color: #f4f4ec; font-synthesis: none; --muted: #a8b1a9; --line: #344039; --green: #b7f36a; --panel: #18211b; }
     * { box-sizing: border-box; }
@@ -61,7 +61,7 @@
 <body>
   <div class="page">
     <header>
-      <a class="brand" href="/"><span class="mark" aria-hidden="true">◖</span> Whisper</a>
+      <a class="brand" href="/"><span class="mark" aria-hidden="true">◖</span> Wicx</a>
       <a class="back" href="/">← Back to home</a>
     </header>
     <main>
@@ -81,9 +81,9 @@
       </section>
 
       <section class="details" id="linux-details" aria-labelledby="linux-heading" hidden>
-        <h2 id="linux-heading">Install Whisper on Linux</h2>
+        <h2 id="linux-heading">Install Wicx on Linux</h2>
         <p>The guided installer currently supports Debian/Ubuntu-based Linux running a GNOME Wayland desktop. Other distributions and desktop environments are not supported by this one-command installer yet.</p>
-        <div class="notice"><strong>Before you begin:</strong> setup needs internet access to install dependencies and download the local speech model. Whisper asks before installing system packages. Wayland may need a one-time keyboard-input permission setup for typing transcripts into other apps.</div>
+        <div class="notice"><strong>Before you begin:</strong> setup needs internet access to install dependencies and download the local speech model. Wicx asks before installing system packages. Wayland may need a one-time keyboard-input permission setup for typing transcripts into other apps.</div>
         <div class="actions">
           <a class="button primary" href="https://github.com/dem-5on/whisper/releases/latest/download/whisper-linux-gnome.tar.gz">↓ Download Linux bundle</a>
           <a class="button secondary" href="https://github.com/dem-5on/whisper/releases/latest">View release notes</a>
@@ -94,37 +94,37 @@
           <div class="step"><div class="number">2</div><div><h3>Run the installer</h3><p>Copy this command, paste it into Terminal, and press Enter. Read the prompts; it may ask for your computer password to install required system packages.</p>
             <div class="command"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/dem-5on/whisper/main/install.sh | bash</code><button class="copy" type="button" data-copy-command="install-command">Copy</button></div>
           </div></div>
-          <div class="step"><div class="number">3</div><div><h3>Finish desktop setup</h3><p>If the Whisper panel icon doesn’t appear, sign out of GNOME and sign back in. Check that the “Transcriber” extension is enabled in Extensions.</p></div></div>
+          <div class="step"><div class="number">3</div><div><h3>Finish desktop setup</h3><p>If the Wicx panel icon doesn’t appear, sign out of GNOME and sign back in. Check that the “Wicx” extension is enabled in Extensions.</p></div></div>
           <div class="step"><div class="number">4</div><div><h3>Try a transcription</h3><p>Start recording from the panel or bind a keyboard shortcut. The first local-model startup downloads the model; after that, local transcription can work without internet.</p></div></div>
         </div>
-        <div class="requirements"><h3>If it transcribes but doesn’t type into your app</h3><p>Wayland protects keyboard input. Whisper uses ydotool for typing, and your Linux distribution may require a one-time permission setup for its `ydotoold` service to access `/dev/uinput`. See the <a href="https://github.com/dem-5on/whisper#install">installation troubleshooting notes</a>; only grant this to a user you trust.</p></div>
+        <div class="requirements"><h3>If it transcribes but doesn’t type into your app</h3><p>Wayland protects keyboard input. Wicx uses ydotool for typing, and your Linux distribution may require a one-time permission setup for its `ydotoold` service to access `/dev/uinput`. See the <a href="https://github.com/dem-5on/whisper#install">installation troubleshooting notes</a>; only grant this to a user you trust.</p></div>
         <p class="more">Using another Linux setup? The app is open source, but the guided installer and desktop panel currently target GNOME on Wayland. See the <a href="https://github.com/dem-5on/whisper">source repository</a> for the manual setup path.</p>
       </section>
 
       <section class="details" id="windows-details" aria-labelledby="windows-heading" hidden>
-        <h2 id="windows-heading">Install Whisper on Windows</h2>
+        <h2 id="windows-heading">Install Wicx on Windows</h2>
         <p>Download the signed per-user installer. It includes the tray interface and transcription service in one package — no Python or PowerShell setup needed.</p>
-        <div class="notice"><strong>Before you begin:</strong> Windows may show a SmartScreen prompt for new publishers. The installer installs per-user, registers Whisper to start at sign-in, and adds a Start menu shortcut.</div>
+        <div class="notice"><strong>Before you begin:</strong> Windows may show a SmartScreen prompt for new publishers. The installer installs per-user, registers Wicx to start at sign-in, and adds a Start menu shortcut.</div>
         <div class="actions">
           <a class="button primary" href="https://github.com/dem-5on/whisper/releases/latest">↓ Download Windows installer</a>
           <a class="button secondary" href="https://github.com/dem-5on/whisper/releases/latest">View release notes</a>
         </div>
         <h2>Guided setup</h2>
         <div class="steps">
-          <div class="step"><div class="number">1</div><div><h3>Download the installer</h3><p>Open the latest release and download the <code>Whisper_*_x64-setup.exe</code> installer plus its <code>.sha256</code> checksum.</p></div></div>
+          <div class="step"><div class="number">1</div><div><h3>Download the installer</h3><p>Open the latest release and download the Wicx Windows x64 setup installer and its <code>.sha256</code> checksum.</p></div></div>
           <div class="step"><div class="number">2</div><div><h3>Run the installer</h3><p>Run the downloaded <code>.exe</code> and follow the prompts. It installs per-user under your local app data folder.</p></div></div>
-          <div class="step"><div class="number">3</div><div><h3>Find Whisper in the tray</h3><p>After install the Whisper tray icon appears and the app starts automatically. Press <code>Ctrl+Space</code> or use the tray menu to start recording.</p></div></div>
-          <div class="step"><div class="number">4</div><div><h3>Uninstall anytime</h3><p>Remove Whisper from Settings → Apps. Uninstall stops the app and its transcription service and cleans up sign-in registration.</p></div></div>
+          <div class="step"><div class="number">3</div><div><h3>Find Wicx in the tray</h3><p>After install the Wicx tray icon appears and the app starts automatically. Press <code>Ctrl+Space</code> or use the tray menu to start recording.</p></div></div>
+          <div class="step"><div class="number">4</div><div><h3>Uninstall anytime</h3><p>Remove Wicx from Settings → Apps. Uninstall stops the app and its transcription service and cleans up sign-in registration.</p></div></div>
         </div>
       </section>
 
       <section class="details" id="macos-details" aria-labelledby="macos-heading" hidden>
         <h2 id="macos-heading">macOS support is being planned</h2>
         <p>There isn’t a macOS installer yet. Audio capture, shortcuts, and focused-app text insertion need a native macOS implementation and testing before we can offer a reliable download.</p>
-        <p class="more">Please don’t install the Linux bundle on macOS. Follow development at the <a href="https://github.com/dem-5on/whisper">Whisper project on GitHub</a>.</p>
+        <p class="more">Please don’t install the Linux bundle on macOS. Follow Wicx development on <a href="https://github.com/dem-5on/whisper">GitHub</a>.</p>
       </section>
     </main>
-    <footer>Whisper · Free and open source · Available on Linux and Windows · macOS not available yet.</footer>
+    <footer>Wicx · Free local dictation · Available on Linux and Windows · macOS not available yet.</footer>
   </div>
   <div class="toast" id="copy-toast" role="status" aria-live="polite"></div>
   <script>

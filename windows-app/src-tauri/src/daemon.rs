@@ -1,4 +1,4 @@
-//! Owns the packaged Whisper daemon for the lifetime of the Tauri shell.
+//! Owns the packaged Wicx transcription service for the lifetime of the Tauri shell.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},

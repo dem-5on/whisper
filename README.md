@@ -1,4 +1,4 @@
-# Whisper — Voice-to-Agent Transcription
+# Wicx — Voice-to-Agent Transcription
 
 A Linux-first, application-agnostic voice-input daemon. Your desktop environment owns the global shortcut; this project records, transcribes, and inserts text into whichever application currently has focus. It never talks to an editor or coding agent directly.
 
@@ -20,9 +20,11 @@ and keys. Sign out and back in once if GNOME doesn't show the panel icon after
 installation. The local `base` model is downloaded the first time the daemon
 starts, so the first launch needs internet access.
 
-The download page is intended for `https://whisper.intejers.com/`; it links to
+The current download page is hosted at `https://whisper.intejers.com/`; it links to
 the versioned files published on the project's
 [GitHub Releases page](https://github.com/dem-5on/whisper/releases).
+The repository, domain, and release asset names are legacy addresses retained
+for compatibility during the Wicx rebrand.
 
 To remove the app later while keeping settings, keys, recordings, and
 transcripts:
@@ -35,14 +37,14 @@ For other Linux distributions, use `make package` to create a source bundle and
 a GNOME extension ZIP under `dist/`, then follow the manual setup below.
 The guided Linux installer supports GNOME on Wayland on Debian/Ubuntu; it does
 not claim support for GNOME X11, KDE, or macOS. Windows is being rebuilt as a
-native tray app and per-user installer; it is not available for download while
+Wicx native tray app and per-user installer; it is not available for download while
 the Windows focus and installer checks are incomplete. The old PowerShell
 installer is retired. Do not use `irm .../install.ps1 | iex`; it is not the
 supported Windows installation path.
 
 ### Windows desktop app (in testing)
 
-The Windows UI is a Tauri shell around the Python daemon. The flyout is designed
+The Wicx Windows UI is a Tauri shell around the Python transcription service. The flyout is designed
 to stay non-activating so dictated text continues going to the previously
 focused app. The focused settings window handles provider credentials and live
 transcription options. Development and verification instructions are in
@@ -79,7 +81,7 @@ Audio capture uses SoX's `rec`; microphone listing uses `wpctl` (PipeWire), fall
 Start the daemon once, for example from a user service:
 
 ```bash
-whisper-daemon
+wicx-daemon
 ```
 
 For systemd user sessions, install `systemd/transcriber.service` as
@@ -87,29 +89,31 @@ For systemd user sessions, install `systemd/transcriber.service` as
 is not in `~/.local/bin`, then run `systemctl --user daemon-reload` and
 `systemctl --user enable --now transcriber`.
 
-Bind a desktop/compositor shortcut to `whisper toggle`; bind a second shortcut to `whisper cancel` if desired. The desktop environment—not this application—handles global shortcut detection, which makes this compatible with GNOME, KDE, Sway, Hyprland, and similar systems.
+Bind a desktop/compositor shortcut to `wicx toggle`; bind a second shortcut to `wicx cancel` if desired. The desktop environment—not this application—handles global shortcut detection, which makes this compatible with GNOME, KDE, Sway, Hyprland, and similar systems.
 
 ```bash
-whisper toggle
-whisper cancel
-whisper status [--json]
-whisper retry            # re-transcribe the preserved last recording
-whisper last             # print the last transcript (for copy/recovery)
-whisper mics [--json]    # list PipeWire/Pulse capture sources
-whisper events [--since N] [--json]  # live partial/committed/final events
-whisper subscribe        # persistent event stream (Ctrl-C to stop)
-whisper set-provider --provider local|groq|openrouter
-whisper set-model --model <id>   # local preset or provider model id; `models` lists valid ids
-whisper set-live-engine --live-engine local|openai-realtime|hosted-whisper [--url wss://host/v1/live]
-whisper set-live-model --model <id>  # independent live model
-whisper set-mic --device default|<source-id>
-whisper set-streaming [--enabled true|false]  # live partials + VAD auto-stop; omit to flip
-whisper models [--json]          # transcription-capable models for the current backend
-whisper set-key --provider groq|openrouter|openai|hosted-whisper [--key ...]  # hidden-prompt secret store (0600)
-whisper set-key --provider groq|openrouter|openai|hosted-whisper --clear      # remove the stored key
+wicx toggle
+wicx cancel
+wicx status [--json]
+wicx retry            # re-transcribe the preserved last recording
+wicx last             # print the last transcript (for copy/recovery)
+wicx history [--limit 50]  # list recent Dictation transcripts saved on this device
+wicx delete-session --session <id>  # permanently delete that local history record
+wicx mics [--json]    # list PipeWire/Pulse capture sources
+wicx events [--since N] [--json]  # live partial/committed/final events
+wicx subscribe        # persistent event stream (Ctrl-C to stop)
+wicx set-provider --provider local|groq|openrouter
+wicx set-model --model <id>   # local preset or provider model id; `models` lists valid ids
+wicx set-live-engine --live-engine local|openai-realtime|hosted-whisper [--url wss://host/v1/live]
+wicx set-live-model --model <id>  # independent live model
+wicx set-mic --device default|<source-id>
+wicx set-streaming [--enabled true|false]  # live partials + VAD auto-stop; omit to flip
+wicx models [--json]          # transcription-capable models for the current backend
+wicx set-key --provider groq|openrouter|openai|hosted-whisper [--key ...]  # hidden-prompt secret store (0600)
+wicx set-key --provider groq|openrouter|openai|hosted-whisper --clear      # remove the stored key
 ```
 
-`transcriber` and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.
+`whisper`, `whisper-daemon`, `transcriber`, and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.
 
 Provider, model, and mic switches are written through to `~/.config/transcriber/config.yaml`,
 so they survive daemon restarts. API keys are stored separately in `~/.config/transcriber/keys.env`
@@ -145,23 +149,23 @@ OpenAI live transcription, install the optional dependency and configure its key
 
 ```bash
 python -m pip install -e '.[realtime]'
-whisper set-key --provider openai
-whisper set-live-engine --live-engine openai-realtime
-whisper set-live-model --model gpt-live-transcribe
+wicx set-key --provider openai
+wicx set-live-engine --live-engine openai-realtime
+wicx set-live-model --model gpt-live-transcribe
 ```
 
 This uses OpenAI's Realtime transcription WebSocket; OpenRouter remains
 unchanged and can still handle final transcription. See the
 [OpenAI Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription).
 
-To stream audio to your own Whisper service, install the WebSocket extra and
+To stream audio to your own hosted transcription service, install the WebSocket extra and
 configure its TLS endpoint and invite token on the desktop:
 
 ```bash
 python -m pip install -e '.[realtime]'
-whisper set-live-engine --live-engine hosted-whisper --url wss://api.example.com/v1/live
-whisper set-key --provider hosted-whisper
-whisper set-streaming --enabled true
+wicx set-live-engine --live-engine hosted-whisper --url wss://api.example.com/v1/live
+wicx set-key --provider hosted-whisper
+wicx set-streaming --enabled true
 ```
 
 The default server profile is `default` (faster-whisper `base` in the Docker

@@ -320,7 +320,7 @@ async function connect() {
     // The development daemon has no launch token; packaged builds do.
   }
   connection = new WebSocket(socketUrl);
-  setConnection("Connecting to Whisper…");
+  setConnection("Connecting to Wicx…");
   connection.addEventListener("open", () => {
     connecting = false;
     reconnectDelay = 400;
@@ -342,7 +342,7 @@ async function connect() {
       if (waiter) {
         pending.delete(message.request_id);
         clearTimeout(waiter.timeout);
-        if (message.ok === "false") waiter.reject(new Error(message.error || "Whisper command failed"));
+        if (message.ok === "false") waiter.reject(new Error(message.error || "Wicx command failed"));
         else waiter.resolve(message);
       }
     }
@@ -360,10 +360,10 @@ async function connect() {
     connecting = false;
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timeout);
-      waiter.reject(new Error("Whisper daemon disconnected"));
+      waiter.reject(new Error("Wicx transcription service disconnected"));
     }
     pending.clear();
-    setConnection(unavailableDetail || "Whisper daemon unavailable");
+    setConnection(unavailableDetail || "Wicx transcription service unavailable");
     window.setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(5000, reconnectDelay * 1.7);
   });
@@ -377,13 +377,13 @@ function requestReconnect() {
 
 function request(command, parameters = {}) {
   if (!connection || connection.readyState !== WebSocket.OPEN) {
-    return Promise.reject(new Error("Whisper daemon is unavailable"));
+    return Promise.reject(new Error("Wicx transcription service is unavailable"));
   }
   const requestId = ++requestSequence;
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error("Whisper did not respond in time"));
+      reject(new Error("Wicx did not respond in time"));
     }, 10000);
     pending.set(requestId, { resolve, reject, timeout });
     connection.send(JSON.stringify({ command, request_id: requestId, ...parameters }));
@@ -392,7 +392,7 @@ function request(command, parameters = {}) {
 
 async function sendCommandAndHide(command) {
   if (!connection || connection.readyState !== WebSocket.OPEN) {
-    showError("Whisper daemon is unavailable");
+    showError("Wicx transcription service is unavailable");
     return;
   }
   const pendingRequest = request(command);
@@ -591,8 +591,8 @@ listen("daemon-process", ({ payload }) => {
     ? `Transcription service unavailable${reason ? `: ${reason}` : ""}`
     : `Transcription service stopped${reason ? ` (${reason})` : ""}`;
   showError(couldNotStart
-    ? `Whisper could not start its transcription service${reason ? `: ${reason}` : ". It will retry automatically."}`
-    : `Whisper's transcription service stopped unexpectedly${reason ? ` (${reason})` : ""}. It will restart automatically.`);
+    ? `Wicx could not start its transcription service${reason ? `: ${reason}` : ". It will retry automatically."}`
+    : `Wicx's transcription service stopped unexpectedly${reason ? ` (${reason})` : ""}. It will restart automatically.`);
   if (connection?.readyState !== WebSocket.OPEN) setConnection(unavailableDetail);
 });
 ui.reconnect.addEventListener("click", requestReconnect);
