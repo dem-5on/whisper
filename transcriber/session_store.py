@@ -16,7 +16,8 @@ import re
 import shutil
 import sqlite3
 import uuid
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 
 SESSION_MODES = frozenset({"dictation", "lecture", "meeting"})
@@ -53,7 +54,7 @@ class SessionStore:
             self.sessions_dir.mkdir(parents=True, exist_ok=True)
             if os.name != "nt":
                 self.sessions_dir.chmod(0o700)
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute(
                     """CREATE TABLE IF NOT EXISTS sessions (
                         id TEXT PRIMARY KEY,
@@ -80,6 +81,16 @@ class SessionStore:
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit/rollback a connection transaction and always release its handle."""
+        connection = self._connect()
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
     @staticmethod
     def _now() -> str:
         return datetime.now(UTC).isoformat(timespec="milliseconds")
@@ -92,7 +103,7 @@ class SessionStore:
         session_dir = self.sessions_dir / session_id
         try:
             session_dir.mkdir(mode=0o700)
-            with self._connect() as connection:
+            with self._connection() as connection:
                 connection.execute(
                     "INSERT INTO sessions (id, mode, state, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                     (session_id, mode, "recording", now, now),
@@ -112,7 +123,7 @@ class SessionStore:
 
     def get(self, session_id: str) -> StoredSession:
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 row = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         except sqlite3.Error as exc:
             raise SessionStoreError("Could not read local session") from exc
@@ -140,7 +151,7 @@ class SessionStore:
         if mode is not None and mode not in SESSION_MODES:
             raise ValueError(f"mode must be one of: {', '.join(sorted(SESSION_MODES))}")
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 if mode is None:
                     rows = connection.execute(
                         "SELECT id FROM sessions ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)
@@ -163,7 +174,7 @@ class SessionStore:
         """
         now = self._now()
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 cursor = connection.execute(
                     """UPDATE sessions
                        SET state = 'error',
@@ -216,7 +227,7 @@ class SessionStore:
             values.append(self._now())
         values.append(session_id)
         try:
-            with self._connect() as connection:
+            with self._connection() as connection:
                 cursor = connection.execute(
                     f"UPDATE sessions SET {', '.join(assignments)} WHERE id = ?", values
                 )
@@ -236,7 +247,7 @@ class SessionStore:
             # orphaning private audio with no history entry to find it.
             if session_dir.exists():
                 shutil.rmtree(session_dir, ignore_errors=False)
-            with self._connect() as connection:
+            with self._connection() as connection:
                 cursor = connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
                 if cursor.rowcount == 0:
                     raise KeyError(session_id)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,15 @@ class SessionStoreTests(unittest.TestCase):
         self.assertTrue(lecture.audio_path.parent.is_dir())
         self.assertEqual({item.mode for item in self.store.list()}, {"meeting", "lecture"})
         self.assertEqual([item.id for item in self.store.list(mode="lecture")], [lecture.id])
+
+    def test_connection_context_closes_handle_after_transaction(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        with patch.object(self.store, "_connect", return_value=connection):
+            with self.store._connection() as active_connection:
+                active_connection.execute("CREATE TABLE check_close (value INTEGER)")
+
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
 
     def test_transcripts_and_structured_outputs_survive_store_reopen(self) -> None:
         session = self.store.create("lecture")
