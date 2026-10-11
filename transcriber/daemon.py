@@ -190,6 +190,8 @@ class TranscriberDaemon:
                 params.get("limit", 50), params.get("offset", 0),
                 params.get("mode"), params.get("search"),
             )
+        if command == "get_session":
+            return self._get_session(str(params.get("session_id", "")))
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
         if command == "rename_speaker":
@@ -515,6 +517,33 @@ class TranscriberDaemon:
                 }
                 for item in sessions
             ],
+        }
+
+    def _get_session(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            item = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        with self._lock:
+            status = self._status_locked()
+        return {
+            **status, "ok": "true", "session": {
+                "id": item.id, "mode": item.mode, "state": item.state,
+                "created_at": item.created_at, "updated_at": item.updated_at,
+                "finished_at": item.finished_at,
+                "source_transcript": item.source_transcript,
+                "english_translation": item.english_translation,
+                "segments": item.segments, "outputs": item.outputs,
+                "speaker_names": item.outputs.get("speaker_names", {}),
+                "audio_available": item.audio_path.is_file(), "error": item.error,
+            },
         }
 
     def _delete_session(self, session_id: str) -> dict[str, Any]:

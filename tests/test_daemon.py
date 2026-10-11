@@ -149,6 +149,19 @@ class DaemonTests(unittest.TestCase):
         listed = self.daemon.command("sessions", {"mode": "meeting"})["sessions"]
         self.assertEqual(listed[0]["speaker_names"], {"speaker_1": "Dr. Mensah"})
 
+    def test_get_session_returns_timestamped_segments(self) -> None:
+        meeting = self.daemon._session_store.create("meeting")
+        self.daemon._session_store.update(meeting.id, segments=[{
+            "start_seconds": 3.5, "end_seconds": 4.25,
+            "text": "Let's begin.", "speaker_id": "speaker_1",
+        }])
+
+        response = self.daemon.command("get_session", {"session_id": meeting.id})
+
+        self.assertEqual(response["ok"], "true")
+        self.assertEqual(response["session"]["segments"][0]["speaker_id"], "speaker_1")
+        self.assertEqual(response["session"]["segments"][0]["start_seconds"], 3.5)
+
     def test_existing_daemon_adoption_is_limited_to_authenticated_windows_sidecars(self) -> None:
         self.assertEqual(_existing_daemon_exit_code("nt", "per-user-token"), 75)
         self.assertEqual(_existing_daemon_exit_code("nt", None), 1)

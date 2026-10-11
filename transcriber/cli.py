@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "rename-speaker", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "get-session", "delete-session", "rename-speaker", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -33,7 +33,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=50, help="Maximum transcript history entries to return")
     parser.add_argument("--offset", type=int, default=0, help="Skip this many older session entries (sessions)")
     parser.add_argument("--search", default=None, help="Find text in saved source transcripts or translations (sessions)")
-    parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or exports")
+    parser.add_argument("--session", default=None, help="Session id for events, session detail, rename, retry, or exports")
     parser.add_argument("--speaker-id", default=None, help="Stable detected speaker ID, for example speaker_1")
     parser.add_argument("--name", default=None, help="Display name to assign to that Meeting speaker")
     parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
@@ -75,6 +75,11 @@ def main() -> None:
         if not args.session:
             parser.error("delete-session requires --session ID")
         payload["command"] = "delete_session"
+        payload["session_id"] = args.session
+    elif args.command == "get-session":
+        if not args.session:
+            parser.error("get-session requires --session ID")
+        payload["command"] = "get_session"
         payload["session_id"] = args.session
     elif args.command == "retry-session":
         if not args.session:
@@ -172,6 +177,12 @@ def main() -> None:
         if response.get("has_more"):
             next_offset = response.get("offset", args.offset) + response.get("limit", args.limit)
             print(f"More sessions available; continue with --offset {next_offset}")
+    elif args.command == "get-session":
+        session = response.get("session", {})
+        print(session.get("source_transcript", ""))
+        for segment in session.get("segments", []):
+            speaker = segment.get("speaker_id") or "unassigned"
+            print(f"[{segment.get('start_seconds', 0):.3f}-{segment.get('end_seconds', 0):.3f}] {speaker}: {segment.get('text', '')}")
     elif args.command == "retry-session":
         print("Retry started; local session transcription is processing")
     elif args.command == "rename-speaker":

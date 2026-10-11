@@ -99,6 +99,7 @@ wicx retry            # re-transcribe the preserved last recording
 wicx last             # print the last transcript (for copy/recovery)
 wicx history [--limit 50]  # list recent Dictation transcripts saved on this device
 wicx sessions [--limit 50] [--offset 0] [--session-mode lecture] [--search "term"]  # page/filter saved sessions
+wicx get-session --session <id>  # retrieve the full transcript and timestamped speaker segments
 wicx delete-session --session <id>  # permanently delete that local history record
 wicx rename-speaker --session <id> --speaker-id speaker_1 --name "Dr. Mensah"  # name a detected Meeting speaker
 wicx retry-session --session <id>  # explicitly retry a failed Lecture/Meeting from its saved audio
@@ -126,6 +127,8 @@ wicx set-key --provider groq|openrouter|openai|hosted-whisper --clear      # rem
 Meeting speaker display names are stored with the local session and included in
 Markdown exports. Automatic speaker diarization is not implemented yet; this
 command provides the persistent naming layer for detected `speaker_N` IDs.
+Sessions can now also store timestamped text segments with optional stable
+speaker IDs, while retaining the original plain-text transcript for compatibility.
 
 `whisper`, `whisper-daemon`, `transcriber`, and `transcriber-daemon` remain available as compatibility aliases for existing shortcuts and service setups.
 

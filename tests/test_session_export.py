@@ -45,8 +45,25 @@ class SessionExportTests(unittest.TestCase):
 
             with self.assertRaises(FileExistsError):
                 export_session_markdown(session, target)
-
             self.assertEqual(target.read_text(encoding="utf-8"), "keep this")
+
+    def test_markdown_renders_timestamped_speaker_segments_with_user_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(directory)
+            meeting = store.create("meeting")
+            meeting = store.update(
+                meeting.id,
+                source_transcript="Hello there.",
+                segments=[{
+                    "start_seconds": 2.125, "end_seconds": 3.0,
+                    "text": "Hello there.", "speaker_id": "speaker_1",
+                }],
+                outputs={"speaker_names": {"speaker_1": "Ama"}},
+            )
+
+            markdown = render_session_markdown(meeting)
+
+            self.assertIn("`00:00:02.125` **Ama:** Hello there.", markdown)
 
     def test_audio_export_copies_retained_recording_and_refuses_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

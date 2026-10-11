@@ -13,6 +13,18 @@ def render_session_markdown(session: StoredSession) -> str:
     title = {"dictation": "Dictation", "lecture": "Lecture", "meeting": "Meeting"}.get(
         session.mode, "Wicx session"
     )
+    transcript = session.source_transcript.strip() or "_(No transcript available.)_"
+    if session.segments:
+        speaker_names = session.outputs.get("speaker_names", {})
+        rendered_segments: list[str] = []
+        for segment in session.segments:
+            speaker_id = segment.get("speaker_id")
+            speaker_name = speaker_names.get(speaker_id) if isinstance(speaker_names, dict) else None
+            speaker = speaker_name or (speaker_id.replace("_", " ").title() if speaker_id else "")
+            timestamp = _format_timestamp(segment["start_seconds"])
+            label = f"**{speaker}:** " if speaker else ""
+            rendered_segments.append(f"- `{timestamp}` {label}{segment['text']}")
+        transcript = "\n".join(rendered_segments)
     lines = [
         f"# {title}",
         "",
@@ -21,7 +33,7 @@ def render_session_markdown(session: StoredSession) -> str:
         "",
         "## Transcript",
         "",
-        session.source_transcript.strip() or "_(No transcript available.)_",
+        transcript,
     ]
     if session.english_translation:
         lines.extend(["", "## English translation", "", session.english_translation.strip()])
@@ -48,6 +60,14 @@ def render_session_markdown(session: StoredSession) -> str:
     if session.error:
         lines.extend(["", "## Processing status", "", session.error])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _format_timestamp(seconds: float) -> str:
+    total_milliseconds = round(seconds * 1000)
+    hours, remainder = divmod(total_milliseconds, 3_600_000)
+    minutes, remainder = divmod(remainder, 60_000)
+    whole_seconds, milliseconds = divmod(remainder, 1000)
+    return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}.{milliseconds:03d}"
 
 
 def export_session_markdown(session: StoredSession, output: str | Path) -> Path:

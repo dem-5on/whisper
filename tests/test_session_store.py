@@ -94,6 +94,59 @@ class SessionStoreTests(unittest.TestCase):
         self.assertTrue(reopened.audio_path.is_file())
         self.assertEqual(updated.id, reopened.id)
 
+    def test_timestamped_speaker_segments_round_trip(self) -> None:
+        meeting = self.store.create("meeting")
+        segments = [
+            {"start_seconds": 0.12, "end_seconds": 1.7, "text": "Good morning.", "speaker_id": "speaker_1"},
+            {"start_seconds": 1.9, "end_seconds": 3.25, "text": "Good morning, professor.", "speaker_id": None},
+        ]
+
+        saved = self.store.update(meeting.id, segments=segments)
+
+        self.assertEqual(saved.segments, [
+            {"start_seconds": 0.12, "end_seconds": 1.7, "text": "Good morning.", "speaker_id": "speaker_1"},
+            {"start_seconds": 1.9, "end_seconds": 3.25, "text": "Good morning, professor.", "speaker_id": None},
+        ])
+        self.assertEqual(SessionStore(self.root).get(meeting.id).segments, saved.segments)
+
+    def test_invalid_timestamped_segments_are_rejected(self) -> None:
+        session = self.store.create("meeting")
+        for segment in (
+            {"start_seconds": -1, "end_seconds": 1, "text": "bad"},
+            {"start_seconds": 2, "end_seconds": 1, "text": "bad"},
+            {"start_seconds": float("nan"), "end_seconds": 1, "text": "bad"},
+            {"start_seconds": 0, "end_seconds": 1, "text": "bad", "speaker_id": "speaker_zero"},
+            {"start_seconds": 0, "end_seconds": 1, "text": "  "},
+        ):
+            with self.subTest(segment=segment), self.assertRaises(ValueError):
+                self.store.update(session.id, segments=[segment])  # type: ignore[list-item]
+
+    def test_existing_session_database_migrates_without_losing_transcript(self) -> None:
+        legacy_root = self.root / "legacy"
+        legacy_root.mkdir()
+        database = legacy_root / "sessions.sqlite3"
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("""CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, mode TEXT NOT NULL, state TEXT NOT NULL,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT,
+                source_transcript TEXT NOT NULL DEFAULT '', english_translation TEXT NOT NULL DEFAULT '',
+                outputs_json TEXT NOT NULL DEFAULT '{}', error TEXT
+            )""")
+            connection.execute(
+                "INSERT INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("a" * 32, "meeting", "ready", "2026-01-01", "2026-01-01", None,
+                 "legacy transcript", "", "{}", None),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = SessionStore(legacy_root).get("a" * 32)
+
+        self.assertEqual(migrated.source_transcript, "legacy transcript")
+        self.assertEqual(migrated.segments, [])
+
     def test_meeting_speaker_names_persist_and_validate(self) -> None:
         meeting = self.store.create("meeting")
 

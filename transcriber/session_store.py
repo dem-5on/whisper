@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -22,6 +23,7 @@ from typing import Any, Iterator
 
 SESSION_MODES = frozenset({"dictation", "lecture", "meeting"})
 SESSION_STATES = frozenset({"recording", "transcribing", "processing", "ready", "error", "cancelled"})
+MAX_TRANSCRIPT_SEGMENTS = 100_000
 
 
 class SessionStoreError(RuntimeError):
@@ -37,6 +39,7 @@ class StoredSession:
     updated_at: str
     finished_at: str | None
     source_transcript: str
+    segments: list[dict[str, Any]]
     english_translation: str
     outputs: dict[str, Any]
     error: str | None
@@ -64,11 +67,15 @@ class SessionStore:
                         updated_at TEXT NOT NULL,
                         finished_at TEXT,
                         source_transcript TEXT NOT NULL DEFAULT '',
+                        segments_json TEXT NOT NULL DEFAULT '[]',
                         english_translation TEXT NOT NULL DEFAULT '',
                         outputs_json TEXT NOT NULL DEFAULT '{}',
                         error TEXT
                     )"""
                 )
+                columns = {row["name"] for row in connection.execute("PRAGMA table_info(sessions)")}
+                if "segments_json" not in columns:
+                    connection.execute("ALTER TABLE sessions ADD COLUMN segments_json TEXT NOT NULL DEFAULT '[]'")
                 connection.execute("CREATE INDEX IF NOT EXISTS sessions_created_at ON sessions(created_at)")
             if os.name != "nt":
                 self.database.chmod(0o600)
@@ -133,14 +140,19 @@ class SessionStore:
             raise SessionStoreError("Session identifier is invalid")
         try:
             outputs = json.loads(row["outputs_json"])
+            segments = json.loads(row["segments_json"])
         except (TypeError, json.JSONDecodeError) as exc:
-            raise SessionStoreError("Session output data is damaged") from exc
-        if not isinstance(outputs, dict):
-            raise SessionStoreError("Session output data is damaged")
+            raise SessionStoreError("Session data is damaged") from exc
+        if not isinstance(outputs, dict) or not isinstance(segments, list):
+            raise SessionStoreError("Session data is damaged")
+        try:
+            segments = self._validate_segments(segments)
+        except ValueError as exc:
+            raise SessionStoreError("Session transcript segments are damaged") from exc
         return StoredSession(
             id=row["id"], mode=row["mode"], state=row["state"],
             created_at=row["created_at"], updated_at=row["updated_at"],
-            finished_at=row["finished_at"], source_transcript=row["source_transcript"],
+            finished_at=row["finished_at"], source_transcript=row["source_transcript"], segments=segments,
             english_translation=row["english_translation"], outputs=outputs,
             error=row["error"], audio_path=self.sessions_dir / row["id"] / "recording.wav",
         )
@@ -219,6 +231,7 @@ class SessionStore:
         *,
         state: str | None = None,
         source_transcript: str | None = None,
+        segments: list[dict[str, Any]] | None = None,
         english_translation: str | None = None,
         outputs: dict[str, Any] | None = None,
         error: str | None = None,
@@ -228,6 +241,8 @@ class SessionStore:
             raise ValueError(f"state must be one of: {', '.join(sorted(SESSION_STATES))}")
         if outputs is not None and not isinstance(outputs, dict):
             raise ValueError("outputs must be a mapping")
+        if segments is not None:
+            segments = self._validate_segments(segments)
         assignments = ["updated_at = ?"]
         values: list[Any] = [self._now()]
         for field, value in (
@@ -246,6 +261,9 @@ class SessionStore:
                 raise ValueError("outputs must contain JSON-compatible values") from exc
             assignments.append("outputs_json = ?")
             values.append(encoded)
+        if segments is not None:
+            assignments.append("segments_json = ?")
+            values.append(json.dumps(segments, ensure_ascii=False, separators=(",", ":")))
         if finished:
             assignments.append("finished_at = ?")
             values.append(self._now())
@@ -260,6 +278,36 @@ class SessionStore:
         except sqlite3.Error as exc:
             raise SessionStoreError("Could not update local session") from exc
         return self.get(session_id)
+
+    @staticmethod
+    def _validate_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not isinstance(segments, list) or len(segments) > MAX_TRANSCRIPT_SEGMENTS:
+            raise ValueError(f"segments must be a list of at most {MAX_TRANSCRIPT_SEGMENTS} entries")
+        normalized: list[dict[str, Any]] = []
+        for index, segment in enumerate(segments):
+            if not isinstance(segment, dict):
+                raise ValueError(f"segment {index} must be a mapping")
+            start = segment.get("start_seconds")
+            end = segment.get("end_seconds")
+            text = segment.get("text")
+            speaker_id = segment.get("speaker_id")
+            if (isinstance(start, bool) or not isinstance(start, (int, float))
+                    or isinstance(end, bool) or not isinstance(end, (int, float))
+                    or not math.isfinite(start) or not math.isfinite(end)
+                    or start < 0 or end < start):
+                raise ValueError(f"segment {index} has invalid timestamps")
+            if not isinstance(text, str) or not text.strip() or len(text) > 20_000:
+                raise ValueError(f"segment {index} text must contain 1 to 20000 characters")
+            if speaker_id is not None and (
+                not isinstance(speaker_id, str)
+                or not re.fullmatch(r"speaker_[1-9][0-9]*", speaker_id)
+            ):
+                raise ValueError(f"segment {index} has an invalid speaker ID")
+            normalized.append({
+                "start_seconds": float(start), "end_seconds": float(end),
+                "text": text.strip(), "speaker_id": speaker_id,
+            })
+        return normalized
 
     def rename_speaker(self, session_id: str, speaker_id: str, display_name: str) -> StoredSession:
         """Persist a user-provided name for one diarization speaker ID."""
