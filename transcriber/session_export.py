@@ -25,9 +25,17 @@ def render_session_markdown(session: StoredSession) -> str:
     ]
     if session.english_translation:
         lines.extend(["", "## English translation", "", session.english_translation.strip()])
-    if session.outputs:
+    speaker_names = session.outputs.get("speaker_names")
+    if isinstance(speaker_names, dict) and speaker_names:
+        lines.extend(["", "## Speakers", ""])
+        lines.extend(
+            f"- {speaker_id.replace('_', ' ').title()}: {name}"
+            for speaker_id, name in speaker_names.items()
+        )
+    generated_outputs = {key: value for key, value in session.outputs.items() if key != "speaker_names"}
+    if generated_outputs:
         lines.extend(["", "## Generated outputs", ""])
-        for key, value in session.outputs.items():
+        for key, value in generated_outputs.items():
             label = str(key).replace("_", " ").strip().capitalize() or "Output"
             lines.extend([f"### {label}", ""])
             if isinstance(value, list):

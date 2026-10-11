@@ -18,7 +18,10 @@ class SessionExportTests(unittest.TestCase):
                 state="ready",
                 source_transcript="Kia ora, welcome.",
                 english_translation="Hello, welcome.",
-                outputs={"notes": ["Topic one", "Topic two"], "questions": ["Why?"]},
+                outputs={
+                    "notes": ["Topic one", "Topic two"], "questions": ["Why?"],
+                    "speaker_names": {"speaker_1": "Dr. Mensah"},
+                },
             )
 
             markdown = render_session_markdown(session)
@@ -29,6 +32,8 @@ class SessionExportTests(unittest.TestCase):
             self.assertIn("## English translation", markdown)
             self.assertIn("- Topic one", markdown)
             self.assertIn("- Why?", markdown)
+            self.assertIn("## Speakers", markdown)
+            self.assertIn("Speaker 1: Dr. Mensah", markdown)
             self.assertEqual(exported.read_text(encoding="utf-8"), markdown)
 
     def test_export_never_overwrites_an_existing_file(self) -> None:

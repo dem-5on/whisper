@@ -19,7 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "delete-session", "rename-speaker", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -34,6 +34,8 @@ def main() -> None:
     parser.add_argument("--offset", type=int, default=0, help="Skip this many older session entries (sessions)")
     parser.add_argument("--search", default=None, help="Find text in saved source transcripts or translations (sessions)")
     parser.add_argument("--session", default=None, help="Session id for events, delete-session, retry-session, or exports")
+    parser.add_argument("--speaker-id", default=None, help="Stable detected speaker ID, for example speaker_1")
+    parser.add_argument("--name", default=None, help="Display name to assign to that Meeting speaker")
     parser.add_argument("--output", type=Path, default=None, help="Destination file for a session export (must not already exist)")
     parser.add_argument("--action", choices=("list", "add", "remove"), help="Dictionary action")
     parser.add_argument("--term", default=None, help="One custom vocabulary term")
@@ -79,6 +81,13 @@ def main() -> None:
             parser.error("retry-session requires --session ID")
         payload["command"] = "retry_session"
         payload["session_id"] = args.session
+    elif args.command == "rename-speaker":
+        if not args.session or not args.speaker_id or not args.name:
+            parser.error("rename-speaker requires --session ID --speaker-id speaker_1 --name NAME")
+        payload["command"] = "rename_speaker"
+        payload["session_id"] = args.session
+        payload["speaker_id"] = args.speaker_id
+        payload["name"] = args.name
     elif args.command == "export-session":
         if not args.session:
             parser.error("export-session requires --session ID")
@@ -165,6 +174,8 @@ def main() -> None:
             print(f"More sessions available; continue with --offset {next_offset}")
     elif args.command == "retry-session":
         print("Retry started; local session transcription is processing")
+    elif args.command == "rename-speaker":
+        print(f"Renamed {response.get('speaker_id', 'speaker')} to {response.get('name', '')}")
     elif args.command == "export-session":
         print(response.get("export_path", ""))
     elif args.command == "export-session-audio":

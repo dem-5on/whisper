@@ -192,6 +192,12 @@ class TranscriberDaemon:
             )
         if command == "delete_session":
             return self._delete_session(str(params.get("session_id", "")))
+        if command == "rename_speaker":
+            return self._rename_speaker(
+                str(params.get("session_id", "")),
+                str(params.get("speaker_id", "")),
+                params.get("name"),
+            )
         if command == "export_session":
             return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
         if command == "export_session_audio":
@@ -503,6 +509,7 @@ class TranscriberDaemon:
                     "source_transcript": item.source_transcript,
                     "english_translation": item.english_translation,
                     "outputs": item.outputs,
+                    "speaker_names": item.outputs.get("speaker_names", {}),
                     "audio_available": item.audio_path.is_file(),
                     "error": item.error,
                 }
@@ -527,6 +534,27 @@ class TranscriberDaemon:
                 return {**self._status_locked(), "ok": "false", "error": "Could not delete local session data"}
         with self._lock:
             return {**self._status_locked(), "ok": "true", "deleted_session_id": session_id}
+
+    def _rename_speaker(self, session_id: str, speaker_id: str, name: Any) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            session = self._session_store.rename_speaker(session_id, speaker_id, name)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except ValueError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not update the Meeting speaker name"}
+        with self._lock:
+            return {
+                **self._status_locked(), "ok": "true", "session_id": session.id,
+                "speaker_id": speaker_id, "name": session.outputs["speaker_names"][speaker_id],
+            }
 
     def _export_session(self, session_id: str, output: str) -> dict[str, Any]:
         if not session_id or not output:

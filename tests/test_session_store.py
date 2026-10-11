@@ -94,6 +94,21 @@ class SessionStoreTests(unittest.TestCase):
         self.assertTrue(reopened.audio_path.is_file())
         self.assertEqual(updated.id, reopened.id)
 
+    def test_meeting_speaker_names_persist_and_validate(self) -> None:
+        meeting = self.store.create("meeting")
+
+        renamed = self.store.rename_speaker(meeting.id, "speaker_1", "Dr. Mensah")
+
+        self.assertEqual(renamed.outputs["speaker_names"], {"speaker_1": "Dr. Mensah"})
+        self.assertEqual(SessionStore(self.root).get(meeting.id).outputs, renamed.outputs)
+        lecture = self.store.create("lecture")
+        with self.assertRaisesRegex(ValueError, "only supported for Meeting"):
+            self.store.rename_speaker(lecture.id, "speaker_1", "Teacher")
+        with self.assertRaises(ValueError):
+            self.store.rename_speaker(meeting.id, "speaker_0", "Invalid ID")
+        with self.assertRaises(ValueError):
+            self.store.rename_speaker(meeting.id, "speaker_1", "")
+
     def test_update_rejects_invalid_state_and_non_json_outputs(self) -> None:
         session = self.store.create("meeting")
         with self.assertRaises(ValueError):

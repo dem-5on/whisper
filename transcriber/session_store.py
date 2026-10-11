@@ -261,6 +261,26 @@ class SessionStore:
             raise SessionStoreError("Could not update local session") from exc
         return self.get(session_id)
 
+    def rename_speaker(self, session_id: str, speaker_id: str, display_name: str) -> StoredSession:
+        """Persist a user-provided name for one diarization speaker ID."""
+        if not isinstance(speaker_id, str) or not re.fullmatch(r"speaker_[1-9][0-9]*", speaker_id):
+            raise ValueError("speaker_id must look like speaker_1")
+        if not isinstance(display_name, str):
+            raise ValueError("speaker name must be text")
+        display_name = display_name.strip()
+        if not display_name or len(display_name) > 80:
+            raise ValueError("speaker name must be between 1 and 80 characters")
+        if any(ord(char) < 32 or ord(char) == 127 for char in display_name):
+            raise ValueError("speaker name cannot contain control characters")
+        session = self.get(session_id)
+        if session.mode != "meeting":
+            raise ValueError("speaker names are only supported for Meeting sessions")
+        speaker_names = session.outputs.get("speaker_names", {})
+        if not isinstance(speaker_names, dict):
+            speaker_names = {}
+        speaker_names = {**speaker_names, speaker_id: display_name}
+        return self.update(session_id, outputs={**session.outputs, "speaker_names": speaker_names})
+
     def delete(self, session_id: str) -> None:
         """Delete one session and its audio, never accepting an external file path."""
         record = self.get(session_id)

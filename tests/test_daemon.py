@@ -137,6 +137,18 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in filtered["sessions"]], [first.id])
         self.assertEqual(filtered["mode"], "lecture")
 
+    def test_rename_speaker_command_persists_meeting_display_name(self) -> None:
+        meeting = self.daemon._session_store.create("meeting")
+
+        renamed = self.daemon.command("rename_speaker", {
+            "session_id": meeting.id, "speaker_id": "speaker_1", "name": "Dr. Mensah",
+        })
+
+        self.assertEqual(renamed["ok"], "true")
+        self.assertEqual(renamed["name"], "Dr. Mensah")
+        listed = self.daemon.command("sessions", {"mode": "meeting"})["sessions"]
+        self.assertEqual(listed[0]["speaker_names"], {"speaker_1": "Dr. Mensah"})
+
     def test_existing_daemon_adoption_is_limited_to_authenticated_windows_sidecars(self) -> None:
         self.assertEqual(_existing_daemon_exit_code("nt", "per-user-token"), 75)
         self.assertEqual(_existing_daemon_exit_code("nt", None), 1)
