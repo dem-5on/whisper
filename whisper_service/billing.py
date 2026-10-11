@@ -14,9 +14,11 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+from typing import Collection, Mapping
 
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:@+-]{1,200}\Z")
+_FEATURE_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 _STATUSES = frozenset({"active", "non_renewing", "attention", "paused", "cancelled", "completed", "expired"})
 
 
@@ -136,6 +138,41 @@ class BillingStore:
             return None
         keys = ("provider", "subscription_id", "user_id", "plan_id", "status", "current_period_end", "updated_at")
         return dict(zip(keys, row, strict=True))
+
+    def has_active_feature(
+        self, user_id: str, feature: str, plan_features: Mapping[str, Collection[str]],
+        *, now: datetime | None = None,
+    ) -> bool:
+        """Resolve feature access only from active, unexpired subscriptions."""
+        if (not isinstance(user_id, str) or not user_id.strip() or
+                not isinstance(feature, str) or not _FEATURE_ID.fullmatch(feature)):
+            return False
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("entitlement check time must include a timezone")
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """SELECT plan_id, status, current_period_end FROM subscriptions
+                       WHERE user_id = ? AND status IN ('active', 'non_renewing')""",
+                    (user_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not read subscription entitlements") from exc
+        for plan_id, status, period_end in rows:
+            if feature not in plan_features.get(plan_id, ()):
+                continue
+            if status not in {"active", "non_renewing"} or not period_end:
+                continue
+            try:
+                expiry = datetime.fromisoformat(period_end)
+            except ValueError as exc:
+                raise BillingStoreError("Subscription contains an invalid period end") from exc
+            if expiry.tzinfo is None:
+                raise BillingStoreError("Subscription period end is missing its timezone")
+            if expiry.astimezone(UTC) > current.astimezone(UTC):
+                return True
+        return False
 
     def record_checkout(
         self, *, reference: str, user_id: str, plan_id: str,

@@ -229,7 +229,7 @@ restarts. An authenticated `POST /v1/billing/checkout` endpoint can initialize
 Paystack checkout when `WHISPER_PAYSTACK_PLANS` is configured as a JSON mapping
 from Wicx plan IDs to Paystack recurring plan codes, expected amount in the
 smallest currency unit, and currency (for example,
-`{"pro-monthly":{"code":"PLN_...","amount_minor":1250,"currency":"GHS"}}`).
+`{"pro-monthly":{"code":"PLN_...","amount_minor":1250,"currency":"GHS","features":["cloud_transcription","diarization"]}}`).
 Use the actual approved pricing and Paystack plan codes in deployment config;
 the example is illustrative only. The server supplies the plan code and account
 metadata; clients cannot set the amount or account ID. Signed successful-charge
@@ -239,10 +239,12 @@ uses an email as payer contact because stable Google/Apple account identities
 are not implemented yet. Each checkout reference is stored against the
 authenticated account, and successful charge webhooks are checked against
 Paystack's transaction-verification API before they update the billing ledger.
-This remains a billing foundation, not production entitlement: stable
-sign-in identities and projection of verified subscription state into product
-entitlements still need to be implemented. Do not grant
-features from this ledger yet. Never grant access from a frontend success
+Verified subscription status now feeds the hosted `cloud_transcription` and
+`diarization` gates according to each configured plan's `features` list; access
+expires at the subscription period end, and non-renewing subscriptions remain
+entitled only through that date. Operator-managed grants remain available for
+testing. Stable sign-in identities and the remaining account, refund, dispute,
+and support workflows are still needed before production rollout. Never grant access from a frontend success
 callback or store raw card details. Paystack's transaction initialization API
 accepts a server-side recurring plan code and returns a hosted authorization
 URL; see [Paystack's transaction API](https://paystack.com/docs/api/transaction/).

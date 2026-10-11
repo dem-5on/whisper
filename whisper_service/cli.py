@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -121,12 +122,12 @@ def main() -> None:
 
 async def _run_service(args: argparse.Namespace) -> None:
     from .auth import TokenAuthenticator
-    from .entitlements import EntitlementStore
+    from .entitlements import EntitlementStore, SubscriptionEntitlementStore
     from .server import serve_websocket
     from .worker import prepare_worker
 
     authenticator = TokenAuthenticator.from_file(args.token_file)
-    entitlements = EntitlementStore(args.entitlements_file)
+    manual_entitlements = EntitlementStore(args.entitlements_file)
     profile = ModelProfile(args.profile, args.model, ("cpu", "cuda"))
     selection, worker = await prepare_worker(
         args.device, profile,
@@ -146,6 +147,18 @@ async def _run_service(args: argparse.Namespace) -> None:
         rate_window_seconds=args.rate_window_seconds,
     )
     manager = SessionManager(worker, (profile,), device=selection.device, limits=limits)
+    billing_store = None
+    paystack_secret = os.environ.get("WHISPER_PAYSTACK_SECRET_KEY")
+    paystack_plans = _paystack_plans_from_environment() if args.enable_billing else {}
+    entitlements = manual_entitlements
+    if args.enable_billing:
+        if not paystack_secret:
+            raise RuntimeError("WHISPER_PAYSTACK_SECRET_KEY is required when billing is enabled")
+        billing_store = BillingStore(args.billing_database)
+        entitlements = SubscriptionEntitlementStore(
+            manual_entitlements, billing_store,
+            {plan_id: plan.features for plan_id, plan in paystack_plans.items()},
+        )
     if not args.enable_diarization and not args.enable_billing:
         await serve_websocket(authenticator, manager, entitlements=entitlements,
                               host=args.host, port=args.port)
@@ -165,14 +178,6 @@ async def _run_service(args: argparse.Namespace) -> None:
             max_jobs=args.diarization_max_jobs, workers=args.diarization_workers,
         )
         http_entitlements = entitlements
-
-    billing_store = None
-    paystack_secret = os.environ.get("WHISPER_PAYSTACK_SECRET_KEY")
-    paystack_plans = _paystack_plans_from_environment() if args.enable_billing else {}
-    if args.enable_billing:
-        if not paystack_secret:
-            raise RuntimeError("WHISPER_PAYSTACK_SECRET_KEY is required when billing is enabled")
-        billing_store = BillingStore(args.billing_database)
 
     await asyncio.gather(
         serve_websocket(authenticator, manager, entitlements=entitlements,
@@ -222,20 +227,26 @@ def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
         raise RuntimeError("WHISPER_PAYSTACK_PLANS must be a non-empty JSON object")
     plans: dict[str, PaystackPlan] = {}
     for plan_id, details in configured.items():
+        features = details.get("features", []) if isinstance(details, dict) else None
         if (not isinstance(plan_id, str) or not isinstance(details, dict) or
                 not isinstance(details.get("code"), str) or not details["code"].strip() or
                 not isinstance(details.get("amount_minor"), int) or
                 isinstance(details.get("amount_minor"), bool) or details["amount_minor"] <= 0 or
                 not isinstance(details.get("currency"), str) or
-                len(details["currency"]) != 3 or not details["currency"].isupper()):
+                not re.fullmatch(r"[A-Z]{3}", details["currency"]) or
+                not isinstance(features, list) or
+                any(not isinstance(feature, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", feature)
+                    for feature in features)):
             raise RuntimeError(
-                "WHISPER_PAYSTACK_PLANS values need code, positive amount_minor, and uppercase currency"
+                "WHISPER_PAYSTACK_PLANS entries need code, positive amount_minor, uppercase currency, "
+                "and a list of feature identifiers"
             )
         plans[plan_id] = PaystackPlan(
             plan_id=plan_id,
             paystack_code=details["code"],
             amount_minor=details["amount_minor"],
             currency=details["currency"],
+            features=tuple(features),
         )
     return plans
 

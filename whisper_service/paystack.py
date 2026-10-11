@@ -26,6 +26,7 @@ class PaystackPlan:
     paystack_code: str
     amount_minor: int | None = None
     currency: str | None = None
+    features: tuple[str, ...] = ()
 
 
 def validate_checkout_request(

@@ -9,7 +9,9 @@ from pathlib import Path
 import re
 import secrets
 import stat
-from typing import Any
+from typing import Any, Collection, Mapping
+
+from .billing import BillingStore, BillingStoreError
 
 
 FEATURE_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
@@ -44,6 +46,28 @@ class EntitlementStore:
             raise EntitlementConfigError("Entitlement expiry must include a timezone")
         current = now or datetime.now(UTC)
         return expiry.astimezone(UTC) > current.astimezone(UTC)
+
+
+class SubscriptionEntitlementStore:
+    """Combine operator grants with current billing-plan entitlements."""
+
+    def __init__(
+        self, manual: EntitlementStore, billing: BillingStore,
+        plan_features: Mapping[str, Collection[str]],
+    ) -> None:
+        self.manual = manual
+        self.billing = billing
+        self.plan_features = {plan: tuple(features) for plan, features in plan_features.items()}
+
+    def has_feature(self, user_id: str, feature: str, *, now: datetime | None = None) -> bool:
+        if self.manual.has_feature(user_id, feature, now=now):
+            return True
+        try:
+            return self.billing.has_active_feature(
+                user_id, feature, self.plan_features, now=now,
+            )
+        except BillingStoreError as exc:
+            raise EntitlementConfigError("Could not resolve subscription entitlements") from exc
 
 
 def grant_feature(path: str | Path, user_id: str, feature: str, *, expires_at: str | None = None) -> None:

@@ -9,9 +9,11 @@ from types import SimpleNamespace
 import unittest
 
 from whisper_service.auth import TokenAuthenticator
+from whisper_service.billing import BillingStore
 from whisper_service.entitlements import (
     EntitlementConfigError,
     EntitlementStore,
+    SubscriptionEntitlementStore,
     grant_feature,
     list_features,
     revoke_feature,
@@ -82,6 +84,46 @@ class EntitlementStoreTests(unittest.TestCase):
         self.path.write_text("invalid", encoding="utf-8")
         unavailable = asyncio.run(process_request(Connection(), request))
         self.assertEqual(unavailable[0], 503)
+
+    def test_subscription_entitlements_follow_plan_and_expiry(self) -> None:
+        billing = BillingStore(Path(self.temp.name) / "billing.sqlite3")
+        billing.apply_verified_event(
+            provider="paystack", event_id="charge-1", subscription_id="SUB_1",
+            user_id="user-a", plan_id="pro-monthly", status="active",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        entitlements = SubscriptionEntitlementStore(
+            self.store, billing,
+            {"pro-monthly": ("cloud_transcription", "diarization")},
+        )
+        self.assertTrue(entitlements.has_feature(
+            "user-a", "cloud_transcription", now=datetime(2029, 12, 31, tzinfo=UTC),
+        ))
+        self.assertTrue(entitlements.has_feature(
+            "user-a", "diarization", now=datetime(2029, 12, 31, tzinfo=UTC),
+        ))
+        billing.apply_verified_event(
+            provider="paystack", event_id="cancel-1", subscription_id="SUB_1",
+            user_id="user-a", plan_id="pro-monthly", status="non_renewing",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        self.assertTrue(entitlements.has_feature(
+            "user-a", "cloud_transcription", now=datetime(2029, 12, 31, tzinfo=UTC),
+        ))
+        billing.apply_verified_event(
+            provider="paystack", event_id="disabled-1", subscription_id="SUB_1",
+            user_id="user-a", plan_id="pro-monthly", status="cancelled",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        self.assertFalse(entitlements.has_feature(
+            "user-a", "cloud_transcription", now=datetime(2029, 12, 31, tzinfo=UTC),
+        ))
+        self.assertFalse(entitlements.has_feature(
+            "user-a", "cloud_transcription", now=datetime(2030, 1, 1, tzinfo=UTC),
+        ))
+        self.assertFalse(entitlements.has_feature(
+            "user-a", "unconfigured_feature", now=datetime(2029, 12, 31, tzinfo=UTC),
+        ))
 
 
 if __name__ == "__main__":
