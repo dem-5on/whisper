@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import re
+from datetime import UTC, datetime
 from typing import Any, Mapping
 
 from .billing import BillingStore, BillingStoreError
@@ -89,6 +90,7 @@ class VerifiedPaystackEvent:
     name: str
     data: dict[str, Any]
     digest: str
+    occurred_at: str | None = None
 
 
 def verify_paystack_webhook(body: bytes, signature: str | None, secret: str) -> VerifiedPaystackEvent:
@@ -116,7 +118,10 @@ def verify_paystack_webhook(body: bytes, signature: str | None, secret: str) -> 
         raise PaystackWebhookError("Webhook event name is invalid")
     if not isinstance(data, dict):
         raise PaystackWebhookError("Webhook event data is invalid")
-    return VerifiedPaystackEvent(name=name, data=data, digest=hashlib.sha256(body).hexdigest())
+    return VerifiedPaystackEvent(
+        name=name, data=data, digest=hashlib.sha256(body).hexdigest(),
+        occurred_at=_event_timestamp(payload, data),
+    )
 
 
 def apply_paystack_subscription_event(
@@ -125,12 +130,38 @@ def apply_paystack_subscription_event(
 ) -> bool:
     """Apply a verified subscription lifecycle event to the billing ledger.
 
-    The first successful subscription charge must carry the Wicx user and plan
-    identifiers supplied as transaction metadata at checkout. Later lifecycle
-    events resolve the already-stored subscription code. This only updates the
-    billing ledger; it deliberately does not grant product entitlements yet.
+    The first successful subscription charge must resolve to a durable checkout
+    and account mapping. Refund and dispute events are linked by the original
+    transaction reference; unknown references never affect account access.
     """
     data = event.data
+    if event.name in {"refund.processed", "charge.dispute.create", "charge.dispute.remind"}:
+        if event.name == "refund.processed":
+            # A pending refund may still fail. Revoke only once Paystack confirms
+            # the refund was processed.
+            if data.get("status") != "processed":
+                return False
+            reference = _payment_reference(data)
+            status = "refunded"
+        else:
+            reference = _payment_reference(data)
+            status = "disputed"
+        if reference is None:
+            return False
+        try:
+            return store.apply_payment_status_event(
+                provider="paystack", event_id=event.digest,
+                transaction_reference=reference, status=status,
+                event_time=event.occurred_at,
+            )
+        except (ValueError, BillingStoreError) as exc:
+            raise PaystackWebhookError("Verified payment lifecycle event could not be applied") from exc
+
+    if event.name == "charge.dispute.resolve":
+        # A resolved dispute can have multiple outcomes. Keep the hold until
+        # an explicit, audited account action restores access.
+        return False
+
     subscription = data.get("subscription")
     if not isinstance(subscription, dict):
         subscription = {}
@@ -143,6 +174,13 @@ def apply_paystack_subscription_event(
     current = store.get_subscription("paystack", subscription_id)
     if event.name == "charge.success":
         if data.get("status") != "success":
+            return False
+        if event.occurred_at is None:
+            # Paystack charge events include created_at/paid_at; without one we
+            # cannot safely distinguish a late stale charge from a renewal.
+            return False
+        transaction_reference = _payment_reference(data)
+        if transaction_reference is None:
             return False
         if current is None:
             metadata = data.get("metadata")
@@ -164,7 +202,8 @@ def apply_paystack_subscription_event(
                 not isinstance(amount, int) or isinstance(amount, bool) or
                 currency != plan.currency):
             return False
-        status = "active"
+        # A successful renewal must not silently clear an unresolved dispute.
+        status = "disputed" if current and current["status"] == "disputed" else "active"
     elif event.name in {"subscription.create", "subscription.not_renew", "subscription.disable",
                         "invoice.update", "invoice.payment_failed"}:
         if current is None:
@@ -185,6 +224,14 @@ def apply_paystack_subscription_event(
     else:
         return False
 
+    if current and current["status"] == "disputed":
+        # Keep the account hold through renewals and routine subscription events.
+        status = "disputed"
+    elif (current and current["status"] in {"refunded", "cancelled", "completed", "expired"}
+          and status in {"active", "non_renewing"} and event.occurred_at is None):
+        # Untimed lifecycle notifications must not restore a denied account.
+        status = current["status"]
+
     period_end = _first_string(
         subscription.get("next_payment_date"), data.get("next_payment_date"),
         data.get("period_end"),
@@ -194,6 +241,8 @@ def apply_paystack_subscription_event(
             provider="paystack", event_id=event.digest,
             subscription_id=subscription_id, user_id=user_id, plan_id=plan_id,
             status=status, current_period_end=period_end,
+            transaction_reference=transaction_reference if event.name == "charge.success" else None,
+            event_time=event.occurred_at,
         )
     except (ValueError, BillingStoreError) as exc:
         raise PaystackWebhookError("Verified subscription event could not be applied") from exc
@@ -205,3 +254,37 @@ def _reject_nonstandard_constant(value: str) -> None:
 
 def _first_string(*values: Any) -> str | None:
     return next((value for value in values if isinstance(value, str) and value), None)
+
+
+def _payment_reference(data: Mapping[str, Any]) -> str | None:
+    """Read references across Paystack charge, refund, and dispute envelopes."""
+    transaction = data.get("transaction")
+    if not isinstance(transaction, dict):
+        transaction = {}
+    return _first_string(
+        data.get("transaction_reference"), data.get("reference"),
+        transaction.get("reference"),
+    )
+
+
+def _event_timestamp(payload: Mapping[str, Any], data: Mapping[str, Any]) -> str | None:
+    """Normalize a timestamp embedded in the signed provider event payload."""
+    subscription = data.get("subscription")
+    if not isinstance(subscription, dict):
+        subscription = {}
+    for candidate in (
+        data.get("paid_at"), data.get("created_at"), data.get("updated_at"),
+        data.get("createdAt"), data.get("updatedAt"),
+        subscription.get("updatedAt"), subscription.get("createdAt"),
+        payload.get("createdAt"), payload.get("created_at"),
+    ):
+        if not isinstance(candidate, str) or not candidate:
+            continue
+        try:
+            parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            continue
+        return parsed.astimezone(UTC).isoformat(timespec="seconds")
+    return None

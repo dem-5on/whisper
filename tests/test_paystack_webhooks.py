@@ -121,11 +121,18 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         self.store = BillingStore(Path(self.temp.name) / "billing.sqlite3")
 
     def event(self, name: str, digest: str, data: dict) -> VerifiedPaystackEvent:
-        return VerifiedPaystackEvent(name=name, data=data, digest=digest * 64)
+        subscription = data.get("subscription")
+        nested_time = subscription.get("updatedAt") if isinstance(subscription, dict) else None
+        return VerifiedPaystackEvent(
+            name=name, data=data, digest=digest * 64,
+            occurred_at=data.get("paid_at") or data.get("created_at") or nested_time,
+        )
 
     def test_first_successful_subscription_charge_creates_account_mapping(self) -> None:
         event = self.event("charge.success", "a", {
             "status": "success",
+            "reference": "charge-1",
+            "created_at": "2026-10-10T10:00:00Z",
             "amount": 1250,
             "currency": "GHS",
             "plan": "PLN_server-plan-code",
@@ -142,7 +149,7 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
 
     def test_successful_charge_with_wrong_amount_or_currency_is_not_applied(self) -> None:
         event = self.event("charge.success", "e", {
-            "status": "success", "amount": 1, "currency": "USD",
+            "status": "success", "reference": "charge-bad", "amount": 1, "currency": "USD",
             "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
             "subscription": {"subscription_code": "SUB_bad"},
         })
@@ -161,6 +168,8 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
     def test_subscription_events_update_only_previously_mapped_account(self) -> None:
         initial = self.event("charge.success", "c", {
             "status": "success",
+            "reference": "charge-3",
+            "created_at": "2026-10-10T10:00:00Z",
             "amount": 1250,
             "currency": "GHS",
             "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
@@ -174,6 +183,81 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         record = self.store.get_subscription("paystack", "SUB_3")
         self.assertEqual(record["status"], "non_renewing")
         self.assertEqual(record["current_period_end"], "2026-11-11T00:00:00+00:00")
+
+    def test_processed_refund_revokes_entitlement_and_is_replay_safe(self) -> None:
+        initial = self.event("charge.success", "f", {
+            "status": "success", "reference": "charge-refund",
+            "created_at": "2026-10-10T10:00:00Z",
+            "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_REFUND", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        refund = self.event("refund.processed", "g", {
+            "status": "processed", "transaction_reference": "charge-refund",
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, refund, self.plans))
+        self.assertFalse(apply_paystack_subscription_event(self.store, refund, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_REFUND")["status"], "refunded")
+
+    def test_dispute_hold_cannot_be_cleared_by_a_later_successful_charge(self) -> None:
+        initial = self.event("charge.success", "h", {
+            "status": "success", "reference": "charge-dispute",
+            "created_at": "2026-10-10T10:00:00Z",
+            "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_DISPUTE", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        dispute = self.event("charge.dispute.create", "i", {
+            "transaction": {"reference": "charge-dispute"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, dispute, self.plans))
+        renewal = self.event("charge.success", "j", {
+            "status": "success", "reference": "charge-renewal",
+            "created_at": "2026-11-10T10:00:00Z",
+            "amount": 1250, "currency": "GHS",
+            "subscription": {"subscription_code": "SUB_DISPUTE", "next_payment_date": "2026-12-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, renewal, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_DISPUTE")["status"], "disputed")
+
+    def test_unknown_refund_reference_does_not_change_any_account(self) -> None:
+        refund = self.event("refund.processed", "k", {
+            "status": "processed", "transaction_reference": "unknown-payment",
+        })
+        self.assertFalse(apply_paystack_subscription_event(self.store, refund, self.plans))
+
+    def test_stale_successful_charge_cannot_reactivate_newer_cancelled_subscription(self) -> None:
+        initial = self.event("charge.success", "l", {
+            "status": "success", "reference": "charge-initial",
+            "created_at": "2026-10-10T10:00:00Z", "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_ORDER", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        cancelled = self.event("subscription.disable", "m", {
+            "status": "complete",
+            "subscription": {"subscription_code": "SUB_ORDER", "updatedAt": "2026-11-20T10:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, cancelled, self.plans))
+        stale_charge = self.event("charge.success", "n", {
+            "status": "success", "reference": "charge-stale",
+            "created_at": "2026-11-19T10:00:00Z", "amount": 1250, "currency": "GHS",
+            "subscription": {"subscription_code": "SUB_ORDER"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, stale_charge, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_ORDER")["status"], "completed")
+
+    def test_signed_event_timestamp_is_normalized_to_utc(self) -> None:
+        body = json.dumps({
+            "event": "charge.success",
+            "data": {"created_at": "2026-10-11T12:00:00+02:00"},
+        }).encode()
+        secret = "local-test-secret"
+        signature = hmac.new(secret.encode(), body, hashlib.sha512).hexdigest()
+        parsed = verify_paystack_webhook(body, signature, secret)
+        self.assertEqual(parsed.occurred_at, "2026-10-11T10:00:00+00:00")
 
 
 if __name__ == "__main__":

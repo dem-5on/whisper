@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import os
 from pathlib import Path
+import sqlite3
 import stat
 import tempfile
 import unittest
@@ -78,6 +79,27 @@ class BillingStoreTests(unittest.TestCase):
         os.chmod(path, 0o644)
         with self.assertRaises(BillingStoreError):
             BillingStore(path)
+
+    def test_existing_billing_database_is_migrated_for_event_ordering(self) -> None:
+        path = Path(self.temp.name) / "legacy.sqlite3"
+        with sqlite3.connect(path) as connection:
+            connection.execute("""CREATE TABLE subscriptions (
+                provider TEXT NOT NULL, provider_subscription_id TEXT NOT NULL,
+                user_id TEXT NOT NULL, plan_id TEXT NOT NULL, status TEXT NOT NULL,
+                current_period_end TEXT, updated_at TEXT NOT NULL,
+                PRIMARY KEY (provider, provider_subscription_id))""")
+            connection.execute("""CREATE TABLE webhook_events (
+                provider TEXT NOT NULL, event_id TEXT NOT NULL, received_at TEXT NOT NULL,
+                PRIMARY KEY (provider, event_id))""")
+            connection.execute("""CREATE TABLE checkout_attempts (
+                reference TEXT PRIMARY KEY, user_id TEXT NOT NULL, plan_id TEXT NOT NULL,
+                amount_minor INTEGER NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        os.chmod(path, 0o600)
+        migrated = BillingStore(path)
+        with sqlite3.connect(path) as connection:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(subscriptions)")}
+        self.assertIn("last_provider_event_at", columns)
+        self.assertIsNone(migrated.get_subscription("paystack", "missing"))
 
     def test_checkout_reference_is_durable_and_account_linked(self) -> None:
         self.store.record_checkout(

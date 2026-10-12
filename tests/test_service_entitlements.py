@@ -111,6 +111,19 @@ class EntitlementStoreTests(unittest.TestCase):
             "user-a", "cloud_transcription", now=datetime(2029, 12, 31, tzinfo=UTC),
         ))
         billing.apply_verified_event(
+            provider="paystack", event_id="refund-1", subscription_id="SUB_1",
+            user_id="user-a", plan_id="pro-monthly", status="refunded",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        self.assertFalse(entitlements.has_feature(
+            "user-a", "cloud_transcription", now=datetime(2029, 12, 31, tzinfo=UTC),
+        ))
+        billing.apply_verified_event(
+            provider="paystack", event_id="reactivate-1", subscription_id="SUB_1",
+            user_id="user-a", plan_id="pro-monthly", status="non_renewing",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        billing.apply_verified_event(
             provider="paystack", event_id="disabled-1", subscription_id="SUB_1",
             user_id="user-a", plan_id="pro-monthly", status="cancelled",
             current_period_end="2030-01-01T00:00:00Z",

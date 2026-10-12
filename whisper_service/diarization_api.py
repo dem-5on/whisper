@@ -153,7 +153,10 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                     "wicx_user_id": checkout["user_id"],
                     "wicx_plan_id": checkout["plan_id"],
                 }
-                event = type(event)(name=event.name, data=verified_data, digest=event.digest)
+                event = type(event)(
+                    name=event.name, data=verified_data, digest=event.digest,
+                    occurred_at=event.occurred_at,
+                )
             try:
                 from aiohttp import ClientSession, ClientTimeout
 

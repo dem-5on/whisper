@@ -19,7 +19,7 @@ from typing import Collection, Mapping
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9_.:@+-]{1,200}\Z")
 _FEATURE_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
-_STATUSES = frozenset({"active", "non_renewing", "attention", "paused", "cancelled", "completed", "expired"})
+_STATUSES = frozenset({"active", "non_renewing", "attention", "paused", "cancelled", "completed", "expired", "refunded", "disputed"})
 
 
 class BillingStoreError(RuntimeError):
@@ -44,6 +44,7 @@ class BillingStore:
                         plan_id TEXT NOT NULL,
                         status TEXT NOT NULL,
                         current_period_end TEXT,
+                        last_provider_event_at TEXT,
                         updated_at TEXT NOT NULL,
                         PRIMARY KEY (provider, provider_subscription_id)
                     );
@@ -63,8 +64,24 @@ class BillingStore:
                         currency TEXT NOT NULL,
                         created_at TEXT NOT NULL
                     );
+                    CREATE TABLE IF NOT EXISTS payment_transactions (
+                        provider TEXT NOT NULL,
+                        transaction_reference TEXT NOT NULL,
+                        provider_subscription_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (provider, transaction_reference),
+                        FOREIGN KEY (provider, provider_subscription_id)
+                            REFERENCES subscriptions (provider, provider_subscription_id)
+                    );
                     """
                 )
+                subscription_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(subscriptions)")
+                }
+                if "last_provider_event_at" not in subscription_columns:
+                    connection.execute(
+                        "ALTER TABLE subscriptions ADD COLUMN last_provider_event_at TEXT"
+                    )
         except sqlite3.Error as exc:
             raise BillingStoreError("Could not initialize billing database") from exc
 
@@ -78,6 +95,8 @@ class BillingStore:
         plan_id: str,
         status: str,
         current_period_end: str | None,
+        transaction_reference: str | None = None,
+        event_time: str | None = None,
         now: datetime | None = None,
     ) -> bool:
         """Atomically apply an already-verified event; return false on replay."""
@@ -90,7 +109,13 @@ class BillingStore:
                 raise ValueError(f"{name} is invalid")
         if not isinstance(status, str) or status not in _STATUSES:
             raise ValueError("subscription status is invalid")
+        if transaction_reference is not None and (
+            not isinstance(transaction_reference, str) or
+            not _IDENTIFIER.fullmatch(transaction_reference)
+        ):
+            raise ValueError("transaction reference is invalid")
         expiry = _normalize_timestamp(current_period_end)
+        provider_event_time = _normalize_timestamp(event_time)
         current = now or datetime.now(UTC)
         if current.tzinfo is None or current.utcoffset() is None:
             raise ValueError("event time must include a timezone")
@@ -105,23 +130,97 @@ class BillingStore:
                 if cursor.rowcount == 0:
                     connection.rollback()
                     return False
+                if transaction_reference is not None:
+                    existing_payment = connection.execute(
+                        """SELECT provider_subscription_id FROM payment_transactions
+                           WHERE provider = ? AND transaction_reference = ?""",
+                        (provider, transaction_reference),
+                    ).fetchone()
+                    if existing_payment and existing_payment[0] != subscription_id:
+                        connection.rollback()
+                        raise BillingStoreError("Payment reference is linked to another subscription")
+                existing_subscription = connection.execute(
+                    """SELECT last_provider_event_at FROM subscriptions
+                       WHERE provider = ? AND provider_subscription_id = ?""",
+                    (provider, subscription_id),
+                ).fetchone()
+                if transaction_reference is not None:
+                    connection.execute(
+                        """INSERT OR IGNORE INTO payment_transactions
+                           (provider, transaction_reference, provider_subscription_id, created_at)
+                           VALUES (?, ?, ?, ?)""",
+                        (provider, transaction_reference, subscription_id, received_at),
+                    )
+                if (existing_subscription and provider_event_time and
+                        existing_subscription[0] and provider_event_time < existing_subscription[0]):
+                    connection.commit()
+                    return True
                 connection.execute(
                     """INSERT INTO subscriptions
                        (provider, provider_subscription_id, user_id, plan_id, status,
-                        current_period_end, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                        current_period_end, last_provider_event_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(provider, provider_subscription_id) DO UPDATE SET
                          user_id = excluded.user_id,
                          plan_id = excluded.plan_id,
                          status = excluded.status,
                          current_period_end = excluded.current_period_end,
+                         last_provider_event_at = coalesce(excluded.last_provider_event_at,
+                                                           subscriptions.last_provider_event_at),
                          updated_at = excluded.updated_at""",
-                    (provider, subscription_id, user_id, plan_id, status, expiry, received_at),
+                    (provider, subscription_id, user_id, plan_id, status, expiry,
+                     provider_event_time, received_at),
+                )
+                connection.commit()
+                return True
+        except BillingStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not persist billing event") from exc
+
+    def apply_payment_status_event(
+        self, *, provider: str, event_id: str, transaction_reference: str,
+        status: str, event_time: str | None = None, now: datetime | None = None,
+    ) -> bool:
+        """Apply a verified refund/dispute state only to a known payment."""
+        for name, value in (("provider", provider), ("event ID", event_id),
+                            ("transaction reference", transaction_reference)):
+            if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{name} is invalid")
+        if status not in {"refunded", "disputed"}:
+            raise ValueError("payment lifecycle status is invalid")
+        _normalize_timestamp(event_time)
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("event time must include a timezone")
+        received_at = current.astimezone(UTC).isoformat(timespec="seconds")
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                payment = connection.execute(
+                    """SELECT provider_subscription_id FROM payment_transactions
+                       WHERE provider = ? AND transaction_reference = ?""",
+                    (provider, transaction_reference),
+                ).fetchone()
+                if payment is None:
+                    connection.rollback()
+                    return False
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO webhook_events (provider, event_id, received_at) VALUES (?, ?, ?)",
+                    (provider, event_id, received_at),
+                )
+                if cursor.rowcount == 0:
+                    connection.rollback()
+                    return False
+                connection.execute(
+                    """UPDATE subscriptions SET status = ?, updated_at = ?
+                       WHERE provider = ? AND provider_subscription_id = ?""",
+                    (status, received_at, provider, payment[0]),
                 )
                 connection.commit()
                 return True
         except sqlite3.Error as exc:
-            raise BillingStoreError("Could not persist billing event") from exc
+            raise BillingStoreError("Could not persist payment lifecycle event") from exc
 
     def get_subscription(self, provider: str, subscription_id: str) -> dict[str, str | None] | None:
         try:
