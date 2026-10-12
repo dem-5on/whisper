@@ -227,12 +227,20 @@ in a private SQLite ledger with replay deduplication. Configure
 `WHISPER_PAYSTACK_SECRET_KEY` and persist `WHISPER_BILLING_DATABASE` across
 restarts. An authenticated `POST /v1/billing/checkout` endpoint can initialize
 Paystack checkout when `WHISPER_PAYSTACK_PLANS` is configured as a JSON mapping
-from Wicx plan IDs to Paystack recurring plan codes, expected amount in the
-smallest currency unit, and currency (for example,
+from Wicx plan IDs to server-owned pricing and feature settings. Existing
+recurring plans use a Paystack plan code (for example,
 `{"pro-monthly":{"code":"PLN_...","amount_minor":1250,"currency":"GHS","features":["cloud_transcription","diarization"]}}`).
-Use the actual approved pricing and Paystack plan codes in deployment config;
-the example is illustrative only. The server supplies the plan code and account
-metadata; clients cannot set the amount or account ID. Signed successful-charge
+One-time plans can instead set `"billing_mode":"one_time"`, a fixed
+`period_days` (1–366), and allowed Paystack channels (for example,
+`{"pro-monthly":{"billing_mode":"one_time","period_days":30,"channels":["mobile_money"],"amount_minor":1250,"currency":"GHS","features":["cloud_transcription","diarization"]}}`).
+For these plans Paystack collects one payment, and verified successful charges
+grant the configured access term; the user must manually renew with a new
+checkout when it expires. A one-time payment is never represented as an
+auto-renewing subscription.
+Use actual approved pricing and Paystack plan codes in deployment config; the
+examples are illustrative only. The server supplies the plan code (for
+recurring plans), amount, payment channel, and account metadata; clients cannot
+set billing values or the account ID. Signed successful-charge
 events are accepted only when Paystack's verified reference, amount, and
 currency match the stored checkout and configured plan. The request currently
 uses an email as payer contact because stable Google/Apple account identities

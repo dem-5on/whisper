@@ -111,7 +111,8 @@ class BillingStoreTests(unittest.TestCase):
         self.assertEqual(BillingStore(self.path).get_checkout("checkout-123"), {
             "reference": "checkout-123", "user_id": "account-abc",
             "plan_id": "pro-monthly", "amount_minor": 1250,
-            "currency": "GHS", "created_at": "2026-10-11T00:00:00+00:00",
+            "currency": "GHS", "billing_mode": "recurring", "period_days": 30,
+            "created_at": "2026-10-11T00:00:00+00:00",
         })
         with self.assertRaises(BillingStoreError):
             self.store.record_checkout(

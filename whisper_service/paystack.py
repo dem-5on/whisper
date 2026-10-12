@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
 from .billing import BillingStore, BillingStoreError
@@ -21,23 +21,25 @@ _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+\Z")
 
 @dataclass(frozen=True)
 class PaystackPlan:
-    """A Wicx plan mapped to a Paystack recurring plan code."""
+    """A Wicx plan backed by a recurring or one-time Paystack payment."""
 
     plan_id: str
     paystack_code: str
     amount_minor: int | None = None
     currency: str | None = None
     features: tuple[str, ...] = ()
+    billing_mode: str = "recurring"
+    period_days: int = 30
+    channels: tuple[str, ...] = ("mobile_money",)
 
 
 def validate_checkout_request(
     *, user_id: str, email: str, plan_id: str, plans: Mapping[str, PaystackPlan],
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str | None, dict[str, Any]]:
     """Build a safe Paystack initialization payload from server-owned plans.
 
     The caller supplies the authenticated user ID, never one from the request
-    body. Amounts are not accepted here: Paystack's configured plan code
-    determines the recurring price.
+    body. All pricing and payment parameters come from the server's plan map.
     """
     if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 128:
         raise PaystackWebhookError("Authenticated account is invalid")
@@ -46,17 +48,35 @@ def validate_checkout_request(
     if not isinstance(plan_id, str) or not _PLAN_ID.fullmatch(plan_id):
         raise PaystackWebhookError("Plan is invalid")
     plan = plans.get(plan_id)
-    if (plan is None or plan.plan_id != plan_id or not plan.paystack_code or
+    if (plan is None or plan.plan_id != plan_id or
             not isinstance(plan.amount_minor, int) or isinstance(plan.amount_minor, bool) or
             plan.amount_minor <= 0 or not isinstance(plan.currency, str) or
-            not re.fullmatch(r"[A-Z]{3}", plan.currency)):
+            not re.fullmatch(r"[A-Z]{3}", plan.currency) or
+            plan.billing_mode not in {"recurring", "one_time"}):
         raise PaystackWebhookError("Plan is unavailable")
     metadata = {"wicx_user_id": user_id, "wicx_plan_id": plan_id}
-    return plan.paystack_code, {
+    payload: dict[str, Any] = {
         "email": email,
-        "plan": plan.paystack_code,
         "metadata": metadata,
     }
+    if plan.billing_mode == "recurring":
+        if not isinstance(plan.paystack_code, str) or not plan.paystack_code.strip():
+            raise PaystackWebhookError("Plan is unavailable")
+        payload["plan"] = plan.paystack_code
+        provider_plan = plan.paystack_code
+    else:
+        if (not isinstance(plan.period_days, int) or isinstance(plan.period_days, bool) or
+                not 1 <= plan.period_days <= 366 or not plan.channels or
+                any(channel not in {"mobile_money", "card", "bank", "ussd", "qr", "eft"}
+                    for channel in plan.channels)):
+            raise PaystackWebhookError("Plan is unavailable")
+        payload.update({
+            "amount": plan.amount_minor,
+            "currency": plan.currency,
+            "channels": list(plan.channels),
+        })
+        provider_plan = None
+    return provider_plan, payload
 
 
 def verified_transaction_matches(
@@ -183,6 +203,10 @@ def apply_paystack_subscription_event(
     subscription_id = _first_string(
         subscription.get("subscription_code"), data.get("subscription_code")
     )
+    manual_checkout = data.get("_wicx_manual_checkout")
+    if (subscription_id is None and isinstance(manual_checkout, dict) and
+            isinstance(manual_checkout.get("reference"), str)):
+        subscription_id = f"once-{manual_checkout['reference']}"
     if subscription_id is None:
         return False
 
@@ -216,6 +240,11 @@ def apply_paystack_subscription_event(
                 isinstance(plan.amount_minor, bool) or amount != plan.amount_minor or
                 not isinstance(amount, int) or isinstance(amount, bool) or
                 currency != plan.currency):
+            return False
+        if isinstance(manual_checkout, dict) and (
+                plan.billing_mode != "one_time" or
+                manual_checkout.get("plan_id") != plan_id or
+                manual_checkout.get("reference") != transaction_reference):
             return False
         # A successful renewal must not silently clear an unresolved dispute.
         status = "disputed" if current and current["status"] == "disputed" else "active"
@@ -255,6 +284,15 @@ def apply_paystack_subscription_event(
         subscription.get("next_payment_date"), data.get("next_payment_date"),
         data.get("period_end"),
     ) or (current["current_period_end"] if current else None)
+    if event.name == "charge.success" and isinstance(manual_checkout, dict):
+        try:
+            period_days = manual_checkout.get("period_days")
+            if not isinstance(period_days, int) or isinstance(period_days, bool) or not 1 <= period_days <= 366:
+                return False
+            paid_at = datetime.fromisoformat(event.occurred_at.replace("Z", "+00:00"))
+            period_end = (paid_at + timedelta(days=period_days)).astimezone(UTC).isoformat(timespec="seconds")
+        except (AttributeError, TypeError, ValueError):
+            return False
     try:
         return store.apply_verified_event(
             provider="paystack", event_id=event.digest,

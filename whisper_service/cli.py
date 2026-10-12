@@ -228,25 +228,42 @@ def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
     plans: dict[str, PaystackPlan] = {}
     for plan_id, details in configured.items():
         features = details.get("features", []) if isinstance(details, dict) else None
+        billing_mode = details.get("billing_mode", "recurring") if isinstance(details, dict) else None
+        code = details.get("code") if isinstance(details, dict) else None
+        period_days = details.get("period_days", 30) if isinstance(details, dict) else None
+        channels = details.get("channels", ["mobile_money"]) if isinstance(details, dict) else None
         if (not isinstance(plan_id, str) or not isinstance(details, dict) or
-                not isinstance(details.get("code"), str) or not details["code"].strip() or
+                billing_mode not in {"recurring", "one_time"} or
+                (billing_mode == "recurring" and
+                 (not isinstance(code, str) or not code.strip())) or
                 not isinstance(details.get("amount_minor"), int) or
                 isinstance(details.get("amount_minor"), bool) or details["amount_minor"] <= 0 or
                 not isinstance(details.get("currency"), str) or
                 not re.fullmatch(r"[A-Z]{3}", details["currency"]) or
+                not isinstance(period_days, int) or isinstance(period_days, bool) or
+                not 1 <= period_days <= 366 or
+                (billing_mode == "one_time" and (
+                    not isinstance(channels, list) or not channels or
+                    any(channel not in {"mobile_money", "card", "bank", "ussd", "qr", "eft"}
+                        for channel in channels)
+                )) or
                 not isinstance(features, list) or
                 any(not isinstance(feature, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", feature)
                     for feature in features)):
             raise RuntimeError(
-                "WHISPER_PAYSTACK_PLANS entries need code, positive amount_minor, uppercase currency, "
-                "and a list of feature identifiers"
+                "WHISPER_PAYSTACK_PLANS entries need billing_mode, positive amount_minor, uppercase "
+                "currency, period_days (1-366), and feature identifiers; recurring plans also need code, "
+                "while one_time plans may define Paystack channels"
             )
         plans[plan_id] = PaystackPlan(
             plan_id=plan_id,
-            paystack_code=details["code"],
+            paystack_code=code or "",
             amount_minor=details["amount_minor"],
             currency=details["currency"],
             features=tuple(features),
+            billing_mode=billing_mode,
+            period_days=period_days,
+            channels=tuple(channels),
         )
     return plans
 

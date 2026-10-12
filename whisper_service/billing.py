@@ -63,6 +63,8 @@ class BillingStore:
                         plan_id TEXT NOT NULL,
                         amount_minor INTEGER NOT NULL,
                         currency TEXT NOT NULL,
+                        billing_mode TEXT NOT NULL DEFAULT 'recurring',
+                        period_days INTEGER NOT NULL DEFAULT 30,
                         created_at TEXT NOT NULL
                     );
                     CREATE TABLE IF NOT EXISTS payment_transactions (
@@ -86,6 +88,17 @@ class BillingStore:
                 if "last_provider_event_at" not in subscription_columns:
                     connection.execute(
                         "ALTER TABLE subscriptions ADD COLUMN last_provider_event_at TEXT"
+                    )
+                checkout_columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(checkout_attempts)")
+                }
+                if "billing_mode" not in checkout_columns:
+                    connection.execute(
+                        "ALTER TABLE checkout_attempts ADD COLUMN billing_mode TEXT NOT NULL DEFAULT 'recurring'"
+                    )
+                if "period_days" not in checkout_columns:
+                    connection.execute(
+                        "ALTER TABLE checkout_attempts ADD COLUMN period_days INTEGER NOT NULL DEFAULT 30"
                     )
         except sqlite3.Error as exc:
             raise BillingStoreError("Could not initialize billing database") from exc
@@ -389,7 +402,8 @@ class BillingStore:
 
     def record_checkout(
         self, *, reference: str, user_id: str, plan_id: str,
-        amount_minor: int, currency: str, now: datetime | None = None,
+        amount_minor: int, currency: str, billing_mode: str = "recurring",
+        period_days: int = 30, now: datetime | None = None,
     ) -> None:
         """Persist Paystack's checkout reference before returning it to a client."""
         for name, value in (("reference", reference), ("user ID", user_id), ("plan ID", plan_id)):
@@ -399,6 +413,10 @@ class BillingStore:
             raise ValueError("checkout amount must be a positive integer")
         if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
             raise ValueError("checkout currency must be a three-letter uppercase code")
+        if billing_mode not in {"recurring", "one_time"}:
+            raise ValueError("checkout billing mode is invalid")
+        if not isinstance(period_days, int) or isinstance(period_days, bool) or not 1 <= period_days <= 366:
+            raise ValueError("checkout period must be between 1 and 366 days")
         current = now or datetime.now(UTC)
         if current.tzinfo is None or current.utcoffset() is None:
             raise ValueError("checkout time must include a timezone")
@@ -407,9 +425,11 @@ class BillingStore:
             with closing(self._connect()) as connection:
                 connection.execute(
                     """INSERT INTO checkout_attempts
-                       (reference, user_id, plan_id, amount_minor, currency, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (reference, user_id, plan_id, amount_minor, currency, created_at),
+                       (reference, user_id, plan_id, amount_minor, currency,
+                        billing_mode, period_days, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (reference, user_id, plan_id, amount_minor, currency,
+                     billing_mode, period_days, created_at),
                 )
         except sqlite3.IntegrityError as exc:
             raise BillingStoreError("Checkout reference already exists") from exc
@@ -420,7 +440,8 @@ class BillingStore:
         try:
             with closing(self._connect()) as connection:
                 row = connection.execute(
-                    """SELECT reference, user_id, plan_id, amount_minor, currency, created_at
+                    """SELECT reference, user_id, plan_id, amount_minor, currency,
+                              billing_mode, period_days, created_at
                        FROM checkout_attempts WHERE reference = ?""",
                     (reference,),
                 ).fetchone()
@@ -428,7 +449,8 @@ class BillingStore:
             raise BillingStoreError("Could not read checkout reference") from exc
         if row is None:
             return None
-        keys = ("reference", "user_id", "plan_id", "amount_minor", "currency", "created_at")
+        keys = ("reference", "user_id", "plan_id", "amount_minor", "currency",
+                "billing_mode", "period_days", "created_at")
         return dict(zip(keys, row, strict=True))
 
     def _prepare_private_file(self) -> None:

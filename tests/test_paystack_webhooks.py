@@ -98,6 +98,21 @@ class PaystackCheckoutPayloadTests(unittest.TestCase):
                 plan_id="pro-monthly", plans=plans,
             )
 
+    def test_one_time_plan_uses_server_amount_currency_and_channel(self) -> None:
+        plan = PaystackPlan(
+            "pro-monthly", "", 1250, "GHS", ("cloud_transcription",),
+            billing_mode="one_time", period_days=30,
+        )
+        provider_plan, payload = validate_checkout_request(
+            user_id="authenticated-user", email="payer@example.com",
+            plan_id="pro-monthly", plans={"pro-monthly": plan},
+        )
+        self.assertIsNone(provider_plan)
+        self.assertEqual(payload["amount"], 1250)
+        self.assertEqual(payload["currency"], "GHS")
+        self.assertEqual(payload["channels"], ["mobile_money"])
+        self.assertNotIn("plan", payload)
+
     def test_provider_verification_requires_exact_reference_status_price_and_currency(self) -> None:
         response = {"status": True, "data": {
             "status": "success", "reference": "ref-123", "amount": 1250, "currency": "GHS",
@@ -147,6 +162,38 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         self.assertTrue(apply_paystack_subscription_event(self.store, event, self.plans))
         self.assertEqual(self.store.get_subscription("paystack", "SUB_1")["user_id"], "user-1")
         self.assertFalse(apply_paystack_subscription_event(self.store, event, self.plans))
+
+    def test_manual_one_time_charge_grants_configured_term_without_subscription_code(self) -> None:
+        plan = PaystackPlan("pro-monthly", "", 1250, "GHS", billing_mode="one_time", period_days=30)
+        self.store.record_checkout(
+            reference="manual-checkout", user_id="account-abc", plan_id="pro-monthly",
+            amount_minor=1250, currency="GHS", billing_mode="one_time", period_days=30,
+        )
+        event = self.event("charge.success", "z", {
+            "status": "success", "reference": "manual-checkout", "amount": 1250,
+            "currency": "GHS", "created_at": "2026-10-12T12:00:00Z",
+            "metadata": {"wicx_user_id": "account-abc", "wicx_plan_id": "pro-monthly"},
+            "_wicx_manual_checkout": {
+                "reference": "manual-checkout", "plan_id": "pro-monthly", "period_days": 30,
+            },
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, event, {"pro-monthly": plan}))
+        subscription = self.store.get_subscription("paystack", "once-manual-checkout")
+        self.assertEqual(subscription["user_id"], "account-abc")
+        self.assertEqual(subscription["current_period_end"], "2026-11-11T12:00:00+00:00")
+
+    def test_manual_charge_requires_reference_and_plan_match(self) -> None:
+        plan = PaystackPlan("pro-monthly", "", 1250, "GHS", billing_mode="one_time")
+        event = self.event("charge.success", "y", {
+            "status": "success", "reference": "other-reference", "amount": 1250,
+            "currency": "GHS", "created_at": "2026-10-12T12:00:00Z",
+            "metadata": {"wicx_user_id": "account-abc", "wicx_plan_id": "pro-monthly"},
+            "_wicx_manual_checkout": {
+                "reference": "checkout-reference", "plan_id": "pro-monthly", "period_days": 30,
+            },
+        })
+        self.assertFalse(apply_paystack_subscription_event(self.store, event, {"pro-monthly": plan}))
+        self.assertIsNone(self.store.get_subscription("paystack", "once-checkout-reference"))
 
     def test_successful_charge_with_wrong_amount_or_currency_is_not_applied(self) -> None:
         event = self.event("charge.success", "e", {

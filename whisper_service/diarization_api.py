@@ -153,6 +153,12 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                     "wicx_user_id": checkout["user_id"],
                     "wicx_plan_id": checkout["plan_id"],
                 }
+                if checkout["billing_mode"] == "one_time":
+                    verified_data["_wicx_manual_checkout"] = {
+                        "reference": checkout["reference"],
+                        "plan_id": checkout["plan_id"],
+                        "period_days": checkout["period_days"],
+                    }
                 event = type(event)(
                     name=event.name, data=verified_data, digest=event.digest,
                     occurred_at=event.occurred_at,
@@ -206,16 +212,15 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
         if not isinstance(body, dict):
             return web.json_response({"error": "invalid_request"}, status=400)
         try:
-            provider_plan, fields = validate_checkout_request(
+            _provider_plan, fields = validate_checkout_request(
                 user_id=request["user_id"], email=body.get("email"),
                 plan_id=body.get("plan_id"), plans=paystack_plans,
             )
         except PaystackWebhookError as exc:
             return web.json_response({"error": "invalid_checkout", "message": str(exc)}, status=400)
 
-        # The provider plan code and account metadata are entirely server-owned.
-        # No amount or user ID from the client is sent to Paystack.
-        fields["plan"] = provider_plan
+        # The provider plan code, amount/channel, and account metadata are
+        # entirely server-owned; no billing values come from the request.
         try:
             from aiohttp import ClientSession, ClientTimeout
 
@@ -253,6 +258,8 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                 plan_id=selected_plan.plan_id,
                 amount_minor=selected_plan.amount_minor,
                 currency=selected_plan.currency,
+                billing_mode=selected_plan.billing_mode,
+                period_days=selected_plan.period_days,
             )
         except (ValueError, BillingStoreError) as exc:
             logger.error("Could not persist Paystack checkout mapping (%s)", type(exc).__name__)
