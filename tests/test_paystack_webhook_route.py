@@ -69,7 +69,7 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
     plan = PaystackPlan("pro-monthly", "PLN_local", 1250, "GHS", ("diarization",))
     manual_plan = PaystackPlan(
         "pro-manual", "", 750, "GHS", ("cloud_transcription",),
-        billing_mode="one_time", period_days=14,
+        billing_mode="one_time", period_days=14, cloud_minutes=10,
     )
 
     async def asyncSetUp(self) -> None:
@@ -168,7 +168,23 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plans["pro-monthly"]["renewal"], "automatic")
         self.assertEqual(plans["pro-manual"]["renewal"], "manual")
         self.assertEqual(plans["pro-manual"]["period_days"], 14)
+        self.assertEqual(plans["pro-manual"]["cloud_minutes"], 10)
         self.assertNotIn("PLN_local", json.dumps(payload))
+
+    async def test_billing_status_includes_period_usage_without_provider_data(self) -> None:
+        self.store.apply_verified_event(
+            provider="paystack", event_id="usage-status", subscription_id="SUB_PRIVATE",
+            user_id="account-owner", plan_id="pro-manual", status="active",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        response = await self.client.get(
+            PAYSTACK_STATUS_PATH,
+            headers={"Authorization": f"Bearer {self.auth_token}"},
+        )
+        payload = await response.json()
+        self.assertEqual(payload["usage"]["cloud_transcription"]["limit_milliseconds"], 600_000)
+        self.assertEqual(payload["usage"]["cloud_transcription"]["used_milliseconds"], 0)
+        self.assertNotIn("SUB_PRIVATE", json.dumps(payload))
 
     async def test_one_time_checkout_uses_server_price_and_persists_account_mapping(self) -> None:
         calls: list[dict] = []

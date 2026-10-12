@@ -150,7 +150,6 @@ async def _run_service(args: argparse.Namespace) -> None:
         max_starts_per_window=args.max_starts_per_window,
         rate_window_seconds=args.rate_window_seconds,
     )
-    manager = SessionManager(worker, (profile,), device=selection.device, limits=limits)
     billing_store = None
     paystack_secret = os.environ.get("WHISPER_PAYSTACK_SECRET_KEY")
     paystack_plans = _paystack_plans_from_environment() if args.enable_billing else {}
@@ -163,6 +162,20 @@ async def _run_service(args: argparse.Namespace) -> None:
             manual_entitlements, billing_store,
             {plan_id: plan.features for plan_id, plan in paystack_plans.items()},
         )
+    manager = SessionManager(
+        worker, (profile,), device=selection.device, limits=limits,
+        usage_budget=(
+            (lambda user_id: asyncio.to_thread(
+                billing_store.cloud_usage_budget, user_id,
+                {key: (plan.features, plan.cloud_minutes) for key, plan in paystack_plans.items()},
+            )) if billing_store else None
+        ),
+        record_usage=(
+            (lambda user_id, plan_id, period_end, milliseconds: asyncio.to_thread(
+                billing_store.record_cloud_usage, user_id, plan_id, period_end, milliseconds,
+            )) if billing_store else None
+        ),
+    )
     if not args.enable_diarization and not args.enable_billing and not args.enable_oauth:
         await serve_websocket(authenticator, manager, entitlements=entitlements,
                               host=args.host, port=args.port)
@@ -302,6 +315,7 @@ def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
         code = details.get("code") if isinstance(details, dict) else None
         period_days = details.get("period_days", 30) if isinstance(details, dict) else None
         channels = details.get("channels", ["mobile_money"]) if isinstance(details, dict) else None
+        cloud_minutes = details.get("cloud_minutes") if isinstance(details, dict) else None
         if (not isinstance(plan_id, str) or not isinstance(details, dict) or
                 billing_mode not in {"recurring", "one_time"} or
                 (billing_mode == "recurring" and
@@ -319,10 +333,15 @@ def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
                 )) or
                 not isinstance(features, list) or
                 any(not isinstance(feature, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", feature)
-                    for feature in features)):
+                    for feature in features) or
+                (cloud_minutes is not None and (
+                    not isinstance(cloud_minutes, int) or isinstance(cloud_minutes, bool) or
+                    cloud_minutes < 1 or cloud_minutes > 10_000_000
+                ))):
             raise RuntimeError(
                 "WHISPER_PAYSTACK_PLANS entries need billing_mode, positive amount_minor, uppercase "
-                "currency, period_days (1-366), and feature identifiers; recurring plans also need code, "
+                "currency, period_days (1-366), feature identifiers, and optional positive cloud_minutes; "
+                "recurring plans also need code, "
                 "while one_time plans may define Paystack channels"
             )
         plans[plan_id] = PaystackPlan(
@@ -334,6 +353,7 @@ def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
             billing_mode=billing_mode,
             period_days=period_days,
             channels=tuple(channels),
+            cloud_minutes=cloud_minutes,
         )
     return plans
 

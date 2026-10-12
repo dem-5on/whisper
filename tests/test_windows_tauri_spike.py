@@ -501,7 +501,7 @@ def test_packaged_tauri_app_registers_global_recording_shortcut():
     assert 'unavailable: "Ctrl+Space is unavailable because another app is using it"' in frontend
     assert 'app.emit("recording-hotkey", ())' in rust
     assert 'listen("recording-hotkey"' in frontend
-    assert 'const toggleRecording = () => sendCommandAndHide("toggle")' in frontend
+    assert "async function toggleRecording()" in frontend
     assert "const HOTKEY_PENDING_WINDOW_MS = 2000" in frontend
     assert "pendingHotkeyToggles = (pendingHotkeyToggles + 1) % 2" in frontend
     assert "if (shouldToggle) void toggleRecording()" in frontend

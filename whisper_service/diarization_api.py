@@ -296,12 +296,17 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                 feature: bool(entitlements and entitlements.has_feature(request["user_id"], feature))
                 for feature in feature_ids
             }
+            usage = billing_store.cloud_usage_budget(
+                request["user_id"],
+                {key: (plan.features, plan.cloud_minutes) for key, plan in (paystack_plans or {}).items()},
+            )
         except (BillingStoreError, EntitlementConfigError) as exc:
             logger.error("Could not resolve billing status (%s)", type(exc).__name__)
             return web.json_response({"error": "billing_unavailable"}, status=503)
         return web.json_response({
             "features": features,
             "subscriptions": subscriptions,
+            "usage": {"cloud_transcription": usage} if usage is not None else {},
         })
 
     async def billing_plans(_request: Any) -> Any:
@@ -316,6 +321,8 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                 "billing_mode": plan.billing_mode,
                 "features": list(plan.features),
             }
+            if plan.cloud_minutes is not None:
+                entry["cloud_minutes"] = plan.cloud_minutes
             if plan.billing_mode == "one_time":
                 entry.update({
                     "period_days": plan.period_days,

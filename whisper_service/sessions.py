@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import math
 import time
 from typing import Awaitable, Callable, Protocol
 from uuid import uuid4
@@ -83,7 +84,9 @@ class SessionManager:
 
     def __init__(self, worker: TranscriptionWorker, profiles: tuple[ModelProfile, ...], *,
                  device: str, limits: SessionLimits | None = None,
-                 clock: Callable[[], float] = time.monotonic) -> None:
+                 clock: Callable[[], float] = time.monotonic,
+                 usage_budget: Callable[[str], Awaitable[dict[str, int | str | None] | None]] | None = None,
+                 record_usage: Callable[[str, str, str, int], Awaitable[None]] | None = None) -> None:
         self._worker = worker
         self._profiles = {profile.profile_id: profile for profile in profiles}
         if not self._profiles:
@@ -93,6 +96,8 @@ class SessionManager:
         self._device = device
         self._limits = limits or SessionLimits()
         self._clock = clock
+        self._usage_budget = usage_budget
+        self._record_usage = record_usage
         self._lock = asyncio.Lock()
         self._sessions: dict[str, LiveSession] = {}
         self._starting_by_user: dict[str, int] = {}
@@ -111,6 +116,27 @@ class SessionManager:
             raise ServiceError("invalid_profile", "The requested transcription profile is unavailable.")
         if self._device not in profile.devices:
             raise ServiceError("profile_unavailable", "The profile is not available on this server's inference device.")
+        session_limits = self._limits
+        usage_bucket: tuple[str, str] | None = None
+        if self._usage_budget is not None:
+            try:
+                budget = await self._usage_budget(user_id)
+            except Exception as exc:
+                raise ServiceError("usage_unavailable", "Cloud usage could not be checked. Try again shortly.", retryable=True) from exc
+            if budget is not None:
+                plan_id, period_end = budget.get("plan_id"), budget.get("period_end")
+                if isinstance(plan_id, str) and isinstance(period_end, str):
+                    usage_bucket = (plan_id, period_end)
+                remaining = budget.get("remaining_milliseconds")
+                if isinstance(remaining, int):
+                    if remaining <= 0:
+                        raise ServiceError("usage_limit", "Your cloud transcription allowance is used for this billing period.")
+                    allowed_seconds = min(self._limits.max_audio_seconds, math.ceil(remaining / 1000))
+                    session_limits = replace(
+                        self._limits,
+                        max_audio_seconds=allowed_seconds,
+                        max_audio_bytes=min(self._limits.max_audio_bytes, remaining * 32),
+                    )
         async with self._lock:
             user_sessions = sum(session.user_id == user_id for session in self._sessions.values())
             user_starting = self._starting_by_user.get(user_id, 0)
@@ -148,7 +174,10 @@ class SessionManager:
                 raise
             raise ServiceError("inference_unavailable", "The transcription worker could not start.", retryable=True) from exc
 
-        session = LiveSession(uuid4().hex, user_id, profile, worker_session, self._limits, self._release_session)
+        session = LiveSession(
+            uuid4().hex, user_id, profile, worker_session, session_limits,
+            self._release_session, usage_bucket,
+        )
         async with self._lock:
             self._starting_total -= 1
             user_starting = self._starting_by_user.get(user_id, 1) - 1
@@ -168,9 +197,15 @@ class SessionManager:
             else:
                 self._starting_by_user.pop(user_id, None)
 
-    async def _release_session(self, session_id: str) -> None:
-        async with self._lock:
-            self._sessions.pop(session_id, None)
+    async def _release_session(self, session_id: str, user_id: str, audio_bytes: int,
+                               usage_bucket: tuple[str, str] | None) -> None:
+        try:
+            if self._record_usage is not None and usage_bucket is not None and audio_bytes:
+                milliseconds = math.ceil(audio_bytes / 32)
+                await self._record_usage(user_id, usage_bucket[0], usage_bucket[1], milliseconds)
+        finally:
+            async with self._lock:
+                self._sessions.pop(session_id, None)
 
     async def active_count(self) -> int:
         async with self._lock:
@@ -180,13 +215,15 @@ class SessionManager:
 class LiveSession:
     def __init__(self, session_id: str, user_id: str, profile: ModelProfile,
                  worker: WorkerSession, limits: SessionLimits,
-                 release: Callable[[str], Awaitable[None]]) -> None:
+                 release: Callable[[str, str, int, tuple[str, str] | None], Awaitable[None]],
+                 usage_bucket: tuple[str, str] | None) -> None:
         self.session_id = session_id
         self.user_id = user_id
         self.profile = profile
         self._worker = worker
         self._limits = limits
         self._release = release
+        self._usage_bucket = usage_bucket
         self._lock = asyncio.Lock()
         self._state = "open"
         self._audio_bytes = 0
@@ -228,12 +265,12 @@ class LiveSession:
                 except BaseException:
                     pass
                 finally:
-                    await self._release(self.session_id)
+                    await self._release(self.session_id, self.user_id, self._audio_bytes, self._usage_bucket)
                 if not isinstance(exc, Exception):
                     raise
                 raise ServiceError("inference_failed", "Final transcription failed.", retryable=True) from exc
             self._state = "closed"
-            await self._release(self.session_id)
+            await self._release(self.session_id, self.user_id, self._audio_bytes, self._usage_bucket)
             return {"type": "transcript.final", "text": transcript}
 
     async def cancel(self) -> None:
@@ -261,4 +298,4 @@ class LiveSession:
             # inference runtime itself fails while disposing session state.
             pass
         finally:
-            await self._release(self.session_id)
+            await self._release(self.session_id, self.user_id, self._audio_bytes, self._usage_bucket)

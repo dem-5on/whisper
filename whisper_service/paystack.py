@@ -31,6 +31,7 @@ class PaystackPlan:
     billing_mode: str = "recurring"
     period_days: int = 30
     channels: tuple[str, ...] = ("mobile_money",)
+    cloud_minutes: int | None = None
 
 
 def validate_checkout_request(

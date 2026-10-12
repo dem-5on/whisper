@@ -246,6 +246,14 @@ grant the configured access term; the user must manually renew with a new
 checkout when it expires. Renewing early stacks the new term after the
 existing paid-through date. A one-time payment is never represented as an
 auto-renewing subscription.
+Plans that include `cloud_transcription` may set `cloud_minutes` to a positive
+integer in `WHISPER_PAYSTACK_PLANS`, e.g. `"cloud_minutes": 900`. The service
+meters audio seconds against the account's current billing period, returns
+used/remaining usage from `/v1/billing/status`, and caps each live session to
+the remaining allowance. When omitted, that plan has no billing-period minute
+allowance; existing fair-use safeguards still apply (300 seconds per session
+and ten session starts per user per rolling hour). Usage records contain
+counts only, not audio or transcript content.
 Use actual approved pricing and Paystack plan codes in deployment config; the
 examples are illustrative only. The server supplies the plan code (for
 recurring plans), amount, payment channel, and account metadata; clients cannot

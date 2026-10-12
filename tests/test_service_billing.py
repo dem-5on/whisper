@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 import os
+import json
 from pathlib import Path
 import sqlite3
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from whisper_service.billing import BillingStore, BillingStoreError
+from whisper_service.cli import _paystack_plans_from_environment
 
 
 class BillingStoreTests(unittest.TestCase):
@@ -131,6 +134,56 @@ class BillingStoreTests(unittest.TestCase):
         self.assertEqual(subscriptions[0]["plan_id"], "pro-monthly")
         self.assertNotIn("secret-provider-id", str(subscriptions))
         self.assertEqual(self.store.list_user_subscriptions("another-account"), [])
+
+    def test_cloud_usage_is_metered_per_account_plan_and_billing_period(self) -> None:
+        now = datetime(2026, 10, 12, tzinfo=UTC)
+        self.store.apply_verified_event(
+            provider="paystack", event_id="usage-event", subscription_id="usage-sub",
+            user_id="account-owner", plan_id="pro-monthly", status="active",
+            current_period_end="2026-11-12T00:00:00+00:00", now=now,
+        )
+        plans = {"pro-monthly": (("cloud_transcription",), 10)}
+        self.assertEqual(self.store.cloud_usage_budget("account-owner", plans, now=now), {
+            "plan_id": "pro-monthly", "period_end": "2026-11-12T00:00:00+00:00",
+            "limit_milliseconds": 600_000, "used_milliseconds": 0,
+            "remaining_milliseconds": 600_000,
+        })
+        self.store.record_cloud_usage(
+            "account-owner", "pro-monthly", "2026-11-12T00:00:00+00:00", 125_000,
+        )
+        budget = self.store.cloud_usage_budget("account-owner", plans, now=now)
+        self.assertEqual((budget["used_milliseconds"], budget["remaining_milliseconds"]),
+                         (125_000, 475_000))
+        self.assertIsNone(self.store.cloud_usage_budget("another-account", plans, now=now))
+
+    def test_uncapped_plan_keeps_fair_use_limits_without_period_quota(self) -> None:
+        now = datetime(2026, 10, 12, tzinfo=UTC)
+        self.store.apply_verified_event(
+            provider="paystack", event_id="usage-event", subscription_id="usage-sub",
+            user_id="account-owner", plan_id="unlimited", status="active",
+            current_period_end="2026-11-12T00:00:00+00:00", now=now,
+        )
+        self.assertEqual(
+            self.store.cloud_usage_budget(
+                "account-owner", {"unlimited": (("cloud_transcription",), None)}, now=now,
+            )["limit_milliseconds"],
+            None,
+        )
+
+    def test_plan_cloud_minutes_are_configurable_and_validated(self) -> None:
+        config = {
+            "pro-monthly": {
+                "code": "PLN_test", "amount_minor": 1200, "currency": "GHS",
+                "features": ["cloud_transcription"], "cloud_minutes": 900,
+            },
+        }
+        with patch.dict(os.environ, {"WHISPER_PAYSTACK_PLANS": json.dumps(config)}):
+            plans = _paystack_plans_from_environment()
+        self.assertEqual(plans["pro-monthly"].cloud_minutes, 900)
+        config["pro-monthly"]["cloud_minutes"] = 0
+        with patch.dict(os.environ, {"WHISPER_PAYSTACK_PLANS": json.dumps(config)}):
+            with self.assertRaisesRegex(RuntimeError, "cloud_minutes"):
+                _paystack_plans_from_environment()
 
     def test_only_current_recurring_subscription_can_be_managed(self) -> None:
         now = datetime(2029, 1, 1, tzinfo=UTC)

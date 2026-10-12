@@ -272,9 +272,45 @@ fn public_billing_status(payload: serde_json::Value) -> Result<serde_json::Value
             Some(serde_json::Value::Object(summary))
         })
         .collect::<Vec<_>>();
+    let usage = object
+        .get("usage")
+        .and_then(serde_json::Value::as_object)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|(name, raw)| {
+                    let source = raw.as_object()?;
+                    let mut summary = serde_json::Map::new();
+                    for field in ["plan_id", "period_end"] {
+                        if let Some(value) = source.get(field).and_then(serde_json::Value::as_str) {
+                            summary.insert(
+                                field.to_string(),
+                                serde_json::Value::String(value.to_string()),
+                            );
+                        }
+                    }
+                    for field in [
+                        "limit_milliseconds",
+                        "used_milliseconds",
+                        "remaining_milliseconds",
+                    ] {
+                        if let Some(value) = source
+                            .get(field)
+                            .filter(|value| value.is_null() || value.as_u64().is_some())
+                        {
+                            summary.insert(field.to_string(), value.clone());
+                        }
+                    }
+                    (!summary.is_empty())
+                        .then(|| (name.clone(), serde_json::Value::Object(summary)))
+                })
+                .collect::<serde_json::Map<_, _>>()
+        })
+        .unwrap_or_default();
     Ok(serde_json::json!({
         "features": features,
         "subscriptions": subscriptions,
+        "usage": usage,
     }))
 }
 
@@ -315,6 +351,12 @@ fn public_billing_plans(payload: serde_json::Value) -> Result<serde_json::Value,
                 "billing_mode": billing_mode,
                 "features": features,
             });
+            if let Some(cloud_minutes) = source
+                .get("cloud_minutes")
+                .and_then(serde_json::Value::as_u64)
+            {
+                safe_plan["cloud_minutes"] = serde_json::json!(cloud_minutes);
+            }
             if let Some(period_days) = source
                 .get("period_days")
                 .and_then(serde_json::Value::as_u64)
@@ -1288,7 +1330,13 @@ mod tests {
                 "status": "active",
                 "current_period_end": "2026-11-01T00:00:00Z",
                 "provider_subscription_id": "must-not-leak"
-            }]
+            }],
+            "usage": {"cloud_transcription": {
+                "plan_id": "pro-monthly", "period_end": "2026-11-01T00:00:00Z",
+                "limit_milliseconds": 36000000, "used_milliseconds": 42000,
+                "remaining_milliseconds": 35958000,
+                "provider_subscription_id": "must-not-leak"
+            }}
         }))
         .expect("valid billing response should be summarized");
         assert_eq!(status["features"]["cloud_transcription"], true);
@@ -1296,6 +1344,13 @@ mod tests {
         assert!(status.get("user_id").is_none());
         assert!(status["features"].get("invalid").is_none());
         assert!(status["subscriptions"][0]
+            .get("provider_subscription_id")
+            .is_none());
+        assert_eq!(
+            status["usage"]["cloud_transcription"]["used_milliseconds"],
+            42000
+        );
+        assert!(status["usage"]["cloud_transcription"]
             .get("provider_subscription_id")
             .is_none());
     }

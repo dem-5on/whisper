@@ -130,7 +130,7 @@ async function refreshPlans() {
       const features = document.createElement("p");
       features.className = "plan-card-features";
       features.textContent = Array.isArray(plan.features)
-        ? `Includes ${plan.features.map((feature) => String(feature).replaceAll("_", " ")).join(" · ")}`
+        ? `Includes ${plan.features.map((feature) => String(feature).replaceAll("_", " ")).join(" · ")}${Number.isInteger(plan.cloud_minutes) ? ` · ${plan.cloud_minutes} cloud minutes per billing period` : ""}`
         : "Subscription features included";
       copy.append(name, price, features);
       const choose = document.createElement("button");
@@ -224,9 +224,15 @@ async function refreshBilling() {
         ui.billingPlan.append(row);
       }
     }
-    ui.billingState.textContent = features.some(([, enabled]) => enabled)
+    const cloudUsage = status.usage?.cloud_transcription;
+    const usageSummary = cloudUsage
+      ? Number.isInteger(cloudUsage.limit_milliseconds)
+        ? ` Cloud transcription: ${(cloudUsage.used_milliseconds / 60_000).toFixed(1)} of ${(cloudUsage.limit_milliseconds / 60_000).toFixed(0)} minutes used this period.`
+        : " Cloud transcription usage is subject to fair-use safeguards."
+      : "";
+    ui.billingState.textContent = (features.some(([, enabled]) => enabled)
       ? "Subscriber features are available on this account."
-      : "Free account. Local dictation remains available.";
+      : "Free account. Local dictation remains available.") + usageSummary;
     ui.billingState.dataset.error = "false";
   } catch (error) {
     clearBilling(error.message || "Could not check subscription access.", true);

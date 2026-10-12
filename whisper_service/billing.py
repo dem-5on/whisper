@@ -76,6 +76,13 @@ class BillingStore:
                         FOREIGN KEY (provider, provider_subscription_id)
                             REFERENCES subscriptions (provider, provider_subscription_id)
                     );
+                    CREATE TABLE IF NOT EXISTS cloud_usage (
+                        user_id TEXT NOT NULL,
+                        plan_id TEXT NOT NULL,
+                        period_end TEXT NOT NULL,
+                        milliseconds INTEGER NOT NULL CHECK (milliseconds >= 0),
+                        PRIMARY KEY (user_id, plan_id, period_end)
+                    );
                     """
                 )
                 subscription_columns = {
@@ -468,6 +475,72 @@ class BillingStore:
             if expiry.astimezone(UTC) > current.astimezone(UTC):
                 return True
         return False
+
+    def cloud_usage_budget(
+        self, user_id: str,
+        plans: Mapping[str, tuple[Collection[str], int | None]],
+        *, now: datetime | None = None,
+    ) -> dict[str, int | str | None] | None:
+        """Return the active cloud plan with the greatest remaining allowance."""
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("usage check time must include a timezone")
+        timestamp = current.astimezone(UTC).isoformat(timespec="seconds")
+        try:
+            with closing(self._connect()) as connection:
+                subscriptions = connection.execute(
+                    """SELECT plan_id, current_period_end FROM subscriptions
+                       WHERE user_id = ? AND status IN ('active', 'non_renewing')
+                         AND current_period_end > ?""",
+                    (user_id, timestamp),
+                ).fetchall()
+                candidates: list[dict[str, int | str | None]] = []
+                for plan_id, period_end in subscriptions:
+                    configured = plans.get(plan_id)
+                    if not configured or "cloud_transcription" not in configured[0]:
+                        continue
+                    allowance_minutes = configured[1]
+                    row = connection.execute(
+                        """SELECT milliseconds FROM cloud_usage
+                           WHERE user_id = ? AND plan_id = ? AND period_end = ?""",
+                        (user_id, plan_id, period_end),
+                    ).fetchone()
+                    used = int(row[0]) if row else 0
+                    allowance = allowance_minutes * 60_000 if allowance_minutes is not None else None
+                    remaining = max(0, allowance - used) if allowance is not None else None
+                    candidates.append({
+                        "plan_id": plan_id, "period_end": period_end,
+                        "limit_milliseconds": allowance, "used_milliseconds": used,
+                        "remaining_milliseconds": remaining,
+                    })
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not read cloud transcription usage") from exc
+        if not candidates:
+            return None
+        return next((item for item in candidates if item["limit_milliseconds"] is None),
+                    max(candidates, key=lambda item: int(item["remaining_milliseconds"] or 0)))
+
+    def record_cloud_usage(
+        self, user_id: str, plan_id: str, period_end: str, milliseconds: int,
+    ) -> None:
+        """Atomically add cloud audio milliseconds to a subscription billing period."""
+        if (not isinstance(milliseconds, int) or isinstance(milliseconds, bool) or milliseconds < 0 or
+                not all(isinstance(value, str) and value for value in (user_id, plan_id, period_end))):
+            raise ValueError("cloud usage record is invalid")
+        if milliseconds == 0:
+            return
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute(
+                    """INSERT INTO cloud_usage (user_id, plan_id, period_end, milliseconds)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(user_id, plan_id, period_end)
+                       DO UPDATE SET milliseconds = milliseconds + excluded.milliseconds""",
+                    (user_id, plan_id, period_end, milliseconds),
+                )
+                connection.commit()
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not persist cloud transcription usage") from exc
 
     def record_checkout(
         self, *, reference: str, user_id: str, plan_id: str,
