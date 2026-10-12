@@ -365,6 +365,23 @@ class BillingStore:
         keys = ("provider", "subscription_id", "user_id", "plan_id", "status", "current_period_end", "updated_at")
         return dict(zip(keys, row, strict=True))
 
+    def list_user_subscriptions(self, user_id: str, *, provider: str = "paystack") -> list[dict[str, str | None]]:
+        """Return only non-sensitive subscription summaries for one account."""
+        if not isinstance(user_id, str) or not _IDENTIFIER.fullmatch(user_id):
+            raise ValueError("user ID is invalid")
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """SELECT plan_id, status, current_period_end, updated_at
+                       FROM subscriptions WHERE provider = ? AND user_id = ?
+                       ORDER BY updated_at DESC, plan_id ASC""",
+                    (provider, user_id),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not read account subscriptions") from exc
+        keys = ("plan_id", "status", "current_period_end", "updated_at")
+        return [dict(zip(keys, row, strict=True)) for row in rows]
+
     def has_active_feature(
         self, user_id: str, feature: str, plan_features: Mapping[str, Collection[str]],
         *, now: datetime | None = None,

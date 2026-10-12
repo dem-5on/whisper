@@ -166,7 +166,7 @@ async def _run_service(args: argparse.Namespace) -> None:
 
     from .diarization_api import serve_http
     diarization_jobs = None
-    http_entitlements = None
+    http_entitlements = entitlements if args.enable_billing else None
     if args.enable_diarization:
         from .diarization import PyannoteDiarizationWorker
         from .diarization_jobs import DiarizationJobManager

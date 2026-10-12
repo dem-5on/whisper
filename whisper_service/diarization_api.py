@@ -28,6 +28,7 @@ logger = logging.getLogger("whisper_service.diarization")
 JOBS_PATH = "/v1/diarization/jobs"
 PAYSTACK_WEBHOOK_PATH = "/v1/billing/paystack/webhook"
 PAYSTACK_CHECKOUT_PATH = "/v1/billing/checkout"
+PAYSTACK_STATUS_PATH = "/v1/billing/status"
 MAX_UPLOAD_BYTES = 1_000_000_000
 MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -266,12 +267,34 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             return web.json_response({"error": "billing_unavailable"}, status=503)
         return web.json_response({"authorization_url": checkout_url, "reference": reference})
 
+    async def billing_status(request: Any) -> Any:
+        if billing_store is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        try:
+            subscriptions = billing_store.list_user_subscriptions(request["user_id"])
+            feature_ids = sorted({
+                feature for plan in (paystack_plans or {}).values()
+                for feature in plan.features
+            })
+            features = {
+                feature: bool(entitlements and entitlements.has_feature(request["user_id"], feature))
+                for feature in feature_ids
+            }
+        except (BillingStoreError, EntitlementConfigError) as exc:
+            logger.error("Could not resolve billing status (%s)", type(exc).__name__)
+            return web.json_response({"error": "billing_unavailable"}, status=503)
+        return web.json_response({
+            "features": features,
+            "subscriptions": subscriptions,
+        })
+
     app = web.Application(middlewares=[authenticate], client_max_size=MAX_UPLOAD_BYTES)
     if jobs is not None:
         app.router.add_post(JOBS_PATH, create_job)
         app.router.add_get(f"{JOBS_PATH}/{{job_id}}", get_job)
     if billing_store is not None:
         app.router.add_post(PAYSTACK_WEBHOOK_PATH, paystack_webhook)
+        app.router.add_get(PAYSTACK_STATUS_PATH, billing_status)
     if paystack_secret and paystack_plans:
         app.router.add_post(PAYSTACK_CHECKOUT_PATH, create_checkout)
     return app

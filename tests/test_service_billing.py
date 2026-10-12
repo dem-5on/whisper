@@ -120,6 +120,18 @@ class BillingStoreTests(unittest.TestCase):
                 amount_minor=1250, currency="GHS",
             )
 
+    def test_user_subscription_summaries_are_scoped_and_hide_provider_identifiers(self) -> None:
+        self.store.apply_verified_event(
+            provider="paystack", event_id="evt-owner", subscription_id="secret-provider-id",
+            user_id="account-owner", plan_id="pro-monthly", status="active",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        subscriptions = self.store.list_user_subscriptions("account-owner")
+        self.assertEqual(len(subscriptions), 1)
+        self.assertEqual(subscriptions[0]["plan_id"], "pro-monthly")
+        self.assertNotIn("secret-provider-id", str(subscriptions))
+        self.assertEqual(self.store.list_user_subscriptions("another-account"), [])
+
 
 if __name__ == "__main__":
     unittest.main()

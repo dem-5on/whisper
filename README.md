@@ -223,7 +223,10 @@ will own the branded plans and checkout page, while Paystack securely collects
 payment. The hosted service now has an optional Paystack webhook endpoint at
 `POST /v1/billing/paystack/webhook` (`WHISPER_ENABLE_BILLING=1`) that verifies
 Paystack's HMAC-SHA512 signature and records account-linked subscription events
-in a private SQLite ledger with replay deduplication. Configure
+in a private SQLite ledger with replay deduplication. Authenticated clients can
+read their own plan summaries and effective feature access from
+`GET /v1/billing/status`; provider subscription IDs and payment references are
+not returned. Configure
 `WHISPER_PAYSTACK_SECRET_KEY` and persist `WHISPER_BILLING_DATABASE` across
 restarts. An authenticated `POST /v1/billing/checkout` endpoint can initialize
 Paystack checkout when `WHISPER_PAYSTACK_PLANS` is configured as a JSON mapping

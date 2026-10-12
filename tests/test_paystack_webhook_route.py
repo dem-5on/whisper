@@ -15,7 +15,8 @@ except ImportError:
 
 from whisper_service.auth import TokenAuthenticator
 from whisper_service.billing import BillingStore
-from whisper_service.diarization_api import PAYSTACK_WEBHOOK_PATH, make_app
+from whisper_service.diarization_api import PAYSTACK_STATUS_PATH, PAYSTACK_WEBHOOK_PATH, make_app
+from whisper_service.entitlements import EntitlementStore, SubscriptionEntitlementStore
 from whisper_service.paystack import PaystackPlan
 
 
@@ -68,8 +69,17 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
             reference="checkout-123", user_id="account-owner", plan_id="pro-monthly",
             amount_minor=1250, currency="GHS",
         )
+        self.auth_token = "owner-test-token"
+        auth = TokenAuthenticator({
+            hashlib.sha256(self.auth_token.encode()).hexdigest(): "account-owner",
+        })
+        self.entitlement_path = Path(self.temp.name) / "entitlements.json"
+        entitlements = SubscriptionEntitlementStore(
+            EntitlementStore(self.entitlement_path), self.store,
+            {"pro-monthly": self.plan.features},
+        )
         app = make_app(
-            TokenAuthenticator({}), None, None, billing_store=self.store,
+            auth, None, entitlements, billing_store=self.store,
             paystack_secret=self.secret, paystack_plans={"pro-monthly": self.plan},
         )
         self.client = TestClient(TestServer(app))
@@ -90,6 +100,28 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
             PAYSTACK_WEBHOOK_PATH, data=body,
             headers={"x-paystack-signature": signature or valid_signature},
         )
+
+    async def test_billing_status_is_authenticated_and_scoped_to_account(self) -> None:
+        self.store.apply_verified_event(
+            provider="paystack", event_id="status-charge", subscription_id="SUB_PRIVATE",
+            user_id="account-owner", plan_id="pro-monthly", status="active",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        denied = await self.client.get(PAYSTACK_STATUS_PATH)
+        self.assertEqual(denied.status, 401)
+        response = await self.client.get(
+            PAYSTACK_STATUS_PATH,
+            headers={"Authorization": f"Bearer {self.auth_token}"},
+        )
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        self.assertTrue(payload["features"]["diarization"])
+        self.assertEqual(payload["subscriptions"], [{
+            "plan_id": "pro-monthly", "status": "active",
+            "current_period_end": "2030-01-01T00:00:00+00:00",
+            "updated_at": payload["subscriptions"][0]["updated_at"],
+        }])
+        self.assertNotIn("SUB_PRIVATE", json.dumps(payload))
 
     async def test_charge_verification_and_duplicate_delivery_are_safe(self) -> None:
         data = {
