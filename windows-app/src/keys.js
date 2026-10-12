@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { hasFeature, isCloudBackend } from "./feature-access.js";
 import "./keys.css";
 
 const SOCKET_URL = "ws://127.0.0.1:47651";
@@ -397,13 +398,28 @@ function chooseDefaultLiveModel() {
   }
 }
 
+async function hasCloudTranscriptionAccess() {
+  try {
+    const status = await invoke("fetch_billing_status");
+    return hasFeature(status?.features, "cloud_transcription");
+  } catch {
+    return false;
+  }
+}
+
 ui.provider.addEventListener("change", () => {
   ui.input.value = "";
   ui.feedback.textContent = "";
   renderKeyStatus();
 });
 
-ui.liveEngine.addEventListener("change", () => {
+ui.liveEngine.addEventListener("change", async () => {
+  if (isCloudBackend(ui.liveEngine.value) && !await hasCloudTranscriptionAccess()) {
+    ui.liveEngine.value = currentStatus.live_engine || "local";
+    setFeedback("Cloud live transcription requires an active Wicx subscription. Local streaming remains available.", true);
+    renderLiveFields();
+    return;
+  }
   liveSettingsDirty = true;
   chooseDefaultLiveModel();
   renderLiveFields();
@@ -413,6 +429,13 @@ ui.liveModel.addEventListener("input", () => { liveSettingsDirty = true; });
 
 ui.saveLive.addEventListener("click", async () => {
   const engine = ui.liveEngine.value;
+  if (isCloudBackend(engine) && !await hasCloudTranscriptionAccess()) {
+    ui.liveEngine.value = currentStatus.live_engine || "local";
+    liveSettingsDirty = false;
+    renderLiveFields();
+    setFeedback("Cloud live transcription requires an active Wicx subscription. Local streaming remains available.", true);
+    return;
+  }
   chooseDefaultLiveModel();
   const model = ui.liveModel.value.trim();
   if (!model) {

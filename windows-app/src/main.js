@@ -5,6 +5,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { deriveControlState } from "./control-state.js";
 import { formatRecordingText, sessionResetPatch } from "./status-view.js";
 import { microphoneLabel } from "./display.js";
+import { hasFeature, isCloudBackend } from "./feature-access.js";
 import "./style.css";
 
 const SOCKET_URL = "ws://127.0.0.1:47651";
@@ -104,6 +105,9 @@ const ui = {
 };
 
 let currentStatus = null;
+let cloudEntitlement = false;
+let cloudEntitlementCheckedAt = 0;
+let cloudEntitlementRequest = null;
 let currentChooser = null;
 let reconnectDelay = 400;
 let connecting = false;
@@ -404,8 +408,52 @@ async function sendCommandAndHide(command) {
   }
 }
 
-const toggleRecording = () => sendCommandAndHide("toggle");
+async function refreshCloudEntitlement(force = false) {
+  if (!force && Date.now() - cloudEntitlementCheckedAt < 5 * 60_000) return cloudEntitlement;
+  if (cloudEntitlementRequest) return cloudEntitlementRequest;
+  cloudEntitlementRequest = invoke("fetch_billing_status")
+    .then((status) => { cloudEntitlement = hasFeature(status?.features, "cloud_transcription"); })
+    .catch(() => { cloudEntitlement = false; })
+    .then(() => {
+      cloudEntitlementCheckedAt = Date.now();
+      cloudEntitlementRequest = null;
+      return cloudEntitlement;
+    });
+  return cloudEntitlementRequest;
+}
+
+async function ensureCloudEntitlement(backend, { force = false, fallback = false } = {}) {
+  if (!isCloudBackend(backend) || await refreshCloudEntitlement(force)) return true;
+  if (!fallback) throw new Error("Cloud transcription requires an active Wicx subscription. Local transcription remains free.");
+  const status = await request("set_backend", { backend: "local" });
+  updateStatus(status);
+  showFeedback("Cloud access could not be verified. Switched to Local so you can keep dictating.");
+  return false;
+}
+
+async function toggleRecording() {
+  if (currentStatus?.state !== "RECORDING" && isCloudBackend(currentStatus?.backend)) {
+    try {
+      await ensureCloudEntitlement(currentStatus.backend, { fallback: true });
+    } catch (error) {
+      showError(error.message);
+      return;
+    }
+  }
+  await sendCommandAndHide("toggle");
+}
 const cancelRecording = () => sendCommandAndHide("cancel");
+
+async function retryTranscription() {
+  try {
+    if (isCloudBackend(currentStatus?.backend)) {
+      await ensureCloudEntitlement(currentStatus.backend, { fallback: true });
+    }
+    await sendCommandAndHide("retry");
+  } catch (error) {
+    showError(error.message);
+  }
+}
 
 function queuePendingHotkey() {
   pendingHotkeyToggles = (pendingHotkeyToggles + 1) % 2;
@@ -502,7 +550,10 @@ async function openChooser(kind) {
   try {
     if (kind === "provider") {
       renderChoices("provider", "Choose a provider", "provider", PROVIDERS.map(([id, label, detail]) => ({ id, label, detail })),
-        currentStatus?.backend || "local", (choice) => request("set_backend", { backend: choice.id }));
+        currentStatus?.backend || "local", async (choice) => {
+          await ensureCloudEntitlement(choice.id, { force: true });
+          return request("set_backend", { backend: choice.id });
+        });
     } else if (kind === "model") {
       const response = await request("models");
       renderChoices("model", "Choose a transcription model", "model", (response.models || []).map((model) => ({ id: model.id, label: model.id })),
@@ -549,7 +600,7 @@ ui.copy.addEventListener("click", async () => {
     showFeedback(error.message);
   }
 });
-ui.retry.addEventListener("click", () => sendCommandAndHide("retry"));
+ui.retry.addEventListener("click", retryTranscription);
 document.querySelectorAll(".tile").forEach((tile) => {
   tile.disabled = true;
   tile.addEventListener("click", () => openChooser(tile.dataset.setting));
@@ -622,4 +673,5 @@ document.addEventListener("keydown", (event) => {
 // The elapsed timer renders from daemon status pushes (the bridge sends them
 // every 0.5 s while recording); no locally estimated clock here.
 connect();
+void refreshCloudEntitlement();
 loadBuildMode();
