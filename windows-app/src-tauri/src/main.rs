@@ -27,8 +27,8 @@ use tauri::{
 const PANEL_WIDTH: i32 = 420;
 const PANEL_HEIGHT: i32 = 560;
 const EXPANDED_PANEL_HEIGHT: f64 = 760.0;
-const RECORDING_PILL_WIDTH: f64 = 280.0;
-const RECORDING_PILL_HEIGHT: f64 = 64.0;
+const RECORDING_PILL_WIDTH: f64 = 200.0;
+const RECORDING_PILL_HEIGHT: f64 = 62.0;
 const SCREEN_GAP: i32 = 8;
 const UNINSTALL_ARGUMENT: &str = "--whisper-uninstall";
 

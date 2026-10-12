@@ -9,14 +9,15 @@
   <body>
     <main class="pill" aria-live="polite">
       <div class="recording-controls" id="recording-controls">
-        <button class="pill-action cancel" type="button" aria-label="Cancel recording" title="Cancel recording">×</button>
-        <div class="stage-content">
-          <span class="stage-label">Recording</span>
-          <svg class="waveform" id="waveform" viewBox="0 0 100 30" preserveAspectRatio="none" role="img" aria-label="Live microphone waveform">
-            <polyline id="waveform-line" points="0,15 100,15" />
-          </svg>
+        <button class="pill-action cancel" type="button" aria-label="Cancel recording" title="Cancel recording">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+        </button>
+        <div class="waveform" id="waveform" role="img" aria-label="Live microphone waveform">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
         </div>
-        <button class="pill-action finish" type="button" aria-label="Finish recording and transcribe" title="Finish recording">✓</button>
+        <button class="pill-action finish" type="button" aria-label="Finish recording and transcribe" title="Finish recording">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+        </button>
       </div>
       <div class="processing-state" id="processing-state" hidden>
         <span class="processing-indicator" aria-hidden="true"></span>
