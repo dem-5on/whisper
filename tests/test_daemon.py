@@ -568,6 +568,7 @@ class DaemonTests(unittest.TestCase):
         config = _parse({"ui": {"show_last_transcript": True, "preview_chars": 50}})
         self.assertTrue(config.ui.show_last_transcript)
         self.assertEqual(config.ui.preview_chars, 50)
+        self.assertFalse(config.ui.rewrite_enabled)
 
 
 class DaemonPersistenceTests(unittest.TestCase):
@@ -593,6 +594,41 @@ class DaemonPersistenceTests(unittest.TestCase):
         self.assertEqual(reloaded.transcription.backend, "openrouter")
         self.assertEqual(reloaded.transcription.model, "openai/whisper-large-v3")
         self.assertEqual(reloaded.audio.input_device, "usb-mic")
+
+    def test_rewrite_preference_persists_and_defaults_off(self) -> None:
+        from transcriber.config import load_config
+
+        self.assertFalse(self.daemon.command("status")["rewrite_enabled"])
+        status = self.daemon.command("set_rewrite", {"enabled": True})
+        self.assertEqual(status["ok"], "true")
+        self.assertTrue(load_config(self.config_path).ui.rewrite_enabled)
+        self.assertEqual(self.daemon.command("set_rewrite", {"enabled": "yes"})["ok"], "false")
+
+    def test_rewrite_handoff_returns_only_matching_result(self) -> None:
+        from transcriber.streaming import LiveSession
+
+        self.daemon._session = LiveSession()
+        output: list[str] = []
+        worker = threading.Thread(target=lambda: output.append(self.daemon._rewrite_transcript("raw words")))
+        worker.start()
+        for _ in range(100):
+            with self.daemon._lock:
+                waiter = self.daemon._rewrite_waiter
+            if waiter:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(waiter)
+        request_id = waiter[0]
+        self.assertEqual(self.daemon.command("rewrite_result", {
+            "request_id": "not-the-active-id", "text": "wrong",
+        })["ok"], "false")
+        self.assertEqual(self.daemon.command("rewrite_result", {
+            "request_id": request_id, "text": "polished words",
+        })["ok"], "true")
+        worker.join(timeout=1)
+        self.assertEqual(output, ["polished words"])
+        events, _ = self.daemon.events_since(0)
+        self.assertEqual(events[-1]["type"], "rewrite_request")
 
     def test_status_reports_key_presence_only(self) -> None:
         import os

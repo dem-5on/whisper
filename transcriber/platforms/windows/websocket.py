@@ -20,7 +20,7 @@ from ...daemon import TranscriberDaemon
 LOG = logging.getLogger("transcriber.windows.websocket")
 HOST = "127.0.0.1"
 PORT = 47651
-MAX_MESSAGE_BYTES = 8192
+MAX_MESSAGE_BYTES = 262_144
 ALLOWED_ORIGINS = (
     "http://tauri.localhost",
     "https://tauri.localhost",

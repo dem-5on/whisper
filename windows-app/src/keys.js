@@ -24,6 +24,7 @@ const ui = {
   liveUrl: document.querySelector("#live-server-url"),
   liveModel: document.querySelector("#live-model"),
   saveLive: document.querySelector("#save-live-settings"),
+  rewrite: document.querySelector("#rewrite-enabled"),
   authUrl: document.querySelector("#auth-api-url"),
   saveAuthUrl: document.querySelector("#save-auth-api-url"),
   accountState: document.querySelector("#account-state"),
@@ -375,6 +376,7 @@ function request(command, parameters = {}) {
 function updateStatus(status) {
   if (!status || typeof status !== "object") return;
   currentStatus = { ...currentStatus, ...status };
+  ui.rewrite.checked = currentStatus.rewrite_enabled === true;
   renderKeyStatus();
   if (!liveSettingsDirty) {
     ui.liveEngine.value = currentStatus.live_engine || "local";
@@ -383,6 +385,20 @@ function updateStatus(status) {
   }
   renderLiveFields();
 }
+
+ui.rewrite.addEventListener("change", async () => {
+  ui.rewrite.disabled = true;
+  try {
+    const status = await request("set_rewrite", { enabled: ui.rewrite.checked });
+    updateStatus(status);
+    setFeedback(ui.rewrite.checked ? "Rewrite enabled for dictation." : "Rewrite disabled.");
+  } catch (error) {
+    ui.rewrite.checked = currentStatus.rewrite_enabled === true;
+    setFeedback(error.message, true);
+  } finally {
+    ui.rewrite.disabled = false;
+  }
+});
 
 function renderLiveFields() {
   const engine = ui.liveEngine.value;

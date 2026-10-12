@@ -32,6 +32,7 @@ import socketserver
 import stat
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 from typing import Any
@@ -47,7 +48,7 @@ from .state import State
 from .session_store import SessionStore, SessionStoreError
 from .session_export import export_session_audio, export_session_markdown
 from .vocabulary import VocabularyError, VocabularyStore
-from .streaming import LiveSession
+from .streaming import LiveEvent, LiveSession
 from .transcription import (
     TranscriptionError,
     make_backend,
@@ -151,6 +152,8 @@ class TranscriberDaemon:
         self._hosted_final_text: str | None = None
         self._hosted_live_error: str | None = None
         self._hosted_final_event = threading.Event()
+        self._rewrite_waiter: tuple[str, threading.Event, dict[str, str]] | None = None
+        self._rewrite_state = ""
         self._vad_endpoint = SpeechEndpoint(config.streaming.silence_timeout_seconds)
         self._live_decode_ms = 0.0
         self._live_decode_lag_ms = 0.0
@@ -243,6 +246,14 @@ class TranscriberDaemon:
             return self._set_mic(None if value is None else str(value))
         if command == "set_streaming":
             return self._set_streaming(params.get("enabled", None))
+        if command == "set_rewrite":
+            return self._set_rewrite(params.get("enabled", None))
+        if command == "rewrite_result":
+            return self._complete_rewrite(
+                str(params.get("request_id", "")),
+                str(params.get("text", "")),
+                str(params.get("error", "")),
+            )
         if command == "events":
             since = params.get("since", 0)
             try:
@@ -945,6 +956,61 @@ class TranscriberDaemon:
                 LOG.info("Streaming %s", "enabled" if target else "disabled")
             return self._ok_locked()
 
+    def _set_rewrite(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, bool):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "enabled must be true or false"}
+        with self._lock:
+            if self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING):
+                return {**self._status_locked(), "ok": "false", "error": "Finish the current recording before changing rewrite settings"}
+            self.config = dataclasses.replace(
+                self.config, ui=dataclasses.replace(self.config.ui, rewrite_enabled=raw),
+            )
+            self._persist_config_locked()
+            return self._ok_locked()
+
+    def _complete_rewrite(self, request_id: str, text: str, error: str) -> dict[str, Any]:
+        with self._lock:
+            waiter = self._rewrite_waiter
+            if waiter is None or request_id != waiter[0]:
+                return {**self._status_locked(), "ok": "false", "error": "Rewrite request is no longer active"}
+            _, ready, result = waiter
+            if error:
+                result["error"] = error[:300]
+            elif text.strip() and len(text) <= 20_000:
+                result["text"] = text.strip()
+            else:
+                result["error"] = "Rewrite returned empty or oversized text"
+            ready.set()
+            return self._ok_locked()
+
+    def _rewrite_transcript(self, text: str) -> str:
+        request_id = uuid.uuid4().hex
+        ready = threading.Event()
+        result: dict[str, str] = {}
+        with self._lock:
+            self._rewrite_waiter = (request_id, ready, result)
+            self._rewrite_state = "rewriting"
+            if self._session is not None:
+                self._session.revision += 1
+                self._session.events.append(LiveEvent(
+                    type="rewrite_request", session_id=self._session.session_id,
+                    revision=self._session.revision, text=text, request_id=request_id,
+                ))
+                self._event_condition.notify_all()
+        try:
+            if not ready.wait(timeout=35.0):
+                result["error"] = "Rewrite timed out"
+            return result.get("text", "")
+        finally:
+            with self._lock:
+                if self._rewrite_waiter is not None and self._rewrite_waiter[0] == request_id:
+                    self._rewrite_waiter = None
+                self._rewrite_state = ""
+                reason = " ".join(result.get("error", "").split())[:160]
+                self._last_notice = f"Cloud rewrite unavailable ({reason}); original transcript inserted." if reason else ""
+                self._event_condition.notify_all()
+
     def _set_live_engine(self, engine: str, server_url: Any = None) -> dict[str, Any]:
         engine = engine.strip().lower()
         if engine not in {"local", "openai-realtime", "hosted-whisper"}:
@@ -1319,7 +1385,10 @@ class TranscriberDaemon:
         if session_id and session_id != self._session.session_id:
             return [], self._session.revision
         out = [
-            {"type": e.type, "session_id": e.session_id, "revision": e.revision, "text": e.text, "at": e.at}
+            {
+                "type": e.type, "session_id": e.session_id, "revision": e.revision,
+                "text": e.text, "request_id": e.request_id, "at": e.at,
+            }
             for e in self._session.events
             if e.revision > since
         ]
@@ -1405,6 +1474,11 @@ class TranscriberDaemon:
                 self._fail("No speech detected", soft=True)
                 return
             duration = time.monotonic() - started
+            rewrite_enabled = mode == "dictation" and self.config.ui.rewrite_enabled
+            if rewrite_enabled:
+                rewritten = self._rewrite_transcript(text)
+                if rewritten:
+                    text = rewritten
             if session_id:
                 try:
                     self._session_store.update(
@@ -1426,7 +1500,7 @@ class TranscriberDaemon:
                     self._set_state(State.DELIVERING)
             # The live session reconciles to the final transcript; only this
             # finalized text is delivered to the focused app.
-            if not use_hosted_final and publish_live:
+            if (not use_hosted_final or rewrite_enabled) and publish_live:
                 self._finalize_live(text)
             if mode == "dictation":
                 try:
@@ -1540,6 +1614,8 @@ class TranscriberDaemon:
             "last_audio": bool(self.last_audio_path.exists()),
             "last_backend": self._last_backend or "",
             "last_notice": self._last_notice,
+            "rewrite_enabled": self.config.ui.rewrite_enabled,
+            "rewrite_state": self._rewrite_state,
             "last_duration": round(self._last_duration, 1) if self._last_duration is not None else 0,
             "last_preview": preview,
             "has_groq_key": bool(os.environ.get("GROQ_API_KEY")),

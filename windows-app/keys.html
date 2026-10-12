@@ -104,6 +104,15 @@
         <button id="save-live-settings" class="key-save live-save" type="button">Save live settings</button>
       </section>
 
+      <section class="live-settings rewrite-settings" aria-labelledby="rewrite-title">
+        <h2 id="rewrite-title">Dictation rewrite</h2>
+        <label class="rewrite-toggle-row" for="rewrite-enabled">
+          <span><strong>Rewrite before inserting</strong><small>Clarify wording and remove verbal filler using your subscription.</small></span>
+          <input id="rewrite-enabled" type="checkbox" />
+        </label>
+        <p class="key-help">Off by default. If cloud rewriting is unavailable, Wicx inserts the original local transcript instead.</p>
+      </section>
+
       <p class="key-privacy">API keys and service tokens stay in your Windows user profile. The server URL and model profile are regular app settings.</p>
       <button id="open-diagnostics" class="diagnostics-button" type="button">Open diagnostics folder</button>
       <p id="key-feedback" class="key-feedback" role="status" aria-live="polite"></p>

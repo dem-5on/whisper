@@ -579,7 +579,11 @@ async fn rewrite_transcript(
     let token = keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
         .and_then(|entry| entry.get_password())
         .map_err(|_| "Sign in to use cloud rewriting.".to_string())?;
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|_| "Could not prepare the Wicx rewrite request.".to_string())?;
+    let response = client
         .post(format!("{origin}/v1/rewrite"))
         .bearer_auth(token)
         .json(&serde_json::json!({ "text": text }))

@@ -32,6 +32,12 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .key-heading h1 { margin: 0; font-size: 19px; font-weight: 650; }
 .key-heading p { margin: 4px 0 0; color: #a5a6ae; font-size: 12px; }
 .account-settings { margin: 0 0 15px; padding: 13px; border: 1px solid #41424a; border-radius: 14px; background: #282930; }
+.rewrite-settings { margin-top: 12px; }
+.rewrite-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; cursor: pointer; }
+.rewrite-toggle-row strong, .rewrite-toggle-row small { display: block; }
+.rewrite-toggle-row strong { font-size: 12px; }
+.rewrite-toggle-row small { margin-top: 3px; color: #a5a6ae; font-size: 11px; line-height: 1.4; }
+.rewrite-toggle-row input { flex: 0 0 auto; width: 18px; min-height: 18px; accent-color: #2878f0; }
 .account-settings h2 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
 .account-intro, .account-help { margin: 0; color: #a5a6ae; font-size: 12px; line-height: 1.45; }
 .account-help[data-error="true"] { color: #ff8c8c; }

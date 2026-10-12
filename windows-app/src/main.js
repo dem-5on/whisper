@@ -225,7 +225,7 @@ function updateStatus(status) {
   const label = recording
     ? `Recording · ${Number(currentStatus.recording_elapsed || 0).toFixed(1)}s`
     : busy
-      ? "Transcribing…"
+      ? (currentStatus.rewrite_state === "rewriting" ? "Rewriting…" : "Transcribing…")
       : state === "ERROR"
         ? "Attention required"
         : "Ready";
@@ -277,7 +277,9 @@ function updateStatus(status) {
     });
     ui.liveTranscript.hidden = false;
   } else if (busy) {
-    ui.liveTranscript.textContent = liveText ? `Finalizing: ${liveText}` : "Transcribing… full text appears here when done.";
+    ui.liveTranscript.textContent = currentStatus.rewrite_state === "rewriting"
+      ? "Rewriting your transcript…"
+      : liveText ? `Finalizing: ${liveText}` : "Transcribing… full text appears here when done.";
     ui.liveTranscript.hidden = false;
   } else {
     ui.liveTranscript.textContent = "";
@@ -358,6 +360,11 @@ async function connect() {
         currentStatus = { ...currentStatus, last_preview: event.text };
         updateStatus(currentStatus);
       }
+      if (event.type === "rewrite_request" && event.request_id && event.text) {
+        currentStatus = { ...currentStatus, rewrite_state: "rewriting" };
+        updateStatus(currentStatus);
+        void completeRewrite(event);
+      }
     }
     if (message.state) updateStatus(message);
   });
@@ -380,7 +387,7 @@ function requestReconnect() {
   void connect();
 }
 
-function request(command, parameters = {}) {
+function request(command, parameters = {}, timeoutMs = 10000) {
   if (!connection || connection.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error("Wicx transcription service is unavailable"));
   }
@@ -389,10 +396,25 @@ function request(command, parameters = {}) {
     const timeout = window.setTimeout(() => {
       pending.delete(requestId);
       reject(new Error("Wicx did not respond in time"));
-    }, 10000);
+    }, timeoutMs);
     pending.set(requestId, { resolve, reject, timeout });
     connection.send(JSON.stringify({ command, request_id: requestId, ...parameters }));
   });
+}
+
+async function completeRewrite(event) {
+  let result;
+  try {
+    const text = await invoke("rewrite_transcript", { text: event.text });
+    result = { request_id: event.request_id, text };
+  } catch (error) {
+    result = { request_id: event.request_id, error: error?.message || "Cloud rewrite is unavailable" };
+  }
+  try {
+    updateStatus(await request("rewrite_result", result, 10000));
+  } catch (error) {
+    showError(error.message || "Could not finish rewritten dictation");
+  }
 }
 
 async function sendCommandAndHide(command) {
