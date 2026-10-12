@@ -41,12 +41,12 @@ def main() -> None:
     entitlement_commands = entitlement.add_subparsers(dest="entitlement_command", required=True)
     grant = entitlement_commands.add_parser("grant", help="grant one feature to a user")
     grant.add_argument("--user", required=True)
-    grant.add_argument("--feature", choices=("cloud_transcription", "diarization"), required=True)
+    grant.add_argument("--feature", choices=("cloud_transcription", "cloud_rewrite", "diarization"), required=True)
     grant.add_argument("--expires-at", help="optional ISO-8601 expiry, e.g. 2026-12-31T23:59:59Z")
     grant.add_argument("--file", type=Path, default=_default_entitlement_file())
     entitlement_revoke = entitlement_commands.add_parser("revoke", help="revoke one feature from a user")
     entitlement_revoke.add_argument("--user", required=True)
-    entitlement_revoke.add_argument("--feature", choices=("cloud_transcription", "diarization"), required=True)
+    entitlement_revoke.add_argument("--feature", choices=("cloud_transcription", "cloud_rewrite", "diarization"), required=True)
     entitlement_revoke.add_argument("--file", type=Path, default=_default_entitlement_file())
     entitlement_list = entitlement_commands.add_parser("list", help="list feature grants")
     entitlement_list.add_argument("--user")
@@ -74,6 +74,9 @@ def main() -> None:
     serve.add_argument("--enable-oauth", action="store_true",
                        default=os.environ.get("WHISPER_ENABLE_OAUTH", "").lower() in {"1", "true", "yes"},
                        help="enable Google/Apple account sign-in routes on the HTTP service")
+    serve.add_argument("--enable-rewrite", action="store_true",
+                       default=os.environ.get("WHISPER_ENABLE_REWRITE", "").lower() in {"1", "true", "yes"},
+                       help="enable the subscription-gated OpenRouter text-rewrite API")
     serve.add_argument("--http-host", default=None, help="diarization API bind address (defaults to --host)")
     serve.add_argument("--http-port", type=int, default=8766)
     serve.add_argument("--diarization-device", choices=("cpu", "cuda"), default="cpu")
@@ -176,7 +179,7 @@ async def _run_service(args: argparse.Namespace) -> None:
             )) if billing_store else None
         ),
     )
-    if not args.enable_diarization and not args.enable_billing and not args.enable_oauth:
+    if not args.enable_diarization and not args.enable_billing and not args.enable_oauth and not args.enable_rewrite:
         await serve_websocket(authenticator, manager, entitlements=entitlements,
                               host=args.host, port=args.port)
         return
@@ -194,6 +197,19 @@ async def _run_service(args: argparse.Namespace) -> None:
             diarizer, temp_dir=args.diarization_temp_dir,
             max_jobs=args.diarization_max_jobs, workers=args.diarization_workers,
         )
+        http_entitlements = entitlements
+
+    rewrite_model = None
+    if args.enable_rewrite:
+        from .rewrite import OpenRouterRewriteModel
+
+        api_key = os.environ.get("WHISPER_OPENROUTER_API_KEY", "")
+        models = tuple(item.strip() for item in os.environ.get("WHISPER_REWRITE_MODELS", "").split(",") if item.strip())
+        if not api_key:
+            raise RuntimeError("WHISPER_OPENROUTER_API_KEY is required when rewrite is enabled")
+        if not models:
+            raise RuntimeError("Set WHISPER_REWRITE_MODELS to an explicit comma-separated model allow-list")
+        rewrite_model = OpenRouterRewriteModel(api_key, models)
         http_entitlements = entitlements
 
     oauth_transactions = None
@@ -221,6 +237,7 @@ async def _run_service(args: argparse.Namespace) -> None:
                    oauth_transactions=oauth_transactions,
                    account_store=account_store if args.enable_oauth else None,
                    oauth_providers=oauth_providers,
+                   rewrite_model=rewrite_model,
                    oauth_app_redirect=oauth_app_redirect,
                    host=args.http_host or args.host, port=args.http_port),
     )

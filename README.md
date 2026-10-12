@@ -213,9 +213,11 @@ held in memory, so an interrupted server requires the client to retry the upload
 Job creation fails closed unless the authenticated user has the `diarization`
 feature grant in the owner-only `/data/entitlements.json` file. The live cloud
 transcription WebSocket likewise requires a separate `cloud_transcription`
-grant. For prototype testing, operators can grant or revoke either feature with
+grant. Cloud text rewriting requires `cloud_rewrite`. For prototype testing,
+operators can grant or revoke these features with
 `docker compose exec whisper-server whisper-server entitlement grant --user USER_ID --feature diarization`
 or `docker compose exec whisper-server whisper-server entitlement grant --user USER_ID --feature cloud_transcription`
+(or `--feature cloud_rewrite`)
 (use `entitlement revoke` with the same arguments to remove a grant); grants may
 have an `--expires-at` ISO-8601 timestamp. This manual grant store is not a
 billing integration. Paystack is selected for desktop/web subscriptions: Wicx
@@ -254,6 +256,16 @@ the remaining allowance. When omitted, that plan has no billing-period minute
 allowance; existing fair-use safeguards still apply (300 seconds per session
 and ten session starts per user per rolling hour). Usage records contain
 counts only, not audio or transcript content.
+The optional cloud rewrite endpoint is enabled with `WHISPER_ENABLE_REWRITE=1`,
+`WHISPER_OPENROUTER_API_KEY`, and an operator-controlled comma-separated
+`WHISPER_REWRITE_MODELS` allow-list. It exposes `POST /v1/rewrite` for
+authenticated accounts with the `cloud_rewrite` entitlement, plus
+`GET /v1/rewrite/models` to return the allowed candidates. The first model in
+the allow-list is the default, and rewrite requests may select another listed
+model for comparison. OpenRouter credentials remain on the service host. Rewrite
+providers implement a small interface so a local model can be added separately
+without changing the authenticated API. The desktop rewrite setting and
+automatic transcription-to-rewrite flow are a subsequent integration step.
 Use actual approved pricing and Paystack plan codes in deployment config; the
 examples are illustrative only. The server supplies the plan code (for
 recurring plans), amount, payment channel, and account metadata; clients cannot

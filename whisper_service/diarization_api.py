@@ -26,6 +26,7 @@ from .accounts import AccountStore, AccountStoreError
 from .oauth import OAuthTransactionError, OAuthTransactionStore, authorization_url
 from .oauth_flow import OAuthProviderConfig, exchange_and_verify
 from .oidc import OIDCVerificationError
+from .rewrite import RewriteError, RewriteModel
 
 
 logger = logging.getLogger("whisper_service.diarization")
@@ -38,6 +39,8 @@ PAYSTACK_PLANS_PATH = "/v1/billing/plans"
 OAUTH_START_PATH = "/v1/auth/oauth/{provider}/start"
 OAUTH_CALLBACK_PATH = "/v1/auth/oauth/{provider}/callback"
 OAUTH_EXCHANGE_PATH = "/v1/auth/session/exchange"
+REWRITE_PATH = "/v1/rewrite"
+REWRITE_MODELS_PATH = "/v1/rewrite/models"
 MAX_UPLOAD_BYTES = 1_000_000_000
 MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -51,6 +54,7 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
              oauth_transactions: OAuthTransactionStore | None = None,
              account_store: AccountStore | None = None,
              oauth_providers: dict[str, OAuthProviderConfig] | None = None,
+             rewrite_model: RewriteModel | None = None,
              oauth_app_redirect: str = "wicx://auth/callback") -> Any:
     try:
         from aiohttp import web
@@ -111,6 +115,58 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             # Successful submissions transfer ownership to the worker queue.
             if "job_id" not in locals():
                 audio_path.unlink(missing_ok=True)
+
+    async def rewrite_text(request: Any) -> Any:
+        if rewrite_model is None or entitlements is None:
+            return web.json_response({"error": "rewrite_unavailable"}, status=503)
+        try:
+            entitled = entitlements.has_feature(request["user_id"], "cloud_rewrite")
+        except EntitlementConfigError as exc:
+            logger.error("Rewrite entitlement check unavailable (%s)", type(exc).__name__)
+            return web.json_response({"error": "entitlement_unavailable"}, status=503)
+        if not entitled:
+            return web.json_response({
+                "error": "subscription_required",
+                "message": "An active subscription is required for cloud rewriting.",
+            }, status=402)
+        if request.content_type != "application/json":
+            return web.json_response({"error": "content_type"}, status=415)
+        if request.content_length is not None and request.content_length > 65_536:
+            return web.json_response({"error": "request_too_large"}, status=413)
+        try:
+            raw = await request.content.read(65_537)
+            if len(raw) > 65_536:
+                return web.json_response({"error": "request_too_large"}, status=413)
+            body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        text = body.get("text")
+        model = body.get("model")
+        if (not isinstance(text, str) or not text.strip() or len(text) > 20_000 or
+                (model is not None and (not isinstance(model, str) or len(model) > 160))):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        if model is not None and model not in rewrite_model.models:
+            return web.json_response({"error": "unsupported_model"}, status=400)
+        try:
+            rewritten, selected_model = await rewrite_model.rewrite(text.strip(), model=model)
+        except RewriteError as exc:
+            logger.warning("Cloud rewrite failed (%s)", str(exc))
+            return web.json_response({"error": "rewrite_unavailable"}, status=503)
+        return web.json_response({"text": rewritten, "model": selected_model})
+
+    async def rewrite_models(request: Any) -> Any:
+        if rewrite_model is None or entitlements is None:
+            return web.json_response({"error": "rewrite_unavailable"}, status=503)
+        try:
+            entitled = entitlements.has_feature(request["user_id"], "cloud_rewrite")
+        except EntitlementConfigError as exc:
+            logger.error("Rewrite entitlement check unavailable (%s)", type(exc).__name__)
+            return web.json_response({"error": "entitlement_unavailable"}, status=503)
+        if not entitled:
+            return web.json_response({"error": "subscription_required"}, status=402)
+        return web.json_response({"models": list(rewrite_model.models), "default_model": rewrite_model.models[0]})
 
     async def get_job(request: Any) -> Any:
         if jobs is None:
@@ -472,6 +528,9 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
     if jobs is not None:
         app.router.add_post(JOBS_PATH, create_job)
         app.router.add_get(f"{JOBS_PATH}/{{job_id}}", get_job)
+    if rewrite_model is not None:
+        app.router.add_post(REWRITE_PATH, rewrite_text)
+        app.router.add_get(REWRITE_MODELS_PATH, rewrite_models)
     if billing_store is not None:
         app.router.add_post(PAYSTACK_WEBHOOK_PATH, paystack_webhook)
         app.router.add_get(PAYSTACK_STATUS_PATH, billing_status)
@@ -511,6 +570,7 @@ async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobMana
                      oauth_transactions: OAuthTransactionStore | None = None,
                      account_store: AccountStore | None = None,
                      oauth_providers: dict[str, OAuthProviderConfig] | None = None,
+                     rewrite_model: RewriteModel | None = None,
                      oauth_app_redirect: str = "wicx://auth/callback",
                      host: str = "127.0.0.1", port: int = 8766) -> None:
     try:
@@ -525,6 +585,7 @@ async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobMana
         paystack_plans=paystack_plans,
         oauth_transactions=oauth_transactions, account_store=account_store,
         oauth_providers=oauth_providers, oauth_app_redirect=oauth_app_redirect,
+        rewrite_model=rewrite_model,
     ), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
