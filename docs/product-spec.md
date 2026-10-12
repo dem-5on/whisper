@@ -271,13 +271,16 @@ Encrypted relay/sync is feasible in principle but is a substantial subsystem. Be
 
 This is a product-level direction, not a final technical design:
 
-1. **Desktop shell and platform adapters:** tray/flyout, global shortcut, audio input, non-activating overlay, focused-app text delivery, notifications, installer/update integration. Keep OS-specific code behind platform adapters.
-2. **Capture/session service:** one shared recording lifecycle for Dictation, Lecture, and Meeting, with mode-specific duration, persistence, and state transitions. Stream captured PCM for live/local work while safely writing long-form audio.
-3. **Transcription layer:** pluggable local and cloud engines; language identification and multilingual/code-switch handling; source transcript and translated transcript as distinct artifacts; vocabulary support; capability/entitlement checks.
-4. **Post-processing layer:** rewrite for Dictation; structured notes/questions for Lecture; asynchronous diarization/summary/decisions/action items for Meeting. Run only when connectivity and subscription entitlement permit. Keep meeting diarization off the transcript and Dictation critical paths.
-5. **Local data store:** durable session metadata, audio references, transcript versions, translations, notes, speaker edits, vocabulary, and settings. Support user deletion, export, and future sync.
-6. **Account/entitlement service:** Google/Apple identity, subscription state, allowance accounting, fair-use enforcement, upgrade flow, and clear local fallback behavior.
-7. **Optional sync subsystem:** paired-device identity, encrypted peer/relay transfer, resumable large-file sync, conflict handling, and explicit revocation.
+1. **Separate platform applications:** each desktop/system client has its own top-level application directory (for example, `linux-app/`, `windows-app/`, and later `macos-app/`, `android-app/`, and `ios-app/`). Each directory owns that platform's frontend, native shell integration, build configuration, packaging, and platform-specific tests. Do not make one platform's UI or shell the mandatory frontend for the others.
+2. **Desktop shell and platform adapters:** tray/flyout, global shortcut, audio input, non-activating overlay, focused-app text delivery, notifications, installer/update integration. Keep OS-specific code behind platform adapters.
+3. **Capture/session service:** one shared recording lifecycle for Dictation, Lecture, and Meeting, with mode-specific duration, persistence, and state transitions. Stream captured PCM for live/local work while safely writing long-form audio.
+4. **Transcription layer:** pluggable local and cloud engines; language identification and multilingual/code-switch handling; source transcript and translated transcript as distinct artifacts; vocabulary support; capability/entitlement checks.
+5. **Post-processing layer:** rewrite for Dictation; structured notes/questions for Lecture; asynchronous diarization/summary/decisions/action items for Meeting. Run only when connectivity and subscription entitlement permit. Keep meeting diarization off the transcript and Dictation critical paths.
+6. **Local data store:** durable session metadata, audio references, transcript versions, translations, notes, speaker edits, vocabulary, and settings. Support user deletion, export, and future sync.
+7. **Account/entitlement service:** Google/Apple identity, subscription state, allowance accounting, fair-use enforcement, upgrade flow, and clear local fallback behavior.
+8. **Optional sync subsystem:** paired-device identity, encrypted peer/relay transfer, resumable large-file sync, conflict handling, and explicit revocation.
+
+Share backend services, API contracts, and carefully chosen platform-independent libraries where useful, but keep app entry points, presentation, OS integration, packaging, and UI tests owned by their respective platform directories.
 
 Avoid coupling UI to one inference provider. Product-facing controls should be phrased as outcomes (“Local”, “Cloud”, “Rewrite”) rather than a provider dashboard, unless an advanced diagnostic screen is intentionally opened.
 
