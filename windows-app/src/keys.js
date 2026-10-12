@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import "./keys.css";
 
 const SOCKET_URL = "ws://127.0.0.1:47651";
@@ -22,6 +23,11 @@ const ui = {
   liveUrl: document.querySelector("#live-server-url"),
   liveModel: document.querySelector("#live-model"),
   saveLive: document.querySelector("#save-live-settings"),
+  authUrl: document.querySelector("#auth-api-url"),
+  saveAuthUrl: document.querySelector("#save-auth-api-url"),
+  accountState: document.querySelector("#account-state"),
+  signOut: document.querySelector("#sign-out"),
+  oauthButtons: [...document.querySelectorAll("[data-oauth-provider]")],
 };
 
 let connection;
@@ -49,6 +55,71 @@ function setFeedback(message, isError = false) {
   ui.feedback.textContent = message;
   ui.feedback.dataset.error = String(isError);
 }
+
+function setAccountState(message, isError = false) {
+  ui.accountState.textContent = message;
+  ui.accountState.dataset.error = String(isError);
+}
+
+async function refreshAccount() {
+  try {
+    const [url, signedIn] = await Promise.all([
+      invoke("get_auth_api_url"),
+      invoke("auth_is_signed_in"),
+    ]);
+    ui.authUrl.value = url || "";
+    ui.signOut.hidden = !signedIn;
+    ui.oauthButtons.forEach((button) => { button.hidden = Boolean(signedIn); });
+    setAccountState(signedIn ? "You are signed in to your Wicx account." : "Not signed in. Sign in to unlock subscription features.");
+  } catch (error) {
+    setAccountState(error.message || "Could not load account settings.", true);
+  }
+}
+
+async function finishOAuthCallback() {
+  try {
+    const completed = await invoke("complete_auth_callback");
+    if (completed) {
+      await refreshAccount();
+      setAccountState("Sign-in complete. Your Wicx account is ready.");
+    }
+  } catch (error) {
+    setAccountState(error.message || "Sign-in could not be completed.", true);
+  }
+}
+
+ui.saveAuthUrl.addEventListener("click", async () => {
+  try {
+    const origin = await invoke("save_auth_api_url", { url: ui.authUrl.value });
+    ui.authUrl.value = origin;
+    setAccountState("Wicx service URL saved.");
+  } catch (error) {
+    setAccountState(error.message || "Could not save the service URL.", true);
+  }
+});
+
+ui.oauthButtons.forEach((button) => {
+  button.addEventListener("click", async () => {
+    const provider = button.dataset.oauthProvider;
+    setAccountState(`Opening ${provider === "google" ? "Google" : "Apple"} sign-in…`);
+    try {
+      await invoke("start_oauth", { provider });
+      setAccountState("Finish signing in in your browser. Wicx will return here automatically.");
+    } catch (error) {
+      setAccountState(error.message || "Could not start sign-in.", true);
+    }
+  });
+});
+
+ui.signOut.addEventListener("click", async () => {
+  try {
+    await invoke("sign_out");
+    await refreshAccount();
+    setAccountState("You have been signed out.");
+  } catch (error) {
+    setAccountState(error.message || "Could not sign out.", true);
+  }
+});
 
 async function connect() {
   ui.state.textContent = "Connecting to Wicx…";
@@ -213,4 +284,8 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") getCurrentWindow().hide();
 });
 
+listen("auth-callback-received", finishOAuthCallback)
+  .then(() => finishOAuthCallback())
+  .catch(() => {});
+refreshAccount();
 connect();

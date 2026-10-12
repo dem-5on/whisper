@@ -16,6 +16,23 @@
         </div>
       </header>
 
+      <section class="account-settings" aria-labelledby="account-title">
+        <h2 id="account-title">Wicx account</h2>
+        <p class="account-intro">Sign in to use your subscription features. Local dictation stays available without an account.</p>
+        <label class="key-label" for="auth-api-url">Wicx service URL</label>
+        <div class="account-url-row">
+          <input id="auth-api-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://api.example.com" />
+          <button id="save-auth-api-url" class="key-save" type="button">Save</button>
+        </div>
+        <p class="account-help">Use the HTTPS address of the Wicx service you host. This is a regular setting, not a secret.</p>
+        <p id="account-state" class="key-state" aria-live="polite">Checking account…</p>
+        <div class="account-actions">
+          <button class="key-save" type="button" data-oauth-provider="google">Continue with Google</button>
+          <button class="key-remove" type="button" data-oauth-provider="apple">Continue with Apple</button>
+          <button id="sign-out" class="key-remove" type="button" hidden>Sign out</button>
+        </div>
+      </section>
+
       <label class="key-label" for="key-provider">Provider</label>
       <select id="key-provider">
         <option value="openai">OpenAI</option>

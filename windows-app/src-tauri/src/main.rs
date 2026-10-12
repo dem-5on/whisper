@@ -8,10 +8,14 @@ compile_error!("focus-test builds must not start the packaged transcription daem
 
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -40,6 +44,199 @@ struct WebsocketToken(String);
 
 #[derive(Clone, Default)]
 struct PendingAuthCallback(Arc<Mutex<Option<String>>>);
+
+#[derive(Clone)]
+struct OAuthClientState {
+    api_url_path: Arc<PathBuf>,
+    pending: Arc<Mutex<Option<(String, Instant)>>>,
+}
+
+const AUTH_KEYRING_SERVICE: &str = "tech.intejers.wicx";
+const AUTH_KEYRING_ACCOUNT: &str = "account-session";
+
+fn validated_api_origin(candidate: &str) -> Result<String, String> {
+    let url = url::Url::parse(candidate.trim()).map_err(|_| {
+        "Enter a valid HTTPS service URL, such as https://api.example.com".to_string()
+    })?;
+    let local_http = cfg!(debug_assertions)
+        && url.scheme() == "http"
+        && url
+            .host_str()
+            .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    if (url.scheme() != "https" && !local_http)
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Use only the service origin (HTTPS required; localhost HTTP is allowed in development).".to_string());
+    }
+    Ok(url.origin().ascii_serialization())
+}
+
+fn read_auth_api_url(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(value) => validated_api_origin(&value),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(_) => Err("Could not read the saved Wicx service URL.".to_string()),
+    }
+}
+
+#[tauri::command]
+fn get_auth_api_url(auth: State<'_, OAuthClientState>) -> Result<String, String> {
+    read_auth_api_url(&auth.api_url_path)
+}
+
+#[tauri::command]
+fn save_auth_api_url(auth: State<'_, OAuthClientState>, url: String) -> Result<String, String> {
+    let origin = validated_api_origin(&url)?;
+    if let Some(parent) = auth.api_url_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|_| "Could not prepare Wicx settings storage.".to_string())?;
+    }
+    fs::write(auth.api_url_path.as_path(), &origin)
+        .map_err(|_| "Could not save the Wicx service URL.".to_string())?;
+    Ok(origin)
+}
+
+#[tauri::command]
+async fn start_oauth(provider: String, auth: State<'_, OAuthClientState>) -> Result<(), String> {
+    if !matches!(provider.as_str(), "google" | "apple") {
+        return Err("Choose Google or Apple to sign in.".to_string());
+    }
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("Save your Wicx service URL before signing in.".to_string());
+    }
+    let verifier = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let response = reqwest::Client::new()
+        .post(format!("{origin}/v1/auth/oauth/{provider}/start"))
+        .json(&json!({ "code_challenge": challenge }))
+        .send()
+        .await
+        .map_err(|_| {
+            "Could not reach the Wicx sign-in service. Check the URL and your connection."
+                .to_string()
+        })?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "The sign-in service could not start {provider} sign-in (HTTP {}).",
+            response.status().as_u16()
+        ));
+    }
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| "The sign-in service returned an invalid response.".to_string())?;
+    let authorization_url = payload
+        .get("authorization_url")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "The sign-in service did not provide a sign-in link.".to_string())?;
+    let parsed = url::Url::parse(authorization_url)
+        .map_err(|_| "The sign-in service returned an invalid sign-in link.".to_string())?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return Err("The sign-in service returned an insecure sign-in link.".to_string());
+    }
+    *auth
+        .pending
+        .lock()
+        .map_err(|_| "Sign-in could not be prepared.".to_string())? =
+        Some((verifier, Instant::now()));
+    open::that(parsed.as_str())
+        .map_err(|_| "Could not open your default browser for sign-in.".to_string())
+}
+
+#[tauri::command]
+async fn complete_auth_callback(
+    callback: State<'_, PendingAuthCallback>,
+    auth: State<'_, OAuthClientState>,
+) -> Result<bool, String> {
+    let Some(code) = callback
+        .0
+        .lock()
+        .map_err(|_| "Sign-in callback could not be read.".to_string())?
+        .take()
+    else {
+        return Ok(false);
+    };
+    let pending = auth
+        .pending
+        .lock()
+        .map_err(|_| "Sign-in state could not be read.".to_string())?
+        .take();
+    let Some((verifier, started)) = pending else {
+        return Err(
+            "No sign-in attempt is waiting for this callback. Try signing in again.".to_string(),
+        );
+    };
+    if started.elapsed() > Duration::from_secs(180) {
+        return Err("Sign-in took too long. Try signing in again.".to_string());
+    }
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("The Wicx service URL is not configured.".to_string());
+    }
+    let response = reqwest::Client::new()
+        .post(format!("{origin}/v1/auth/session/exchange"))
+        .json(&json!({ "code": code, "code_verifier": verifier }))
+        .send()
+        .await
+        .map_err(|_| "Could not complete sign-in with the Wicx service.".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "The sign-in service rejected this session (HTTP {}). Try again.",
+            response.status().as_u16()
+        ));
+    }
+    let payload: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| "The sign-in service returned an invalid session.".to_string())?;
+    let token = payload
+        .get("access_token")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "The sign-in service did not return a session token.".to_string())?;
+    if payload
+        .get("token_type")
+        .and_then(|value| value.as_str())
+        .is_some_and(|kind| !kind.eq_ignore_ascii_case("bearer"))
+    {
+        return Err("The sign-in service returned an unsupported session type.".to_string());
+    }
+    keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.set_password(token))
+        .map_err(|_| "Sign-in succeeded, but Wicx could not store the session in your operating-system credential store.".to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn auth_is_signed_in() -> bool {
+    keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.get_password())
+        .is_ok_and(|token| !token.is_empty())
+}
+
+#[tauri::command]
+fn sign_out() -> Result<(), String> {
+    match keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.delete_credential())
+    {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err(
+            "Could not remove the Wicx session from your operating-system credential store."
+                .to_string(),
+        ),
+    }
+}
 
 fn auth_handoff_code(candidate: &str) -> Option<String> {
     let url = url::Url::parse(candidate).ok()?;
@@ -76,11 +273,6 @@ fn store_auth_callback(state: &PendingAuthCallback, candidate: &str) -> bool {
     } else {
         false
     }
-}
-
-#[tauri::command]
-fn take_auth_callback(state: State<'_, PendingAuthCallback>) -> Option<String> {
-    state.0.lock().ok()?.take()
 }
 
 fn mic_tray_icon(color: [u8; 4]) -> Image<'static> {
@@ -544,6 +736,15 @@ fn main() {
             }
             let pending_auth = PendingAuthCallback::default();
             app.manage(pending_auth.clone());
+            let auth_api_url_path = app
+                .path()
+                .app_config_dir()
+                .map_err(std::io::Error::other)?
+                .join("auth-api-url");
+            app.manage(OAuthClientState {
+                api_url_path: Arc::new(auth_api_url_path),
+                pending: Arc::new(Mutex::new(None)),
+            });
             let auth_app = app.handle().clone();
             if let Some(urls) = app.deep_link().get_current()? {
                 for url in urls {
@@ -686,7 +887,12 @@ fn main() {
             focus_test_build,
             recording_shortcut_status,
             websocket_token,
-            take_auth_callback,
+            get_auth_api_url,
+            save_auth_api_url,
+            start_oauth,
+            complete_auth_callback,
+            auth_is_signed_in,
+            sign_out,
             show_key_settings,
             open_diagnostics_folder
         ])
@@ -703,7 +909,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_handoff_code, load_or_create_websocket_token, panel_height_for_monitor, panel_position,
+        auth_handoff_code, load_or_create_websocket_token, panel_height_for_monitor,
+        panel_position, validated_api_origin,
     };
     use std::{fs, path::PathBuf};
 
@@ -765,5 +972,24 @@ mod tests {
             auth_handoff_code(&format!("https://auth/callback?code={code}")),
             None
         );
+    }
+
+    #[test]
+    fn validates_and_normalizes_service_origin() {
+        assert_eq!(
+            validated_api_origin("https://api.example.com/"),
+            Ok("https://api.example.com".to_string())
+        );
+        assert!(validated_api_origin("https://api.example.com/v1").is_err());
+        assert!(validated_api_origin("https://user:password@example.com").is_err());
+        assert!(validated_api_origin("https://example.com/?token=secret").is_err());
+        if cfg!(debug_assertions) {
+            assert_eq!(
+                validated_api_origin("http://localhost:8000"),
+                Ok("http://localhost:8000".to_string())
+            );
+        } else {
+            assert!(validated_api_origin("http://localhost:8000").is_err());
+        }
     }
 }
