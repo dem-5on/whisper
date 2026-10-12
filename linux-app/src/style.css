@@ -111,3 +111,71 @@ h1,h2,h3,p { margin-top:0; }
 @media (max-width:1080px) { .sidebar{flex-basis:190px}.window-chrome{left:190px}.workspace{padding-right:27px;padding-left:27px}.home-grid{grid-template-columns:minmax(0,1fr) 225px;gap:14px}.mode-grid{gap:7px}.mode-card{padding:12px 10px}.home-footer-card{flex-wrap:wrap}.quiet-link{margin-left:auto} }
 @media (max-width:840px) { .home-grid{grid-template-columns:1fr}.right-rail{grid-template-columns:1fr 1fr}.connection-note{grid-column:1/-1}.mode-card{min-height:180px}.workspace{padding-right:22px;padding-left:22px} }
 @media (max-width:680px) { html,body{min-width:0}.sidebar{flex-basis:66px;align-items:center;padding:18px 8px 12px}.window-chrome{left:66px}.brand{margin:0 0 25px}.brand>span:not(.brand-mark){display:none}.plan-tag,.nav-item:not(.selected) {display:none}.nav-item{width:42px;justify-content:center;padding:0;font-size:0}.nav-item svg{width:18px}.sidebar-bottom{width:100%;justify-items:center}.sidebar-hint,.sidebar-footnote{display:none}.sidebar-bottom .nav-item{display:flex}.workspace{padding:0 15px 18px}.page{padding-top:31px}.home-heading{margin-bottom:20px}.home-heading h1{font-size:34px}.lead{max-width:290px;font-size:10px}.greeting-mark{width:70px;height:45px}.home-grid{gap:13px}.shortcut-card{gap:8px;padding:12px}.shortcut-copy p{max-width:190px;font-size:8px;line-height:1.4}.shortcut-binding small{display:none}.shortcut-binding code{font-size:7px;padding:3px 4px}.shortcut-action.setup-shortcut{height:30px;padding:0 7px;font-size:7px}.mode-grid{grid-template-columns:1fr}.mode-card{min-height:145px;padding:13px}.mode-card p{min-height:0}.mode-top{margin-bottom:9px}.right-rail{grid-template-columns:1fr}.home-footer-card{align-items:flex-start}.home-footer-card p{max-width:280px}.page-intro{align-items:flex-start;flex-direction:column}.page-intro h1{font-size:28px}.search-box{width:100%}.history-layout{grid-template-columns:1fr}.session-list{min-height:190px;max-height:240px;overflow:auto}.settings-layout{grid-template-columns:1fr;gap:8px}.settings-nav{grid-template-columns:repeat(3,1fr)}.settings-nav button{text-align:center}.add-term>div{flex-wrap:wrap}.add-term input{flex-basis:100%}.dialog-actions{flex-wrap:wrap}.home-footer-card .quiet-link{margin-left:0} }
+
+/* Comfortable reading scale for supporting copy; display headings stay as designed. */
+.plan-tag { font-size:10px; }
+.nav-item { font-size:14px; }
+.sidebar-hint strong { font-size:12px; }
+.sidebar-hint small { font-size:10px; }
+.sidebar-footnote { font-size:11px; }
+.version { font-size:10px; }
+.eyebrow { font-size:10px; }
+.lead { font-size:15px; }
+.shortcut-copy strong { font-size:14px; }
+.shortcut-copy p { font-size:12px; }
+.shortcut-binding { font-size:10px; }
+.shortcut-binding small { font-size:9px; }
+.shortcut-binding code,.tip-keys code,.sidebar-hint code { font-size:10px; }
+.shortcut-action.setup-shortcut { font-size:10px; }
+.section-heading p,.rail-title p { font-size:11px; }
+.section-note { font-size:10px; }
+.mode-label { font-size:9px; }
+.mode-card p { font-size:11px; }
+.mode-link { font-size:11px; }
+.home-footer-card strong { font-size:11px; }
+.home-footer-card p { font-size:10px; }
+.quiet-link,.rail-link,.see-all { font-size:10px; }
+.connection-state { font-size:9px; }
+.rail-title h2 { font-size:13px; }
+.setup-row small { font-size:10px; }
+.setup-row strong { font-size:11px; }
+.setup-status { font-size:9px; }
+.shortcut-tip strong,.shortcut-tip p,.tip-keys { font-size:10px; }
+.recent-empty { font-size:10px; }
+.recent-row strong { font-size:10px; }
+.recent-row small { font-size:9px; }
+.page-intro>div>p:last-child { font-size:12px; }
+.empty-state { font-size:11px; }
+.search-box input { font-size:11px; }
+.filter-chip { font-size:10px; }
+.session-row strong { font-size:11px; }
+.session-row small { font-size:9px; }
+.session-row p { font-size:10px; }
+.transcript-body { font-size:12px; }
+.add-term label { font-size:12px; }
+.add-term input { font-size:11px; }
+.add-term small { font-size:10px; }
+.primary-button,.secondary-button { font-size:11px; }
+.dictionary-heading span { font-size:10px; }
+.term-row { font-size:11px; }
+.term-row button { font-size:10px; }
+.settings-nav button { font-size:11px; }
+.settings-group>p { font-size:11px; }
+.setting-row strong { font-size:11px; }
+.setting-row small,.setting-info { font-size:10px; }
+.settings-action { font-size:10px; }
+.account-card strong { font-size:11px; }
+.account-card small { font-size:10px; }
+.feedback { font-size:11px; }
+.consent-dialog form>p:not(.eyebrow) { font-size:11px; }
+.consent-check { font-size:10px; }
+.shortcut-dialog form>p:not(.eyebrow),.shortcut-dialog ol { font-size:11px; }
+.shortcut-dialog .shortcut-footnote { font-size:10px!important; }
+.small-button { font-size:10px; }
+@media (max-width:680px) {
+  .nav-item { font-size:0; }
+  .shortcut-copy p { font-size:10px; }
+  .shortcut-binding code { font-size:9px; }
+  .shortcut-action.setup-shortcut { font-size:9px; }
+  .home-heading .lead { font-size:12px; }
+}
