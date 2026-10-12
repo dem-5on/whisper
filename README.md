@@ -243,7 +243,8 @@ One-time plans can instead set `"billing_mode":"one_time"`, a fixed
 `{"pro-monthly":{"billing_mode":"one_time","period_days":30,"channels":["mobile_money"],"amount_minor":1250,"currency":"GHS","features":["cloud_transcription","diarization"]}}`).
 For these plans Paystack collects one payment, and verified successful charges
 grant the configured access term; the user must manually renew with a new
-checkout when it expires. A one-time payment is never represented as an
+checkout when it expires. Renewing early stacks the new term after the
+existing paid-through date. A one-time payment is never represented as an
 auto-renewing subscription.
 Use actual approved pricing and Paystack plan codes in deployment config; the
 examples are illustrative only. The server supplies the plan code (for

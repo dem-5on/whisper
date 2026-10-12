@@ -290,9 +290,17 @@ def apply_paystack_subscription_event(
             if not isinstance(period_days, int) or isinstance(period_days, bool) or not 1 <= period_days <= 366:
                 return False
             paid_at = datetime.fromisoformat(event.occurred_at.replace("Z", "+00:00"))
-            period_end = (paid_at + timedelta(days=period_days)).astimezone(UTC).isoformat(timespec="seconds")
+            prior_period_end = store.latest_manual_period_end(user_id, plan_id, now=paid_at)
+            period_start = paid_at
+            if prior_period_end:
+                prior_end = datetime.fromisoformat(prior_period_end.replace("Z", "+00:00"))
+                if prior_end.astimezone(UTC) > paid_at.astimezone(UTC):
+                    period_start = prior_end
+            period_end = (period_start + timedelta(days=period_days)).astimezone(UTC).isoformat(timespec="seconds")
         except (AttributeError, TypeError, ValueError):
             return False
+        except BillingStoreError as exc:
+            raise PaystackWebhookError("Could not resolve manual renewal term") from exc
     try:
         return store.apply_verified_event(
             provider="paystack", event_id=event.digest,

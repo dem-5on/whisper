@@ -408,6 +408,32 @@ class BillingStore:
             raise BillingStoreError("Could not find a manageable subscription") from exc
         return row[0] if row else None
 
+    def latest_manual_period_end(
+        self, user_id: str, plan_id: str, *, provider: str = "paystack",
+        now: datetime | None = None,
+    ) -> str | None:
+        """Find the furthest unexpired one-time term for safe early renewal stacking."""
+        for label, value in (("user ID", user_id), ("plan ID", plan_id)):
+            if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{label} is invalid")
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("lookup time must include a timezone")
+        timestamp = current.astimezone(UTC).isoformat(timespec="seconds")
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    """SELECT MAX(current_period_end) FROM subscriptions
+                       WHERE provider = ? AND user_id = ? AND plan_id = ?
+                         AND status IN ('active', 'non_renewing')
+                         AND current_period_end > ?
+                         AND provider_subscription_id LIKE 'once-%'""",
+                    (provider, user_id, plan_id, timestamp),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not read existing manual renewal term") from exc
+        return row[0] if row and isinstance(row[0], str) else None
+
     def has_active_feature(
         self, user_id: str, feature: str, plan_features: Mapping[str, Collection[str]],
         *, now: datetime | None = None,

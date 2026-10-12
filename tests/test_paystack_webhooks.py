@@ -181,6 +181,21 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         subscription = self.store.get_subscription("paystack", "once-manual-checkout")
         self.assertEqual(subscription["user_id"], "account-abc")
         self.assertEqual(subscription["current_period_end"], "2026-11-11T12:00:00+00:00")
+        self.store.record_checkout(
+            reference="manual-checkout-2", user_id="account-abc", plan_id="pro-monthly",
+            amount_minor=1250, currency="GHS", billing_mode="one_time", period_days=30,
+        )
+        early_renewal = self.event("charge.success", "w", {
+            "status": "success", "reference": "manual-checkout-2", "amount": 1250,
+            "currency": "GHS", "created_at": "2026-10-20T12:00:00Z",
+            "metadata": {"wicx_user_id": "account-abc", "wicx_plan_id": "pro-monthly"},
+            "_wicx_manual_checkout": {
+                "reference": "manual-checkout-2", "plan_id": "pro-monthly", "period_days": 30,
+            },
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, early_renewal, {"pro-monthly": plan}))
+        renewed = self.store.get_subscription("paystack", "once-manual-checkout-2")
+        self.assertEqual(renewed["current_period_end"], "2026-12-11T12:00:00+00:00")
 
     def test_manual_charge_requires_reference_and_plan_match(self) -> None:
         plan = PaystackPlan("pro-monthly", "", 1250, "GHS", billing_mode="one_time")
