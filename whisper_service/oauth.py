@@ -36,6 +36,7 @@ class OAuthTransactionError(RuntimeError):
 class OAuthStart:
     state: str
     nonce: str
+    provider_pkce_challenge: str
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class PendingOAuthCallback:
     provider: str
     nonce: str
     pkce_challenge: str
+    provider_pkce_verifier: str
 
 
 class OAuthTransactionStore:
@@ -66,6 +68,7 @@ class OAuthTransactionStore:
                         provider TEXT NOT NULL CHECK (provider IN ('google', 'apple')),
                         nonce TEXT NOT NULL,
                         pkce_challenge TEXT NOT NULL,
+                        provider_pkce_verifier TEXT NOT NULL,
                         expires_at TEXT NOT NULL
                     );
                     CREATE TABLE IF NOT EXISTS oauth_handoffs (
@@ -76,6 +79,11 @@ class OAuthTransactionStore:
                     );
                     """
                 )
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(oauth_transactions)")}
+                if "provider_pkce_verifier" not in columns:
+                    connection.execute(
+                        "ALTER TABLE oauth_transactions ADD COLUMN provider_pkce_verifier TEXT NOT NULL DEFAULT ''"
+                    )
         except sqlite3.Error as exc:
             raise OAuthTransactionError("Could not initialize OAuth transaction database") from exc
 
@@ -89,20 +97,22 @@ class OAuthTransactionStore:
         current = _aware_utc(now)
         state = secrets.token_urlsafe(32)
         nonce = secrets.token_urlsafe(32)
+        provider_verifier = secrets.token_urlsafe(48)
+        provider_challenge = _challenge(provider_verifier)
         try:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 connection.execute("DELETE FROM oauth_transactions WHERE expires_at <= ?", (_timestamp(current),))
                 connection.execute("DELETE FROM oauth_handoffs WHERE expires_at <= ?", (_timestamp(current),))
                 connection.execute(
-                    "INSERT INTO oauth_transactions VALUES (?, ?, ?, ?, ?)",
-                    (_digest(state), provider, nonce, pkce_challenge,
+                    "INSERT INTO oauth_transactions VALUES (?, ?, ?, ?, ?, ?)",
+                    (_digest(state), provider, nonce, pkce_challenge, provider_verifier,
                      _timestamp(current + _TRANSACTION_TTL)),
                 )
                 connection.commit()
         except sqlite3.Error as exc:
             raise OAuthTransactionError("Could not create OAuth transaction") from exc
-        return OAuthStart(state=state, nonce=nonce)
+        return OAuthStart(state=state, nonce=nonce, provider_pkce_challenge=provider_challenge)
 
     def pending_callback(self, *, provider: str, state: str,
                           now: datetime | None = None) -> PendingOAuthCallback:
@@ -113,15 +123,17 @@ class OAuthTransactionStore:
         try:
             with closing(self._connect()) as connection:
                 row = connection.execute(
-                    """SELECT provider, nonce, pkce_challenge, expires_at
+                    """SELECT provider, nonce, pkce_challenge, provider_pkce_verifier, expires_at
                        FROM oauth_transactions WHERE state_digest = ?""",
                     (_digest(state),),
                 ).fetchone()
         except sqlite3.Error as exc:
             raise OAuthTransactionError("Could not read OAuth transaction") from exc
-        if row is None or row[0] != provider or _parse_timestamp(row[3]) <= current:
+        if row is None or row[0] != provider or _parse_timestamp(row[4]) <= current:
             raise OAuthTransactionError("OAuth callback state is invalid or expired")
-        return PendingOAuthCallback(provider=row[0], nonce=row[1], pkce_challenge=row[2])
+        return PendingOAuthCallback(
+            provider=row[0], nonce=row[1], pkce_challenge=row[2], provider_pkce_verifier=row[3],
+        )
 
     def complete_callback(self, *, provider: str, state: str, verified_nonce: str,
                           account_id: str,
@@ -173,9 +185,7 @@ class OAuthTransactionStore:
         if not isinstance(pkce_verifier, str) or not _PKCE_VERIFIER.fullmatch(pkce_verifier):
             raise OAuthTransactionError("OAuth handoff proof is invalid")
         current = _aware_utc(now)
-        verifier_challenge = base64.urlsafe_b64encode(hashlib.sha256(
-            pkce_verifier.encode("ascii")
-        ).digest()).rstrip(b"=").decode("ascii")
+        verifier_challenge = _challenge(pkce_verifier)
         try:
             with closing(self._connect()) as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -231,3 +241,37 @@ def _parse_timestamp(value: str) -> datetime:
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _challenge(verifier: str) -> str:
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
+
+
+def authorization_url(*, provider: str, client_id: str, redirect_uri: str,
+                      transaction: OAuthStart) -> str:
+    """Build the provider authorization URL; secrets never enter the desktop."""
+    from urllib.parse import urlencode
+
+    if provider not in _PROVIDERS:
+        raise ValueError("identity provider must be google or apple")
+    if not client_id or len(client_id) > 512:
+        raise ValueError("provider client ID is required")
+    if not redirect_uri.startswith("https://") or len(redirect_uri) > 2048:
+        raise ValueError("provider callback must be an HTTPS URL")
+    endpoint = {
+        "google": "https://accounts.google.com/o/oauth2/v2/auth",
+        "apple": "https://appleid.apple.com/auth/authorize",
+    }[provider]
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile" if provider == "google" else "openid email",
+        "state": transaction.state,
+        "nonce": transaction.nonce,
+        "code_challenge": transaction.provider_pkce_challenge,
+        "code_challenge_method": "S256",
+    }
+    if provider == "apple":
+        params["response_mode"] = "form_post"
+    return f"{endpoint}?{urlencode(params)}"

@@ -8,7 +8,9 @@ import stat
 import tempfile
 import unittest
 
-from whisper_service.oauth import OAuthTransactionError, OAuthTransactionStore
+from urllib.parse import parse_qs, urlparse
+
+from whisper_service.oauth import OAuthTransactionError, OAuthTransactionStore, authorization_url
 
 
 def _challenge(verifier: str) -> str:
@@ -34,6 +36,7 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         pending = self.store.pending_callback(provider="google", state=started.state, now=self.now)
         self.assertEqual(pending.nonce, started.nonce)
         self.assertEqual(pending.pkce_challenge, _challenge(self.verifier))
+        self.assertEqual(_challenge(pending.provider_pkce_verifier), started.provider_pkce_challenge)
         code = self.store.complete_callback(
             provider="google", state=started.state, verified_nonce=pending.nonce,
             account_id="account-1", now=self.now,
@@ -103,6 +106,28 @@ class OAuthTransactionStoreTests(unittest.TestCase):
             self.store.begin(
                 provider="google", pkce_challenge=_challenge(self.verifier),
                 now=datetime(2026, 10, 12),
+            )
+
+    def test_authorization_urls_use_https_and_provider_pkce(self) -> None:
+        started = self._start()
+        google_url = authorization_url(
+            provider="google", client_id="google-client", redirect_uri="https://auth.example.com/callback/google",
+            transaction=started,
+        )
+        google = parse_qs(urlparse(google_url).query)
+        self.assertEqual(google["response_type"], ["code"])
+        self.assertEqual(google["code_challenge"], [started.provider_pkce_challenge])
+        self.assertEqual(google["code_challenge_method"], ["S256"])
+        self.assertEqual(google["nonce"], [started.nonce])
+        apple_url = authorization_url(
+            provider="apple", client_id="apple-service-id", redirect_uri="https://auth.example.com/callback/apple",
+            transaction=started,
+        )
+        self.assertEqual(parse_qs(urlparse(apple_url).query)["response_mode"], ["form_post"])
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            authorization_url(
+                provider="apple", client_id="client", redirect_uri="http://localhost/callback",
+                transaction=started,
             )
 
 
