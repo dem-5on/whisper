@@ -415,6 +415,73 @@ async fn create_checkout(
         .map_err(|_| "Could not open the Paystack checkout in your browser.".to_string())
 }
 
+fn trusted_management_url(candidate: &str) -> bool {
+    let Ok(url) = url::Url::parse(candidate) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("paystack.com")
+        && url.path().starts_with("/manage/subscriptions/")
+        && url.query().is_some_and(|query| !query.is_empty())
+        && url.username().is_empty()
+        && url.password().is_none()
+}
+
+#[tauri::command]
+async fn manage_subscription(
+    plan_id: String,
+    auth: State<'_, OAuthClientState>,
+) -> Result<(), String> {
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("Save your Wicx service URL before managing a subscription.".to_string());
+    }
+    let token = keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.get_password())
+        .map_err(|_| "Sign in to manage your subscription.".to_string())?;
+    let response = reqwest::Client::new()
+        .post(format!("{origin}/v1/billing/manage"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "plan_id": plan_id }))
+        .send()
+        .await
+        .map_err(|_| "Could not reach the Wicx subscription service.".to_string())?;
+    match response.status().as_u16() {
+        401 => return Err("Your Wicx session has expired. Sign in again.".to_string()),
+        404 => return Err("No active recurring subscription was found for this plan.".to_string()),
+        409 => {
+            return Err(
+                "This plan renews manually and has no automatic subscription to manage."
+                    .to_string(),
+            )
+        }
+        503 => {
+            return Err(
+                "Subscription management is not configured on this Wicx service yet.".to_string(),
+            )
+        }
+        status if !response.status().is_success() => {
+            return Err(format!(
+                "Wicx could not prepare subscription management (HTTP {status})."
+            ));
+        }
+        _ => {}
+    }
+    let payload = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| "The subscription service returned an invalid response.".to_string())?;
+    let management_url = payload
+        .get("management_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "The subscription service did not return a management link.".to_string())?;
+    if !trusted_management_url(management_url) {
+        return Err("The subscription service returned an untrusted management link.".to_string());
+    }
+    open::that(management_url)
+        .map_err(|_| "Could not open subscription management in your browser.".to_string())
+}
+
 #[tauri::command]
 async fn fetch_billing_status(
     auth: State<'_, OAuthClientState>,
@@ -1109,6 +1176,7 @@ fn main() {
             fetch_billing_status,
             fetch_billing_plans,
             create_checkout,
+            manage_subscription,
             show_key_settings,
             open_diagnostics_folder
         ])
@@ -1126,7 +1194,8 @@ fn main() {
 mod tests {
     use super::{
         auth_handoff_code, load_or_create_websocket_token, panel_height_for_monitor,
-        panel_position, public_billing_plans, public_billing_status, validated_api_origin,
+        panel_position, public_billing_plans, public_billing_status, trusted_management_url,
+        validated_api_origin,
     };
     use std::{fs, path::PathBuf};
 
@@ -1253,5 +1322,24 @@ mod tests {
         assert_eq!(plans["plans"].as_array().unwrap().len(), 1);
         assert_eq!(plans["plans"][0]["currency"], "GHS");
         assert!(plans["plans"][0].get("paystack_code").is_none());
+    }
+
+    #[test]
+    fn accepts_only_paystack_subscription_management_links() {
+        assert!(trusted_management_url(
+            "https://paystack.com/manage/subscriptions/example?token=secret"
+        ));
+        assert!(!trusted_management_url(
+            "https://checkout.paystack.com/manage/subscriptions/example?token=secret"
+        ));
+        assert!(!trusted_management_url(
+            "https://paystack.com.evil.test/manage/subscriptions/example?token=secret"
+        ));
+        assert!(!trusted_management_url(
+            "http://paystack.com/manage/subscriptions/example?token=secret"
+        ));
+        assert!(!trusted_management_url(
+            "https://user@paystack.com/manage/subscriptions/example?token=secret"
+        ));
     }
 }

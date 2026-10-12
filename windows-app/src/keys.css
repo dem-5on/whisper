@@ -50,6 +50,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .billing-features:empty { display: none; }
 .billing-features li { padding: 4px 7px; border: 1px solid #41424a; border-radius: 8px; color: #a5a6ae; background: #303139; font-size: 11px; }
 .billing-features li[data-enabled="true"] { border-color: #2878f066; color: #a9c8ff; }
+.account-subscriptions { display: grid; gap: 7px; margin-top: 7px; }
+.account-subscriptions:empty { display: none; }
+.subscription-row { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 8px; border: 1px solid #41424a; border-radius: 10px; background: #303139; }
+.subscription-row p { margin: 0; color: #c3c4cb; font-size: 11px; line-height: 1.4; }
+.subscription-row button { flex: 0 0 auto; min-height: 30px; padding: 0 9px; border-radius: 9px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .plans-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid #41424a; }
 .billing-plans { display: grid; gap: 7px; margin-top: 8px; }
 .billing-plans:empty { display: none; }

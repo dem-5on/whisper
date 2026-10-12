@@ -49,6 +49,7 @@ let liveSettingsDirty = false;
 const pending = new Map();
 let accountSignedIn = false;
 let selectedPlanId = "";
+let cachedBillingPlans = [];
 
 function selectedProvider() {
   return PROVIDERS[ui.provider.value];
@@ -101,6 +102,7 @@ async function refreshPlans() {
   try {
     const result = await invoke("fetch_billing_plans");
     const plans = Array.isArray(result.plans) ? result.plans : [];
+    cachedBillingPlans = plans;
     if (plans.length === 0) {
       ui.plansState.textContent = "No plans are currently available.";
       return;
@@ -164,6 +166,12 @@ async function refreshBilling() {
   clearBilling("Checking subscription access…");
   try {
     const status = await invoke("fetch_billing_status");
+    try {
+      const catalog = await invoke("fetch_billing_plans");
+      cachedBillingPlans = Array.isArray(catalog.plans) ? catalog.plans : [];
+    } catch {
+      cachedBillingPlans = [];
+    }
     ui.billingFeatures.replaceChildren();
     const features = Object.entries(status.features || {});
     for (const [feature, enabled] of features) {
@@ -174,12 +182,47 @@ async function refreshBilling() {
       ui.billingFeatures.append(item);
     }
     const subscriptions = Array.isArray(status.subscriptions) ? status.subscriptions : [];
-    const plans = subscriptions.map((subscription) => {
-      const name = String(subscription.plan_id || "Plan").replaceAll("-", " ");
-      const state = String(subscription.status || "unknown");
-      return `${name} (${state})`;
-    });
-    ui.billingPlan.textContent = plans.length ? `Plans: ${plans.join(", ")}` : "No subscription is currently on this account.";
+    ui.billingPlan.replaceChildren();
+    if (subscriptions.length === 0) {
+      ui.billingPlan.textContent = "No subscription is currently on this account.";
+    } else {
+      for (const subscription of subscriptions) {
+        const row = document.createElement("div");
+        row.className = "subscription-row";
+        const detail = document.createElement("p");
+        const planId = String(subscription.plan_id || "");
+        const planName = planId.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) || "Subscription";
+        const state = String(subscription.status || "unknown");
+        const endDate = subscription.current_period_end ? new Date(subscription.current_period_end) : null;
+        const paidThrough = endDate && !Number.isNaN(endDate.valueOf())
+          ? ` · paid through ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(endDate)}`
+          : "";
+        detail.textContent = `${planName} · ${state}${paidThrough}`;
+        row.append(detail);
+        const plan = cachedBillingPlans.find((candidate) => candidate.plan_id === planId);
+        if (accountSignedIn && state === "active" && plan?.billing_mode === "recurring") {
+          const manage = document.createElement("button");
+          manage.type = "button";
+          manage.className = "key-remove";
+          manage.textContent = "Manage";
+          manage.addEventListener("click", async () => {
+            manage.disabled = true;
+            try {
+              await invoke("manage_subscription", { planId });
+              ui.billingState.dataset.error = "false";
+              ui.billingState.textContent = "Subscription management opened in your browser. Changes appear here after the service verifies the update.";
+            } catch (error) {
+              ui.billingState.dataset.error = "true";
+              ui.billingState.textContent = error.message || "Could not open subscription management.";
+            } finally {
+              manage.disabled = false;
+            }
+          });
+          row.append(manage);
+        }
+        ui.billingPlan.append(row);
+      }
+    }
     ui.billingState.textContent = features.some(([, enabled]) => enabled)
       ? "Subscriber features are available on this account."
       : "Free account. Local dictation remains available.";
