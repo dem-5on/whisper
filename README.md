@@ -264,8 +264,15 @@ authenticated accounts with the `cloud_rewrite` entitlement, plus
 the allow-list is the default, and rewrite requests may select another listed
 model for comparison. OpenRouter credentials remain on the service host. Rewrite
 providers implement a small interface so a local model can be added separately
-without changing the authenticated API. The desktop rewrite setting and
-automatic transcription-to-rewrite flow are a subsequent integration step.
+without changing the authenticated API. On Windows, Dictation rewrite is
+available in Settings and is off by default. When enabled, the local
+transcription completes first, then the native app sends its text to the
+authenticated Wicx endpoint; account credentials stay in the OS credential
+store, not in the UI or transcription sidecar. The panel shows “Rewriting”
+during that step. If rewriting fails or the account lacks the entitlement, the
+original transcript is inserted and the panel reports the fallback. This
+integration currently covers Dictation only; Lecture/Meeting post-processing
+and an on-device rewrite provider remain future work.
 Use actual approved pricing and Paystack plan codes in deployment config; the
 examples are illustrative only. The server supplies the plan code (for
 recurring plans), amount, payment channel, and account metadata; clients cannot
