@@ -112,7 +112,9 @@ class HostedWhisperEngine:
                         self._publish_final(session_id, str(event.get("text", "")), generation)
                     elif kind == "session.error":
                         message = str(event.get("message", "Hosted transcription session failed"))
-                        self._report_metrics(0.0, 0.0, message[:160])
+                        code = str(event.get("code", ""))
+                        detail = f"{code}: {message}" if code else message
+                        self._report_metrics(0.0, 0.0, detail[:160])
                         return
                     elif kind == "session.closed":
                         if not received_final:
@@ -159,7 +161,10 @@ class HostedWhisperEngine:
             if event.get("type") == "session.ready":
                 return True
             if event.get("type") == "session.error":
-                raise RuntimeError(str(event.get("message", "Hosted transcription rejected the session")))
+                message = str(event.get("message", "Hosted transcription rejected the session"))
+                code = str(event.get("code", ""))
+                detail = f"{code}: {message}" if code else message
+                raise RuntimeError(detail)
         raise TimeoutError("Hosted transcription session setup timed out")
 
 

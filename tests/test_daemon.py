@@ -243,6 +243,24 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(delivery.inserted, ["Remote final transcript"])
         self.assertEqual(self.daemon.command("status")["last_backend"], "hosted-whisper")
 
+    def test_hosted_usage_limit_falls_back_to_local_and_reports_why(self) -> None:
+        delivery = FakeDelivery()
+        self.daemon.command("toggle")
+        self.daemon._hosted_live_session = True
+        self.daemon._hosted_live_error = "usage_limit: cloud allowance is used"
+        self.daemon._hosted_final_event.set()
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("Local transcript")) as make_backend, patch(
+            "transcriber.daemon.make_delivery", return_value=delivery
+        ):
+            self.daemon.command("toggle")
+            self.wait_for(State.IDLE)
+
+        self.assertEqual(delivery.inserted, ["Local transcript"])
+        self.assertEqual(make_backend.call_args.args[0].backend, "local")
+        status = self.daemon.command("status")
+        self.assertEqual(status["last_backend"], "local-fallback")
+        self.assertIn("allowance reached", status["last_notice"])
+
     def test_cancel_discards_recording_without_transcribing(self) -> None:
         with patch("transcriber.daemon.make_backend") as backend:
             self.daemon.command("toggle")

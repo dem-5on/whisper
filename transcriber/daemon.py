@@ -125,6 +125,7 @@ class TranscriberDaemon:
         self._processing_started: float | None = None
         self._last_transcript = ""
         self._last_backend: str | None = None
+        self._last_notice = ""
         self._last_duration: float | None = None
         self._data_dir = data_dir or default_data_dir()
         self._session_store = SessionStore(self._data_dir)
@@ -342,6 +343,7 @@ class TranscriberDaemon:
             self._timer.daemon = True
             self._timer.start()
         self._error = None
+        self._last_notice = ""
         self._recording_started = time.monotonic()
         self._processing_started = None
         self._set_state(State.RECORDING)
@@ -1342,13 +1344,30 @@ class TranscriberDaemon:
                     use_hosted_final = self._hosted_live_session and not is_preserved
                 if use_hosted_final:
                     if not self._hosted_final_event.wait(timeout=180.0):
-                        raise TranscriptionError("Hosted transcription service did not return a final transcript in time")
-                    with self._lock:
-                        transcript = self._hosted_final_text
-                        hosted_error = self._hosted_live_error
+                        hosted_error = "Hosted transcription service did not return a final transcript in time"
+                        transcript = None
+                    else:
+                        with self._lock:
+                            transcript = self._hosted_final_text
+                            hosted_error = self._hosted_live_error
                     if transcript is None:
-                        raise TranscriptionError(hosted_error or "Hosted transcription service did not return a final transcript")
-                    backend_name = "hosted-whisper"
+                        fallback_config = dataclasses.replace(
+                            self.config.transcription, backend="local",
+                        )
+                        LOG.warning("Hosted transcription unavailable; falling back to local: %s", _safe_error(
+                            TranscriptionError(hosted_error or "No final transcript")
+                        ))
+                        with self._inference_lock:
+                            backend = self._make_backend(fallback_config)
+                            transcript = backend.transcribe(audio)
+                        backend_name = "local-fallback"
+                        reason = (hosted_error or "").lower()
+                        if "usage_limit" in reason or "allowance" in reason or "quota" in reason:
+                            self._last_notice = "Cloud transcription allowance reached. This recording was transcribed locally."
+                        else:
+                            self._last_notice = "Cloud transcription was unavailable. This recording was transcribed locally."
+                    else:
+                        backend_name = "hosted-whisper"
                 else:
                     transcription_config = self.config.transcription
                     if mode in {"lecture", "meeting"} and transcription_config.backend != "local":
@@ -1365,7 +1384,10 @@ class TranscriberDaemon:
                             transcript = backend.transcribe(audio)
             except Exception as exc:
                 LOG.error("Transcription failed: %s", _safe_error(exc))
-                self._fail(f"Transcription failed ({_short_reason(exc)})")
+                message = f"Transcription failed ({_short_reason(exc)})"
+                if use_hosted_final:
+                    message = f"Cloud transcription failed and local fallback was unavailable ({_short_reason(exc)})"
+                self._fail(message)
                 return
             try:
                 text = process_transcript(transcript, self.config.processing)
@@ -1517,6 +1539,7 @@ class TranscriberDaemon:
             "processing_elapsed": round(processing_elapsed, 1),
             "last_audio": bool(self.last_audio_path.exists()),
             "last_backend": self._last_backend or "",
+            "last_notice": self._last_notice,
             "last_duration": round(self._last_duration, 1) if self._last_duration is not None else 0,
             "last_preview": preview,
             "has_groq_key": bool(os.environ.get("GROQ_API_KEY")),

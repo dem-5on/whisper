@@ -285,7 +285,8 @@ function updateStatus(status) {
   }
   ui.transcript.textContent = currentStatus.last_preview || "";
   ui.transcript.hidden = !currentStatus.last_preview;
-  showError(currentStatus.error || "");
+  if (currentStatus.error) showError(currentStatus.error);
+  else showFeedback(currentStatus.last_notice || "", Boolean(currentStatus.last_notice));
   const requiresKey = /API[_ ]KEY|API key|authentication|unauthorized/i.test(currentStatus.error || "");
   ui.statusActions.hidden = !requiresKey;
   ui.statusKind.hidden = !requiresKey;
