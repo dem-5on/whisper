@@ -31,6 +31,15 @@
           <button class="key-remove" type="button" data-oauth-provider="apple">Continue with Apple</button>
           <button id="sign-out" class="key-remove" type="button" hidden>Sign out</button>
         </div>
+        <section class="subscription-summary" aria-labelledby="subscription-title">
+          <div class="subscription-heading">
+            <h3 id="subscription-title">Subscription access</h3>
+            <button id="refresh-billing" class="key-remove" type="button">Refresh</button>
+          </div>
+          <p id="billing-state" class="account-help" aria-live="polite">Sign in to check your subscription.</p>
+          <ul id="billing-features" class="billing-features"></ul>
+          <p id="billing-plan" class="account-help"></p>
+        </section>
       </section>
 
       <label class="key-label" for="key-provider">Provider</label>

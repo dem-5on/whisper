@@ -28,6 +28,10 @@ const ui = {
   accountState: document.querySelector("#account-state"),
   signOut: document.querySelector("#sign-out"),
   oauthButtons: [...document.querySelectorAll("[data-oauth-provider]")],
+  billingState: document.querySelector("#billing-state"),
+  billingFeatures: document.querySelector("#billing-features"),
+  billingPlan: document.querySelector("#billing-plan"),
+  refreshBilling: document.querySelector("#refresh-billing"),
 };
 
 let connection;
@@ -71,8 +75,49 @@ async function refreshAccount() {
     ui.signOut.hidden = !signedIn;
     ui.oauthButtons.forEach((button) => { button.hidden = Boolean(signedIn); });
     setAccountState(signedIn ? "You are signed in to your Wicx account." : "Not signed in. Sign in to unlock subscription features.");
+    if (signedIn) await refreshBilling();
+    else clearBilling("Sign in to check your subscription.");
   } catch (error) {
     setAccountState(error.message || "Could not load account settings.", true);
+  }
+}
+
+function clearBilling(message, isError = false) {
+  ui.billingState.textContent = message;
+  ui.billingState.dataset.error = String(isError);
+  ui.billingFeatures.replaceChildren();
+  ui.billingPlan.textContent = "";
+}
+
+async function refreshBilling() {
+  ui.refreshBilling.disabled = true;
+  clearBilling("Checking subscription access…");
+  try {
+    const status = await invoke("fetch_billing_status");
+    ui.billingFeatures.replaceChildren();
+    const features = Object.entries(status.features || {});
+    for (const [feature, enabled] of features) {
+      const item = document.createElement("li");
+      item.dataset.enabled = String(enabled);
+      const label = feature.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+      item.textContent = `${label}: ${enabled ? "Included" : "Not included"}`;
+      ui.billingFeatures.append(item);
+    }
+    const subscriptions = Array.isArray(status.subscriptions) ? status.subscriptions : [];
+    const plans = subscriptions.map((subscription) => {
+      const name = String(subscription.plan_id || "Plan").replaceAll("-", " ");
+      const state = String(subscription.status || "unknown");
+      return `${name} (${state})`;
+    });
+    ui.billingPlan.textContent = plans.length ? `Plans: ${plans.join(", ")}` : "No subscription is currently on this account.";
+    ui.billingState.textContent = features.some(([, enabled]) => enabled)
+      ? "Subscriber features are available on this account."
+      : "Free account. Local dictation remains available.";
+    ui.billingState.dataset.error = "false";
+  } catch (error) {
+    clearBilling(error.message || "Could not check subscription access.", true);
+  } finally {
+    ui.refreshBilling.disabled = false;
   }
 }
 
@@ -93,6 +138,7 @@ ui.saveAuthUrl.addEventListener("click", async () => {
     const origin = await invoke("save_auth_api_url", { url: ui.authUrl.value });
     ui.authUrl.value = origin;
     setAccountState("Wicx service URL saved.");
+    if (await invoke("auth_is_signed_in")) await refreshBilling();
   } catch (error) {
     setAccountState(error.message || "Could not save the service URL.", true);
   }
@@ -120,6 +166,8 @@ ui.signOut.addEventListener("click", async () => {
     setAccountState(error.message || "Could not sign out.", true);
   }
 });
+
+ui.refreshBilling.addEventListener("click", refreshBilling);
 
 async function connect() {
   ui.state.textContent = "Connecting to Wicx…";

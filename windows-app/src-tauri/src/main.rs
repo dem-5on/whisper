@@ -238,6 +238,82 @@ fn sign_out() -> Result<(), String> {
     }
 }
 
+fn public_billing_status(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let object = payload
+        .as_object()
+        .ok_or_else(|| "The billing service returned an invalid status.".to_string())?;
+    let features = object
+        .get("features")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "The billing service returned an invalid feature list.".to_string())?
+        .iter()
+        .filter_map(|(name, enabled)| {
+            enabled
+                .as_bool()
+                .map(|value| (name.clone(), serde_json::Value::Bool(value)))
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let subscriptions = object
+        .get("subscriptions")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "The billing service returned an invalid plan list.".to_string())?
+        .iter()
+        .filter_map(|subscription| {
+            let source = subscription.as_object()?;
+            let mut summary = serde_json::Map::new();
+            for field in ["plan_id", "status", "current_period_end"] {
+                if let Some(value) = source.get(field).and_then(serde_json::Value::as_str) {
+                    summary.insert(
+                        field.to_string(),
+                        serde_json::Value::String(value.to_string()),
+                    );
+                }
+            }
+            Some(serde_json::Value::Object(summary))
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({
+        "features": features,
+        "subscriptions": subscriptions,
+    }))
+}
+
+#[tauri::command]
+async fn fetch_billing_status(
+    auth: State<'_, OAuthClientState>,
+) -> Result<serde_json::Value, String> {
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("Save your Wicx service URL before checking subscription access.".to_string());
+    }
+    let token = keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.get_password())
+        .map_err(|_| "Sign in to check your subscription access.".to_string())?;
+    let response = reqwest::Client::new()
+        .get(format!("{origin}/v1/billing/status"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|_| "Could not reach the Wicx subscription service.".to_string())?;
+    match response.status().as_u16() {
+        401 => return Err("Your Wicx session has expired. Sign in again.".to_string()),
+        404 => {
+            return Err("Subscription status is not enabled on this Wicx service yet.".to_string())
+        }
+        status if !response.status().is_success() => {
+            return Err(format!(
+                "Wicx could not check subscription access (HTTP {status})."
+            ));
+        }
+        _ => {}
+    }
+    let payload = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| "The Wicx subscription service returned an invalid response.".to_string())?;
+    public_billing_status(payload)
+}
+
 fn auth_handoff_code(candidate: &str) -> Option<String> {
     let url = url::Url::parse(candidate).ok()?;
     if url.scheme() != "wicx"
@@ -893,6 +969,7 @@ fn main() {
             complete_auth_callback,
             auth_is_signed_in,
             sign_out,
+            fetch_billing_status,
             show_key_settings,
             open_diagnostics_folder
         ])
@@ -910,7 +987,7 @@ fn main() {
 mod tests {
     use super::{
         auth_handoff_code, load_or_create_websocket_token, panel_height_for_monitor,
-        panel_position, validated_api_origin,
+        panel_position, public_billing_status, validated_api_origin,
     };
     use std::{fs, path::PathBuf};
 
@@ -991,5 +1068,27 @@ mod tests {
         } else {
             assert!(validated_api_origin("http://localhost:8000").is_err());
         }
+    }
+
+    #[test]
+    fn exposes_only_safe_subscription_fields() {
+        let status = public_billing_status(serde_json::json!({
+            "user_id": "must-not-leak",
+            "features": {"cloud_transcription": true, "diarization": false, "invalid": "yes"},
+            "subscriptions": [{
+                "plan_id": "pro-monthly",
+                "status": "active",
+                "current_period_end": "2026-11-01T00:00:00Z",
+                "provider_subscription_id": "must-not-leak"
+            }]
+        }))
+        .expect("valid billing response should be summarized");
+        assert_eq!(status["features"]["cloud_transcription"], true);
+        assert_eq!(status["features"]["diarization"], false);
+        assert!(status.get("user_id").is_none());
+        assert!(status["features"].get("invalid").is_none());
+        assert!(status["subscriptions"][0]
+            .get("provider_subscription_id")
+            .is_none());
     }
 }
