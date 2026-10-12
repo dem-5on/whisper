@@ -11,6 +11,8 @@ import secrets
 import stat
 from typing import Mapping
 
+from .accounts import AccountStore
+
 
 class AuthenticationConfigError(RuntimeError):
     """The service credential database is missing or invalid."""
@@ -60,6 +62,25 @@ class TokenAuthenticator:
             if hmac.compare_digest(digest, stored_digest):
                 matched_user = user_id
         return matched_user
+
+
+class CombinedAuthenticator:
+    """Accept operator-issued tokens and persistent OAuth account sessions."""
+
+    def __init__(self, operator_tokens: TokenAuthenticator, account_store: AccountStore) -> None:
+        self.operator_tokens = operator_tokens
+        self.account_store = account_store
+
+    def authenticate(self, authorization: str | None) -> str | None:
+        user_id = self.operator_tokens.authenticate(authorization)
+        if user_id is not None:
+            return user_id
+        if not authorization:
+            return None
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.lower() != "bearer" or not token or token.strip() != token:
+            return None
+        return self.account_store.authenticate_session(token)
 
 
 def add_user_token(path: str | Path, user_id: str) -> str:

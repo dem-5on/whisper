@@ -5,9 +5,12 @@ from __future__ import annotations
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from datetime import timedelta
+import hashlib
 import os
 from pathlib import Path
 import re
+import secrets
 import sqlite3
 import stat
 from uuid import uuid4
@@ -15,6 +18,7 @@ from uuid import uuid4
 
 _PROVIDERS = frozenset({"google", "apple"})
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+\Z")
+_SESSION_TTL = timedelta(days=30)
 
 
 class AccountStoreError(RuntimeError):
@@ -63,6 +67,13 @@ class AccountStore:
                     );
                     CREATE INDEX IF NOT EXISTS account_identities_by_account
                         ON account_identities (account_id);
+                    CREATE TABLE IF NOT EXISTS account_sessions (
+                        token_digest TEXT PRIMARY KEY,
+                        account_id TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+                    );
                     """
                 )
         except sqlite3.Error as exc:
@@ -130,6 +141,57 @@ class AccountStore:
         except sqlite3.Error as exc:
             raise AccountStoreError("Could not resolve provider identity") from exc
 
+    def issue_session(self, account_id: str, *, now: datetime | None = None) -> str:
+        """Issue a 30-day opaque bearer token, storing only its digest."""
+        if not isinstance(account_id, str) or not account_id.strip() or len(account_id) > 128:
+            raise ValueError("account ID is invalid")
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("session event time must include a timezone")
+        current = current.astimezone(UTC)
+        token = secrets.token_urlsafe(32)
+        digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("DELETE FROM account_sessions WHERE expires_at <= ?", (_stamp(current),))
+                exists = connection.execute(
+                    "SELECT 1 FROM accounts WHERE account_id = ?", (account_id,),
+                ).fetchone()
+                if exists is None:
+                    connection.rollback()
+                    raise AccountStoreError("Cannot issue a session for an unknown account")
+                connection.execute(
+                    "INSERT INTO account_sessions VALUES (?, ?, ?, ?)",
+                    (digest, account_id, _stamp(current), _stamp(current + _SESSION_TTL)),
+                )
+                connection.commit()
+        except AccountStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise AccountStoreError("Could not issue account session") from exc
+        return token
+
+    def authenticate_session(self, token: str | None, *, now: datetime | None = None) -> str | None:
+        """Resolve an unexpired session token without retaining its raw value."""
+        if not isinstance(token, str) or not token or token.strip() != token or len(token) > 256:
+            return None
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("session event time must include a timezone")
+        digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    "SELECT account_id, expires_at FROM account_sessions WHERE token_digest = ?",
+                    (digest,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise AccountStoreError("Could not authenticate account session") from exc
+        if row is None or datetime.fromisoformat(row[1]) <= current.astimezone(UTC):
+            return None
+        return row[0]
+
     def _prepare_private_file(self) -> None:
         try:
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -149,3 +211,7 @@ class AccountStore:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+
+def _stamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="seconds")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import stat
 import sqlite3
@@ -84,6 +84,22 @@ class AccountStoreTests(unittest.TestCase):
         self.path.chmod(0o644)
         with self.assertRaises(AccountStoreError):
             AccountStore(self.path)
+
+    def test_account_sessions_are_hashed_expiring_and_account_scoped(self) -> None:
+        created = self.store.resolve_verified_identity(provider="google", subject="session-subject")
+        now = datetime(2026, 10, 12, tzinfo=UTC)
+        token = self.store.issue_session(created.account_id, now=now)
+        self.assertEqual(self.store.authenticate_session(token, now=now), created.account_id)
+        self.assertIsNone(self.store.authenticate_session(token + "x", now=now))
+        self.assertIsNone(self.store.authenticate_session(token, now=now + timedelta(days=30)))
+        with sqlite3.connect(self.path) as connection:
+            stored = connection.execute("SELECT token_digest FROM account_sessions").fetchone()[0]
+        self.assertNotEqual(stored, token)
+        self.assertEqual(len(stored), 64)
+
+    def test_cannot_issue_session_for_unknown_account(self) -> None:
+        with self.assertRaisesRegex(AccountStoreError, "unknown account"):
+            self.store.issue_session("not-an-account")
 
 
 if __name__ == "__main__":

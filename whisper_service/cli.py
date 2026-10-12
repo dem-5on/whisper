@@ -12,7 +12,8 @@ import sys
 import time
 from pathlib import Path
 
-from .auth import add_user_token, revoke_user_tokens
+from .auth import CombinedAuthenticator, TokenAuthenticator, add_user_token, revoke_user_tokens
+from .accounts import AccountStore
 from .billing import BillingStore
 from .entitlements import grant_feature, list_features, revoke_feature
 from .hardware import HardwareDetectionError, detect_hardware
@@ -121,12 +122,12 @@ def main() -> None:
 
 
 async def _run_service(args: argparse.Namespace) -> None:
-    from .auth import TokenAuthenticator
     from .entitlements import EntitlementStore, SubscriptionEntitlementStore
     from .server import serve_websocket
     from .worker import prepare_worker
 
-    authenticator = TokenAuthenticator.from_file(args.token_file)
+    account_store = AccountStore(_default_account_database())
+    authenticator = CombinedAuthenticator(TokenAuthenticator.from_file(args.token_file), account_store)
     manual_entitlements = EntitlementStore(args.entitlements_file)
     profile = ModelProfile(args.profile, args.model, ("cpu", "cuda"))
     selection, worker = await prepare_worker(
@@ -213,6 +214,14 @@ def _default_billing_database() -> Path:
         return Path(override)
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     return data_home / "whisper-server" / "billing.sqlite3"
+
+
+def _default_account_database() -> Path:
+    override = os.environ.get("WHISPER_ACCOUNTS_DATABASE")
+    if override:
+        return Path(override)
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return data_home / "whisper-server" / "accounts.sqlite3"
 
 
 def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
