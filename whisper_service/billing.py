@@ -43,6 +43,7 @@ class BillingStore:
                         user_id TEXT NOT NULL,
                         plan_id TEXT NOT NULL,
                         status TEXT NOT NULL,
+                        status_before_dispute TEXT,
                         current_period_end TEXT,
                         last_provider_event_at TEXT,
                         updated_at TEXT NOT NULL,
@@ -78,6 +79,10 @@ class BillingStore:
                 subscription_columns = {
                     row[1] for row in connection.execute("PRAGMA table_info(subscriptions)")
                 }
+                if "status_before_dispute" not in subscription_columns:
+                    connection.execute(
+                        "ALTER TABLE subscriptions ADD COLUMN status_before_dispute TEXT"
+                    )
                 if "last_provider_event_at" not in subscription_columns:
                     connection.execute(
                         "ALTER TABLE subscriptions ADD COLUMN last_provider_event_at TEXT"
@@ -189,7 +194,7 @@ class BillingStore:
                 raise ValueError(f"{name} is invalid")
         if status not in {"refunded", "disputed"}:
             raise ValueError("payment lifecycle status is invalid")
-        _normalize_timestamp(event_time)
+        provider_event_time = _normalize_timestamp(event_time)
         current = now or datetime.now(UTC)
         if current.tzinfo is None or current.utcoffset() is None:
             raise ValueError("event time must include a timezone")
@@ -212,15 +217,124 @@ class BillingStore:
                 if cursor.rowcount == 0:
                     connection.rollback()
                     return False
-                connection.execute(
-                    """UPDATE subscriptions SET status = ?, updated_at = ?
+                subscription = connection.execute(
+                    """SELECT status, last_provider_event_at FROM subscriptions
                        WHERE provider = ? AND provider_subscription_id = ?""",
-                    (status, received_at, provider, payment[0]),
-                )
+                    (provider, payment[0]),
+                ).fetchone()
+                if subscription is not None:
+                    old_status = subscription[0]
+                    if status == "disputed" and old_status not in {"disputed", "refunded"}:
+                        connection.execute(
+                            """UPDATE subscriptions SET status = 'disputed',
+                               status_before_dispute = ?,
+                               last_provider_event_at = CASE
+                                   WHEN ? IS NOT NULL AND (last_provider_event_at IS NULL OR ? > last_provider_event_at)
+                                   THEN ? ELSE last_provider_event_at END,
+                               updated_at = ?
+                               WHERE provider = ? AND provider_subscription_id = ?""",
+                            (old_status, provider_event_time, provider_event_time, provider_event_time,
+                             received_at, provider, payment[0]),
+                        )
+                    elif status == "disputed" and old_status == "disputed":
+                        if (provider_event_time and subscription[1] and
+                                provider_event_time > subscription[1]):
+                            connection.execute(
+                                """UPDATE subscriptions SET last_provider_event_at = ?, updated_at = ?
+                                   WHERE provider = ? AND provider_subscription_id = ?""",
+                                (provider_event_time, received_at, provider, payment[0]),
+                            )
+                    elif status == "refunded":
+                        connection.execute(
+                            """UPDATE subscriptions SET status = 'refunded',
+                               status_before_dispute = NULL,
+                               last_provider_event_at = CASE
+                                   WHEN ? IS NOT NULL AND (last_provider_event_at IS NULL OR ? > last_provider_event_at)
+                                   THEN ? ELSE last_provider_event_at END,
+                               updated_at = ?
+                               WHERE provider = ? AND provider_subscription_id = ?""",
+                            (provider_event_time, provider_event_time, provider_event_time,
+                             received_at, provider, payment[0]),
+                        )
                 connection.commit()
                 return True
         except sqlite3.Error as exc:
             raise BillingStoreError("Could not persist payment lifecycle event") from exc
+
+    def apply_dispute_resolution_event(
+        self, *, provider: str, event_id: str, transaction_reference: str,
+        resolution: str, event_time: str | None = None, now: datetime | None = None,
+    ) -> bool:
+        """Apply a signed, resolved Paystack outcome without guessing its result."""
+        for name, value in (("provider", provider), ("event ID", event_id),
+                            ("transaction reference", transaction_reference)):
+            if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{name} is invalid")
+        if resolution not in {"merchant-accepted", "declined"}:
+            raise ValueError("dispute resolution is invalid")
+        provider_event_time = _normalize_timestamp(event_time)
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("event time must include a timezone")
+        received_at = current.astimezone(UTC).isoformat(timespec="seconds")
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                payment = connection.execute(
+                    """SELECT provider_subscription_id FROM payment_transactions
+                       WHERE provider = ? AND transaction_reference = ?""",
+                    (provider, transaction_reference),
+                ).fetchone()
+                if payment is None:
+                    connection.rollback()
+                    return False
+                cursor = connection.execute(
+                    "INSERT OR IGNORE INTO webhook_events (provider, event_id, received_at) VALUES (?, ?, ?)",
+                    (provider, event_id, received_at),
+                )
+                if cursor.rowcount == 0:
+                    connection.rollback()
+                    return False
+                if resolution == "merchant-accepted":
+                    connection.execute(
+                        """UPDATE subscriptions SET status = 'refunded',
+                           status_before_dispute = NULL,
+                           last_provider_event_at = CASE
+                               WHEN ? IS NOT NULL AND (last_provider_event_at IS NULL OR ? > last_provider_event_at)
+                               THEN ? ELSE last_provider_event_at END,
+                           updated_at = ?
+                           WHERE provider = ? AND provider_subscription_id = ?""",
+                        (provider_event_time, provider_event_time, provider_event_time,
+                         received_at, provider, payment[0]),
+                    )
+                else:
+                    subscription = connection.execute(
+                        """SELECT status, status_before_dispute, current_period_end,
+                                  last_provider_event_at
+                           FROM subscriptions WHERE provider = ? AND provider_subscription_id = ?""",
+                        (provider, payment[0]),
+                    ).fetchone()
+                    stale_resolution = bool(
+                        subscription and provider_event_time and subscription[3] and
+                        provider_event_time < subscription[3]
+                    )
+                    if subscription and subscription[0] == "disputed" and not stale_resolution:
+                        restored_status = subscription[1]
+                        period_end = _normalize_timestamp(subscription[2])
+                        if (restored_status in {"active", "non_renewing"} and
+                                (not period_end or datetime.fromisoformat(period_end) <= current.astimezone(UTC))):
+                            restored_status = "expired"
+                        if restored_status in _STATUSES and restored_status != "disputed":
+                            connection.execute(
+                                """UPDATE subscriptions SET status = ?, status_before_dispute = NULL,
+                                   last_provider_event_at = coalesce(?, last_provider_event_at),
+                                   updated_at = ? WHERE provider = ? AND provider_subscription_id = ?""",
+                                (restored_status, provider_event_time, received_at, provider, payment[0]),
+                            )
+                connection.commit()
+                return True
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not persist dispute resolution") from exc
 
     def get_subscription(self, provider: str, subscription_id: str) -> dict[str, str | None] | None:
         try:

@@ -125,7 +125,8 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         nested_time = subscription.get("updatedAt") if isinstance(subscription, dict) else None
         return VerifiedPaystackEvent(
             name=name, data=data, digest=digest * 64,
-            occurred_at=data.get("paid_at") or data.get("created_at") or nested_time,
+            occurred_at=(data.get("resolvedAt") or data.get("paid_at") or data.get("created_at")
+                         or data.get("updatedAt") or data.get("createdAt") or nested_time),
         )
 
     def test_first_successful_subscription_charge_creates_account_mapping(self) -> None:
@@ -221,6 +222,78 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         })
         self.assertTrue(apply_paystack_subscription_event(self.store, renewal, self.plans))
         self.assertEqual(self.store.get_subscription("paystack", "SUB_DISPUTE")["status"], "disputed")
+        resolved = self.event("charge.dispute.resolve", "o", {
+            "status": "resolved", "resolution": "declined",
+            "transaction": {"reference": "charge-dispute"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, resolved, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_DISPUTE")["status"], "active")
+
+    def test_merchant_accepted_dispute_remains_revoked(self) -> None:
+        initial = self.event("charge.success", "p", {
+            "status": "success", "reference": "charge-accepted",
+            "created_at": "2026-10-10T10:00:00Z", "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_ACCEPTED", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        dispute = self.event("charge.dispute.create", "q", {
+            "transaction": {"reference": "charge-accepted"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, dispute, self.plans))
+        resolved = self.event("charge.dispute.resolve", "r", {
+            "status": "resolved", "resolution": "merchant-accepted",
+            "transaction": {"reference": "charge-accepted"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, resolved, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_ACCEPTED")["status"], "refunded")
+
+    def test_unrecognized_dispute_resolution_does_not_clear_hold(self) -> None:
+        initial = self.event("charge.success", "s", {
+            "status": "success", "reference": "charge-unknown-result",
+            "created_at": "2026-10-10T10:00:00Z", "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_UNKNOWN", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        dispute = self.event("charge.dispute.create", "t", {
+            "transaction": {"reference": "charge-unknown-result"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, dispute, self.plans))
+        resolved = self.event("charge.dispute.resolve", "u", {
+            "status": "resolved", "resolution": "unknown",
+            "transaction": {"reference": "charge-unknown-result"},
+        })
+        self.assertFalse(apply_paystack_subscription_event(self.store, resolved, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_UNKNOWN")["status"], "disputed")
+
+    def test_delayed_resolution_cannot_clear_a_newer_dispute(self) -> None:
+        initial = self.event("charge.success", "v", {
+            "status": "success", "reference": "charge-repeat-dispute",
+            "created_at": "2026-10-01T10:00:00Z", "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_REPEAT", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        first_dispute = self.event("charge.dispute.create", "w", {
+            "createdAt": "2026-11-01T10:00:00Z", "transaction": {"reference": "charge-repeat-dispute"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, first_dispute, self.plans))
+        first_resolution = self.event("charge.dispute.resolve", "x", {
+            "status": "resolved", "resolution": "declined", "updatedAt": "2026-11-02T10:00:00Z",
+            "transaction": {"reference": "charge-repeat-dispute"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, first_resolution, self.plans))
+        second_dispute = self.event("charge.dispute.create", "y", {
+            "createdAt": "2026-11-03T10:00:00Z", "transaction": {"reference": "charge-repeat-dispute"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, second_dispute, self.plans))
+        delayed_resolution = self.event("charge.dispute.resolve", "z", {
+            "status": "resolved", "resolution": "declined", "updatedAt": "2026-11-02T10:00:00Z",
+            "transaction": {"reference": "charge-repeat-dispute"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, delayed_resolution, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_REPEAT")["status"], "disputed")
 
     def test_unknown_refund_reference_does_not_change_any_account(self) -> None:
         refund = self.event("refund.processed", "k", {

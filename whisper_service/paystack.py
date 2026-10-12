@@ -158,9 +158,24 @@ def apply_paystack_subscription_event(
             raise PaystackWebhookError("Verified payment lifecycle event could not be applied") from exc
 
     if event.name == "charge.dispute.resolve":
-        # A resolved dispute can have multiple outcomes. Keep the hold until
-        # an explicit, audited account action restores access.
-        return False
+        # Paystack documents `declined` as rejecting the dispute (merchant wins)
+        # and `merchant-accepted` as accepting it. Unknown/incomplete outcomes
+        # intentionally leave the existing hold untouched.
+        if data.get("status") != "resolved":
+            return False
+        resolution = data.get("resolution")
+        reference = _payment_reference(data)
+        if (not isinstance(resolution, str) or
+                resolution not in {"merchant-accepted", "declined"} or reference is None):
+            return False
+        try:
+            return store.apply_dispute_resolution_event(
+                provider="paystack", event_id=event.digest,
+                transaction_reference=reference, resolution=resolution,
+                event_time=event.occurred_at,
+            )
+        except (ValueError, BillingStoreError) as exc:
+            raise PaystackWebhookError("Verified dispute resolution could not be applied") from exc
 
     subscription = data.get("subscription")
     if not isinstance(subscription, dict):
@@ -273,8 +288,8 @@ def _event_timestamp(payload: Mapping[str, Any], data: Mapping[str, Any]) -> str
     if not isinstance(subscription, dict):
         subscription = {}
     for candidate in (
-        data.get("paid_at"), data.get("created_at"), data.get("updated_at"),
-        data.get("createdAt"), data.get("updatedAt"),
+        data.get("resolvedAt"), data.get("paid_at"), data.get("created_at"),
+        data.get("updated_at"), data.get("createdAt"), data.get("updatedAt"),
         subscription.get("updatedAt"), subscription.get("createdAt"),
         payload.get("createdAt"), payload.get("created_at"),
     ):

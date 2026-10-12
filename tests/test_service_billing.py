@@ -99,6 +99,7 @@ class BillingStoreTests(unittest.TestCase):
         with sqlite3.connect(path) as connection:
             columns = {row[1] for row in connection.execute("PRAGMA table_info(subscriptions)")}
         self.assertIn("last_provider_event_at", columns)
+        self.assertIn("status_before_dispute", columns)
         self.assertIsNone(migrated.get_subscription("paystack", "missing"))
 
     def test_checkout_reference_is_durable_and_account_linked(self) -> None:
