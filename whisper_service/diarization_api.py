@@ -432,7 +432,10 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             )
             from urllib.parse import urlencode
 
-            return web.HTTPFound(f"{oauth_app_redirect}?{urlencode({'code': handoff})}")
+            return web.Response(
+                status=302,
+                headers={"Location": f"{oauth_app_redirect}?{urlencode({'code': handoff})}"},
+            )
         except (OAuthTransactionError, OIDCVerificationError, AccountStoreError, ValueError) as exc:
             logger.info("OAuth callback rejected (%s)", type(exc).__name__)
             return web.Response(

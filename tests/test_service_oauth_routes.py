@@ -40,8 +40,8 @@ class OAuthRouteTests(unittest.IsolatedAsyncioTestCase):
             )},
         )
         self.client = TestClient(TestServer(app))
-        await self.client.start_server()
         self.addAsyncCleanup(self.client.close)
+        await self.client.start_server()
 
     async def test_oauth_start_callback_and_pkce_session_exchange(self) -> None:
         verifier = "desktop-verifier-0123456789-abcdefghijklmnopqrstuvwxyz"
