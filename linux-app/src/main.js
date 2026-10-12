@@ -311,6 +311,24 @@ async function loadSession(id) {
         notify("Transcript copied.");
       } catch { notify("Could not copy the transcript.", true); }
     });
+    const exportTranscript = document.createElement("button");
+    exportTranscript.className = "small-button";
+    exportTranscript.textContent = "Export transcript";
+    exportTranscript.disabled = !session.source_transcript;
+    exportTranscript.addEventListener("click", () => {
+      const created = new Date(session.created_at);
+      const filename = `wicx-${session.mode}-${created.toISOString().slice(0, 10)}.txt`;
+      const contents = `Wicx ${session.mode} transcript\n${created.toLocaleString()}\n\n${session.source_transcript || ""}\n`;
+      const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notify("Transcript exported as a text file.");
+    });
     const remove = document.createElement("button");
     remove.className = "small-button danger";
     remove.textContent = "Delete";
@@ -319,7 +337,7 @@ async function loadSession(id) {
       try { await request("delete_session", { session_id: id }); selectedSessionId = ""; notify("Recording deleted from this device."); await loadSessions(); }
       catch (error) { notify(error.message, true); }
     });
-    actions.append(copy, remove);
+    actions.append(copy, exportTranscript, remove);
     header.append(info, actions);
     const transcript = document.createElement("div");
     transcript.className = "transcript-body";
