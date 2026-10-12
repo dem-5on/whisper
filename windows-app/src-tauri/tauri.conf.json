@@ -48,6 +48,13 @@
     ],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:47651" }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["wicx"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

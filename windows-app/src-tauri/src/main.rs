@@ -38,6 +38,51 @@ struct ShortcutStatus(String);
 #[derive(Clone)]
 struct WebsocketToken(String);
 
+#[derive(Clone, Default)]
+struct PendingAuthCallback(Arc<Mutex<Option<String>>>);
+
+fn auth_handoff_code(candidate: &str) -> Option<String> {
+    let url = url::Url::parse(candidate).ok()?;
+    if url.scheme() != "wicx"
+        || url.host_str() != Some("auth")
+        || url.path() != "/callback"
+        || url.fragment().is_some()
+        || url.username() != ""
+        || url.password().is_some()
+    {
+        return None;
+    }
+    let mut codes = url.query_pairs().filter(|(key, _)| key == "code");
+    let code = codes.next()?.1.into_owned();
+    if codes.next().is_some()
+        || code.len() < 32
+        || code.len() > 512
+        || !code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return None;
+    }
+    Some(code)
+}
+
+fn store_auth_callback(state: &PendingAuthCallback, candidate: &str) -> bool {
+    let Some(code) = auth_handoff_code(candidate) else {
+        return false;
+    };
+    if let Ok(mut pending) = state.0.lock() {
+        *pending = Some(code);
+        true
+    } else {
+        false
+    }
+}
+
+#[tauri::command]
+fn take_auth_callback(state: State<'_, PendingAuthCallback>) -> Option<String> {
+    state.0.lock().ok()?.take()
+}
+
 fn mic_tray_icon(color: [u8; 4]) -> Image<'static> {
     let size = 32_u32;
     let mut rgba = vec![0_u8; (size * size * 4) as usize];
@@ -459,10 +504,14 @@ fn main() {
                         supervisor.request_shutdown();
                     }
                     app.exit(0);
-                } else {
+                } else if !args
+                    .iter()
+                    .any(|argument| auth_handoff_code(argument).is_some())
+                {
                     toggle_panel(app);
                 }
             }))
+            .plugin(tauri_plugin_deep_link::init())
             .plugin(tauri_plugin_shell::init())
             .plugin(tauri_plugin_clipboard_manager::init())
             .plugin(
@@ -477,10 +526,13 @@ fn main() {
     };
     #[cfg(not(feature = "packaged-daemon"))]
     let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init());
     builder
         .setup(move |app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+
             if std::env::args().any(|argument| argument == UNINSTALL_ARGUMENT) {
                 // Uninstall helper (NSIS PREUNINSTALL ExecWait). Exit
                 // immediately without initializing windows, tray, or daemon so
@@ -490,6 +542,27 @@ fn main() {
                 // by the smoke test in focus-test builds.
                 std::process::exit(0);
             }
+            let pending_auth = PendingAuthCallback::default();
+            app.manage(pending_auth.clone());
+            let auth_app = app.handle().clone();
+            if let Some(urls) = app.deep_link().get_current()? {
+                for url in urls {
+                    if store_auth_callback(&pending_auth, url.as_str()) {
+                        let _ = auth_app.emit("auth-callback-received", ());
+                    }
+                }
+            }
+            let auth_app = app.handle().clone();
+            let auth_state = pending_auth.clone();
+            app.deep_link().on_open_url(move |event| {
+                for url in event.urls() {
+                    if store_auth_callback(&auth_state, url.as_str()) {
+                        let _ = auth_app.emit("auth-callback-received", ());
+                    }
+                }
+            });
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
             let window = app
                 .get_webview_window("main")
                 .expect("main panel window is configured");
@@ -613,6 +686,7 @@ fn main() {
             focus_test_build,
             recording_shortcut_status,
             websocket_token,
+            take_auth_callback,
             show_key_settings,
             open_diagnostics_folder
         ])
@@ -628,7 +702,9 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{load_or_create_websocket_token, panel_height_for_monitor, panel_position};
+    use super::{
+        auth_handoff_code, load_or_create_websocket_token, panel_height_for_monitor, panel_position,
+    };
     use std::{fs, path::PathBuf};
 
     #[test]
@@ -667,5 +743,27 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(uuid::Uuid::parse_str(&first).unwrap().to_string(), first);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn accepts_only_wicx_auth_callback_handoffs() {
+        let code = "single-use-handoff-0123456789-abcdefghijklmnopqrstuvwxyz";
+        assert_eq!(
+            auth_handoff_code(&format!("wicx://auth/callback?code={code}")),
+            Some(code.to_string())
+        );
+        assert_eq!(auth_handoff_code("wicx://auth/callback?code=short"), None);
+        assert_eq!(
+            auth_handoff_code(&format!("wicx://other/callback?code={code}")),
+            None
+        );
+        assert_eq!(
+            auth_handoff_code(&format!("wicx://auth/callback?code={code}&code={code}")),
+            None
+        );
+        assert_eq!(
+            auth_handoff_code(&format!("https://auth/callback?code={code}")),
+            None
+        );
     }
 }
