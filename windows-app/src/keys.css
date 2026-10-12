@@ -50,6 +50,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .billing-features:empty { display: none; }
 .billing-features li { padding: 4px 7px; border: 1px solid #41424a; border-radius: 8px; color: #a5a6ae; background: #303139; font-size: 11px; }
 .billing-features li[data-enabled="true"] { border-color: #2878f066; color: #a9c8ff; }
+.plans-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid #41424a; }
+.billing-plans { display: grid; gap: 7px; margin-top: 8px; }
+.billing-plans:empty { display: none; }
+.plan-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid #41424a; border-radius: 11px; background: #303139; }
+.plan-card-copy { min-width: 0; }
+.plan-card-name { margin: 0; color: #f4f4f6; font-size: 12px; font-weight: 650; }
+.plan-card-price { margin: 3px 0 0; color: #c3c4cb; font-size: 11px; }
+.plan-card-features { margin: 3px 0 0; color: #9697a0; font-size: 10px; }
+.plan-card button { flex: 0 0 auto; min-height: 31px; padding: 0 9px; border-radius: 9px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.checkout-form { margin-top: 10px; padding-top: 9px; border-top: 1px solid #41424a; }
+.checkout-form[hidden] { display: none; }
 .key-label { display: block; margin: 10px 0 4px; color: #d5d5db; font-size: 13px; font-weight: 600; }
 select, input {
   width: 100%;

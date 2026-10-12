@@ -32,6 +32,13 @@ const ui = {
   billingFeatures: document.querySelector("#billing-features"),
   billingPlan: document.querySelector("#billing-plan"),
   refreshBilling: document.querySelector("#refresh-billing"),
+  loadPlans: document.querySelector("#load-plans"),
+  plansState: document.querySelector("#plans-state"),
+  billingPlans: document.querySelector("#billing-plans"),
+  checkoutForm: document.querySelector("#checkout-form"),
+  checkoutEmail: document.querySelector("#checkout-email"),
+  startCheckout: document.querySelector("#start-checkout"),
+  cancelCheckout: document.querySelector("#cancel-checkout"),
 };
 
 let connection;
@@ -40,6 +47,8 @@ let sequence = 0;
 let currentStatus = {};
 let liveSettingsDirty = false;
 const pending = new Map();
+let accountSignedIn = false;
+let selectedPlanId = "";
 
 function selectedProvider() {
   return PROVIDERS[ui.provider.value];
@@ -72,13 +81,74 @@ async function refreshAccount() {
       invoke("auth_is_signed_in"),
     ]);
     ui.authUrl.value = url || "";
+    accountSignedIn = Boolean(signedIn);
     ui.signOut.hidden = !signedIn;
     ui.oauthButtons.forEach((button) => { button.hidden = Boolean(signedIn); });
     setAccountState(signedIn ? "You are signed in to your Wicx account." : "Not signed in. Sign in to unlock subscription features.");
     if (signedIn) await refreshBilling();
     else clearBilling("Sign in to check your subscription.");
+    if (ui.billingPlans.childElementCount > 0) await refreshPlans();
   } catch (error) {
     setAccountState(error.message || "Could not load account settings.", true);
+  }
+}
+
+async function refreshPlans() {
+  ui.loadPlans.disabled = true;
+  ui.plansState.textContent = "Loading plans…";
+  ui.plansState.dataset.error = "false";
+  ui.billingPlans.replaceChildren();
+  try {
+    const result = await invoke("fetch_billing_plans");
+    const plans = Array.isArray(result.plans) ? result.plans : [];
+    if (plans.length === 0) {
+      ui.plansState.textContent = "No plans are currently available.";
+      return;
+    }
+    ui.plansState.textContent = "Pricing and features are supplied by your Wicx service.";
+    for (const plan of plans) {
+      const card = document.createElement("article");
+      card.className = "plan-card";
+      const copy = document.createElement("div");
+      copy.className = "plan-card-copy";
+      const name = document.createElement("h4");
+      name.className = "plan-card-name";
+      name.textContent = String(plan.plan_id).replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+      const price = document.createElement("p");
+      price.className = "plan-card-price";
+      const amount = Number(plan.amount_minor) / 100;
+      const paymentTerms = plan.billing_mode === "one_time"
+        ? `one-time${plan.period_days ? ` / ${plan.period_days} days` : ""}`
+        : "recurring";
+      const channels = Array.isArray(plan.channels) && plan.channels.length
+        ? ` · ${plan.channels.map((channel) => String(channel).replaceAll("_", " ")).join(" / ")}`
+        : "";
+      price.textContent = `${new Intl.NumberFormat(undefined, { style: "currency", currency: plan.currency }).format(amount)} · ${paymentTerms}${channels}`;
+      const features = document.createElement("p");
+      features.className = "plan-card-features";
+      features.textContent = Array.isArray(plan.features)
+        ? `Includes ${plan.features.map((feature) => String(feature).replaceAll("_", " ")).join(" · ")}`
+        : "Subscription features included";
+      copy.append(name, price, features);
+      const choose = document.createElement("button");
+      choose.className = "key-save";
+      choose.type = "button";
+      choose.textContent = accountSignedIn ? "Choose" : "Sign in first";
+      choose.disabled = !accountSignedIn;
+      choose.addEventListener("click", () => {
+        selectedPlanId = String(plan.plan_id);
+        ui.checkoutForm.hidden = false;
+        ui.checkoutEmail.focus();
+        ui.plansState.textContent = `Selected ${name.textContent}. Enter a billing email to continue.`;
+      });
+      card.append(copy, choose);
+      ui.billingPlans.append(card);
+    }
+  } catch (error) {
+    ui.plansState.textContent = error.message || "Could not load plans.";
+    ui.plansState.dataset.error = "true";
+  } finally {
+    ui.loadPlans.disabled = false;
   }
 }
 
@@ -168,6 +238,35 @@ ui.signOut.addEventListener("click", async () => {
 });
 
 ui.refreshBilling.addEventListener("click", refreshBilling);
+ui.loadPlans.addEventListener("click", refreshPlans);
+ui.cancelCheckout.addEventListener("click", () => {
+  selectedPlanId = "";
+  ui.checkoutForm.hidden = true;
+  ui.checkoutEmail.value = "";
+});
+ui.checkoutForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!selectedPlanId) return;
+  const email = ui.checkoutEmail.value.trim();
+  if (!email) {
+    ui.plansState.textContent = "Enter a billing email to continue to Paystack.";
+    ui.plansState.dataset.error = "true";
+    return;
+  }
+  ui.startCheckout.disabled = true;
+  try {
+    await invoke("create_checkout", { planId: selectedPlanId, email });
+    ui.checkoutForm.hidden = true;
+    ui.checkoutEmail.value = "";
+    ui.plansState.dataset.error = "false";
+    ui.plansState.textContent = "Secure checkout opened in your browser. Feature access updates after payment is verified; refresh subscription access when you return.";
+  } catch (error) {
+    ui.plansState.textContent = error.message || "Could not start checkout.";
+    ui.plansState.dataset.error = "true";
+  } finally {
+    ui.startCheckout.disabled = false;
+  }
+});
 
 async function connect() {
   ui.state.textContent = "Connecting to Wicx…";

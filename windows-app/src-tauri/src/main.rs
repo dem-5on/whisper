@@ -278,6 +278,143 @@ fn public_billing_status(payload: serde_json::Value) -> Result<serde_json::Value
     }))
 }
 
+fn public_billing_plans(payload: serde_json::Value) -> Result<serde_json::Value, String> {
+    let plans = payload
+        .get("plans")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "The Wicx service returned an invalid plan catalog.".to_string())?;
+    let plans = plans
+        .iter()
+        .filter_map(|plan| {
+            let source = plan.as_object()?;
+            let plan_id = source.get("plan_id")?.as_str()?;
+            let amount_minor = source.get("amount_minor")?.as_u64()?;
+            let currency = source.get("currency")?.as_str()?;
+            let billing_mode = source.get("billing_mode")?.as_str()?;
+            if !matches!(billing_mode, "recurring" | "one_time")
+                || currency.len() != 3
+                || !currency.bytes().all(|byte| byte.is_ascii_uppercase())
+            {
+                return None;
+            }
+            let features = source
+                .get("features")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut safe_plan = serde_json::json!({
+                "plan_id": plan_id,
+                "amount_minor": amount_minor,
+                "currency": currency,
+                "billing_mode": billing_mode,
+                "features": features,
+            });
+            if let Some(period_days) = source
+                .get("period_days")
+                .and_then(serde_json::Value::as_u64)
+            {
+                safe_plan["period_days"] = serde_json::json!(period_days);
+            }
+            if let Some(renewal) = source.get("renewal").and_then(serde_json::Value::as_str) {
+                safe_plan["renewal"] = serde_json::Value::String(renewal.to_string());
+            }
+            if let Some(channels) = source.get("channels").and_then(serde_json::Value::as_array) {
+                safe_plan["channels"] = serde_json::Value::Array(
+                    channels
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(|channel| serde_json::Value::String(channel.to_string()))
+                        .collect(),
+                );
+            }
+            Some(safe_plan)
+        })
+        .collect::<Vec<_>>();
+    Ok(serde_json::json!({ "plans": plans }))
+}
+
+#[tauri::command]
+async fn fetch_billing_plans(
+    auth: State<'_, OAuthClientState>,
+) -> Result<serde_json::Value, String> {
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("Save your Wicx service URL before viewing plans.".to_string());
+    }
+    let response = reqwest::Client::new()
+        .get(format!("{origin}/v1/billing/plans"))
+        .send()
+        .await
+        .map_err(|_| "Could not reach the Wicx plan catalog.".to_string())?;
+    if response.status().as_u16() == 404 {
+        return Err("Plans are not configured on this Wicx service yet.".to_string());
+    }
+    if !response.status().is_success() {
+        return Err(format!(
+            "Wicx could not load its plans (HTTP {}).",
+            response.status().as_u16()
+        ));
+    }
+    let payload = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| "The Wicx service returned an invalid plan catalog.".to_string())?;
+    public_billing_plans(payload)
+}
+
+#[tauri::command]
+async fn create_checkout(
+    plan_id: String,
+    email: String,
+    auth: State<'_, OAuthClientState>,
+) -> Result<(), String> {
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("Save your Wicx service URL before starting checkout.".to_string());
+    }
+    let token = keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.get_password())
+        .map_err(|_| "Sign in to purchase a subscription.".to_string())?;
+    let response = reqwest::Client::new()
+        .post(format!("{origin}/v1/billing/checkout"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "plan_id": plan_id, "email": email.trim() }))
+        .send()
+        .await
+        .map_err(|_| "Could not reach the Wicx checkout service.".to_string())?;
+    match response.status().as_u16() {
+        401 => return Err("Your Wicx session has expired. Sign in again.".to_string()),
+        503 => return Err("Checkout is not configured on this Wicx service yet.".to_string()),
+        status if !response.status().is_success() => {
+            return Err(format!(
+                "Checkout could not start (HTTP {status}). Check the billing email and try again."
+            ));
+        }
+        _ => {}
+    }
+    let payload = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| "The checkout service returned an invalid response.".to_string())?;
+    let checkout_url = payload
+        .get("authorization_url")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "The checkout service did not return a payment link.".to_string())?;
+    let parsed = url::Url::parse(checkout_url)
+        .map_err(|_| "The checkout service returned an invalid payment link.".to_string())?;
+    if parsed.scheme() != "https" || parsed.host_str() != Some("checkout.paystack.com") {
+        return Err("The checkout service returned an untrusted payment link.".to_string());
+    }
+    open::that(parsed.as_str())
+        .map_err(|_| "Could not open the Paystack checkout in your browser.".to_string())
+}
+
 #[tauri::command]
 async fn fetch_billing_status(
     auth: State<'_, OAuthClientState>,
@@ -970,6 +1107,8 @@ fn main() {
             auth_is_signed_in,
             sign_out,
             fetch_billing_status,
+            fetch_billing_plans,
+            create_checkout,
             show_key_settings,
             open_diagnostics_folder
         ])
@@ -987,7 +1126,7 @@ fn main() {
 mod tests {
     use super::{
         auth_handoff_code, load_or_create_websocket_token, panel_height_for_monitor,
-        panel_position, public_billing_status, validated_api_origin,
+        panel_position, public_billing_plans, public_billing_status, validated_api_origin,
     };
     use std::{fs, path::PathBuf};
 
@@ -1090,5 +1229,29 @@ mod tests {
         assert!(status["subscriptions"][0]
             .get("provider_subscription_id")
             .is_none());
+    }
+
+    #[test]
+    fn filters_plan_catalog_and_never_exposes_provider_plan_codes() {
+        let plans = public_billing_plans(serde_json::json!({
+            "plans": [{
+                "plan_id": "pro-monthly",
+                "amount_minor": 2500,
+                "currency": "GHS",
+                "billing_mode": "recurring",
+                "features": ["cloud_transcription"],
+                "renewal": "automatic",
+                "paystack_code": "PLN_secret"
+            }, {
+                "plan_id": "broken",
+                "amount_minor": -10,
+                "currency": "invalid",
+                "billing_mode": "future"
+            }]
+        }))
+        .expect("catalog response should be summarized");
+        assert_eq!(plans["plans"].as_array().unwrap().len(), 1);
+        assert_eq!(plans["plans"][0]["currency"], "GHS");
+        assert!(plans["plans"][0].get("paystack_code").is_none());
     }
 }

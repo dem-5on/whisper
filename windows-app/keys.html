@@ -31,6 +31,23 @@
           <button class="key-remove" type="button" data-oauth-provider="apple">Continue with Apple</button>
           <button id="sign-out" class="key-remove" type="button" hidden>Sign out</button>
         </div>
+        <section class="plans-section" aria-labelledby="plans-title">
+          <div class="subscription-heading">
+            <h3 id="plans-title">Plans</h3>
+            <button id="load-plans" class="key-remove" type="button">View plans</button>
+          </div>
+          <p id="plans-state" class="account-help" aria-live="polite">See plans and pricing from your Wicx service.</p>
+          <div id="billing-plans" class="billing-plans"></div>
+          <form id="checkout-form" class="checkout-form" hidden>
+            <label class="key-label" for="checkout-email">Billing email</label>
+            <input id="checkout-email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required />
+            <p class="account-help">Sent to Wicx to initialize Paystack checkout; it is not saved in this app.</p>
+            <div class="account-actions">
+              <button id="start-checkout" class="key-save" type="submit">Continue to secure checkout</button>
+              <button id="cancel-checkout" class="key-remove" type="button">Cancel</button>
+            </div>
+          </form>
+        </section>
         <section class="subscription-summary" aria-labelledby="subscription-title">
           <div class="subscription-heading">
             <h3 id="subscription-title">Subscription access</h3>
