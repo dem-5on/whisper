@@ -15,7 +15,9 @@ except ImportError:
 
 from whisper_service.auth import TokenAuthenticator
 from whisper_service.billing import BillingStore
-from whisper_service.diarization_api import PAYSTACK_STATUS_PATH, PAYSTACK_WEBHOOK_PATH, make_app
+from whisper_service.diarization_api import (
+    PAYSTACK_MANAGE_PATH, PAYSTACK_STATUS_PATH, PAYSTACK_WEBHOOK_PATH, make_app,
+)
 from whisper_service.entitlements import EntitlementStore, SubscriptionEntitlementStore
 from whisper_service.paystack import PaystackPlan
 
@@ -122,6 +124,26 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
             "updated_at": payload["subscriptions"][0]["updated_at"],
         }])
         self.assertNotIn("SUB_PRIVATE", json.dumps(payload))
+
+    async def test_manage_link_is_account_scoped_and_host_validated(self) -> None:
+        self.store.apply_verified_event(
+            provider="paystack", event_id="manage-charge", subscription_id="SUB_PRIVATE",
+            user_id="account-owner", plan_id="pro-monthly", status="active",
+            current_period_end="2030-01-01T00:00:00Z",
+        )
+        calls: list[dict] = []
+        response = _FakeResponse(200, {
+            "status": True,
+            "data": {"link": "https://paystack.com/manage/subscriptions/example?token=secret"},
+        })
+        with patch("aiohttp.ClientSession", side_effect=lambda **_kwargs: _FakeSession(response, calls)):
+            result = await self.client.post(
+                PAYSTACK_MANAGE_PATH, json={"plan_id": "pro-monthly"},
+                headers={"Authorization": f"Bearer {self.auth_token}"},
+            )
+        self.assertEqual(result.status, 200)
+        self.assertEqual((await result.json())["management_url"], response.payload["data"]["link"])
+        self.assertIn("/subscription/SUB_PRIVATE/manage/link", calls[0]["url"])
 
     async def test_charge_verification_and_duplicate_delivery_are_safe(self) -> None:
         data = {

@@ -29,6 +29,7 @@ JOBS_PATH = "/v1/diarization/jobs"
 PAYSTACK_WEBHOOK_PATH = "/v1/billing/paystack/webhook"
 PAYSTACK_CHECKOUT_PATH = "/v1/billing/checkout"
 PAYSTACK_STATUS_PATH = "/v1/billing/status"
+PAYSTACK_MANAGE_PATH = "/v1/billing/manage"
 MAX_UPLOAD_BYTES = 1_000_000_000
 MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -288,6 +289,61 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             "subscriptions": subscriptions,
         })
 
+    async def manage_subscription(request: Any) -> Any:
+        if billing_store is None or not paystack_secret or not paystack_plans:
+            return web.json_response({"error": "billing_unavailable"}, status=503)
+        if request.content_type != "application/json":
+            return web.json_response({"error": "content_type"}, status=415)
+        try:
+            raw_body = await request.content.read(16_385)
+            if len(raw_body) > 16_384:
+                return web.json_response({"error": "request_too_large"}, status=413)
+            body = json.loads(raw_body)
+        except (ValueError, UnicodeDecodeError):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        plan_id = body.get("plan_id") if isinstance(body, dict) else None
+        if not isinstance(plan_id, str) or plan_id not in paystack_plans:
+            return web.json_response({"error": "invalid_plan"}, status=400)
+        plan = paystack_plans[plan_id]
+        if plan.billing_mode != "recurring":
+            return web.json_response({"error": "manual_renewal_plan"}, status=409)
+        try:
+            subscription_code = billing_store.get_manageable_subscription(
+                request["user_id"], plan_id,
+            )
+        except (BillingStoreError, ValueError) as exc:
+            logger.error("Could not resolve subscription management (%s)", type(exc).__name__)
+            return web.json_response({"error": "billing_unavailable"}, status=503)
+        if subscription_code is None:
+            return web.json_response({"error": "active_subscription_not_found"}, status=404)
+        try:
+            from aiohttp import ClientSession, ClientTimeout
+
+            timeout = ClientTimeout(total=15)
+            async with ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    f"https://api.paystack.co/subscription/{quote(subscription_code, safe='')}/manage/link",
+                    headers={"Authorization": f"Bearer {paystack_secret}"},
+                    allow_redirects=False,
+                ) as response:
+                    result = await response.json(content_type=None)
+                    if response.status != 200 or not isinstance(result, dict) or result.get("status") is not True:
+                        logger.warning("Paystack subscription management link failed (HTTP %s)", response.status)
+                        return web.json_response({"error": "subscription_management_unavailable"}, status=502)
+        except Exception as exc:
+            logger.warning("Paystack subscription management request failed (%s)", type(exc).__name__)
+            return web.json_response({"error": "subscription_management_unavailable"}, status=502)
+        data = result.get("data")
+        manage_url = data.get("link") if isinstance(data, dict) else None
+        parsed_url = urlparse(manage_url) if isinstance(manage_url, str) else None
+        if (parsed_url is None or parsed_url.scheme != "https" or
+                parsed_url.hostname != "paystack.com" or
+                not parsed_url.path.startswith("/manage/subscriptions/") or
+                not parsed_url.query):
+            logger.warning("Paystack returned an invalid subscription management link")
+            return web.json_response({"error": "subscription_management_unavailable"}, status=502)
+        return web.json_response({"management_url": manage_url})
+
     app = web.Application(middlewares=[authenticate], client_max_size=MAX_UPLOAD_BYTES)
     if jobs is not None:
         app.router.add_post(JOBS_PATH, create_job)
@@ -297,6 +353,7 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
         app.router.add_get(PAYSTACK_STATUS_PATH, billing_status)
     if paystack_secret and paystack_plans:
         app.router.add_post(PAYSTACK_CHECKOUT_PATH, create_checkout)
+        app.router.add_post(PAYSTACK_MANAGE_PATH, manage_subscription)
     return app
 
 

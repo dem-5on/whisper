@@ -382,6 +382,32 @@ class BillingStore:
         keys = ("plan_id", "status", "current_period_end", "updated_at")
         return [dict(zip(keys, row, strict=True)) for row in rows]
 
+    def get_manageable_subscription(
+        self, user_id: str, plan_id: str, *, provider: str = "paystack",
+        now: datetime | None = None,
+    ) -> str | None:
+        """Return this user's active recurring provider ID, never a one-time term."""
+        for label, value in (("user ID", user_id), ("plan ID", plan_id)):
+            if not isinstance(value, str) or not _IDENTIFIER.fullmatch(value):
+                raise ValueError(f"{label} is invalid")
+        current = now or datetime.now(UTC)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise ValueError("lookup time must include a timezone")
+        timestamp = current.astimezone(UTC).isoformat(timespec="seconds")
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    """SELECT provider_subscription_id FROM subscriptions
+                       WHERE provider = ? AND user_id = ? AND plan_id = ?
+                         AND status = 'active' AND current_period_end > ?
+                         AND provider_subscription_id NOT LIKE 'once-%'
+                       ORDER BY updated_at DESC LIMIT 1""",
+                    (provider, user_id, plan_id, timestamp),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise BillingStoreError("Could not find a manageable subscription") from exc
+        return row[0] if row else None
+
     def has_active_feature(
         self, user_id: str, feature: str, plan_features: Mapping[str, Collection[str]],
         *, now: datetime | None = None,

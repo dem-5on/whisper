@@ -132,6 +132,32 @@ class BillingStoreTests(unittest.TestCase):
         self.assertNotIn("secret-provider-id", str(subscriptions))
         self.assertEqual(self.store.list_user_subscriptions("another-account"), [])
 
+    def test_only_current_recurring_subscription_can_be_managed(self) -> None:
+        now = datetime(2029, 1, 1, tzinfo=UTC)
+        self.store.apply_verified_event(
+            provider="paystack", event_id="recurring", subscription_id="SUB_RECURRING",
+            user_id="account-owner", plan_id="pro-monthly", status="active",
+            current_period_end="2030-01-01T00:00:00Z", now=now,
+        )
+        self.store.apply_verified_event(
+            provider="paystack", event_id="one-time", subscription_id="once-ref-123",
+            user_id="account-owner", plan_id="pro-one-time", status="active",
+            current_period_end="2030-01-01T00:00:00Z", now=now,
+        )
+        self.assertEqual(
+            self.store.get_manageable_subscription("account-owner", "pro-monthly", now=now),
+            "SUB_RECURRING",
+        )
+        self.assertIsNone(self.store.get_manageable_subscription(
+            "other-account", "pro-monthly", now=now,
+        ))
+        self.assertIsNone(self.store.get_manageable_subscription(
+            "account-owner", "pro-one-time", now=now,
+        ))
+        self.assertIsNone(self.store.get_manageable_subscription(
+            "account-owner", "pro-monthly", now=datetime(2030, 1, 1, tzinfo=UTC),
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

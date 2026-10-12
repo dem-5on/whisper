@@ -226,7 +226,10 @@ Paystack's HMAC-SHA512 signature and records account-linked subscription events
 in a private SQLite ledger with replay deduplication. Authenticated clients can
 read their own plan summaries and effective feature access from
 `GET /v1/billing/status`; provider subscription IDs and payment references are
-not returned. Configure
+not returned. Recurring subscribers can request Paystack's hosted subscription
+management page from `POST /v1/billing/manage`; one-time plans are excluded.
+Cancellation is reflected after Paystack's signed lifecycle webhook, and
+non-renewing subscribers retain access through their paid period. Configure
 `WHISPER_PAYSTACK_SECRET_KEY` and persist `WHISPER_BILLING_DATABASE` across
 restarts. An authenticated `POST /v1/billing/checkout` endpoint can initialize
 Paystack checkout when `WHISPER_PAYSTACK_PLANS` is configured as a JSON mapping
