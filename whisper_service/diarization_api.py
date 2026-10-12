@@ -30,6 +30,7 @@ PAYSTACK_WEBHOOK_PATH = "/v1/billing/paystack/webhook"
 PAYSTACK_CHECKOUT_PATH = "/v1/billing/checkout"
 PAYSTACK_STATUS_PATH = "/v1/billing/status"
 PAYSTACK_MANAGE_PATH = "/v1/billing/manage"
+PAYSTACK_PLANS_PATH = "/v1/billing/plans"
 MAX_UPLOAD_BYTES = 1_000_000_000
 MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -289,6 +290,29 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             "subscriptions": subscriptions,
         })
 
+    async def billing_plans(_request: Any) -> Any:
+        if not paystack_plans:
+            return web.json_response({"error": "not_found"}, status=404)
+        plans = []
+        for plan in sorted(paystack_plans.values(), key=lambda item: item.plan_id):
+            entry: dict[str, Any] = {
+                "plan_id": plan.plan_id,
+                "amount_minor": plan.amount_minor,
+                "currency": plan.currency,
+                "billing_mode": plan.billing_mode,
+                "features": list(plan.features),
+            }
+            if plan.billing_mode == "one_time":
+                entry.update({
+                    "period_days": plan.period_days,
+                    "channels": list(plan.channels),
+                    "renewal": "manual",
+                })
+            else:
+                entry["renewal"] = "automatic"
+            plans.append(entry)
+        return web.json_response({"plans": plans})
+
     async def manage_subscription(request: Any) -> Any:
         if billing_store is None or not paystack_secret or not paystack_plans:
             return web.json_response({"error": "billing_unavailable"}, status=503)
@@ -351,6 +375,7 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
     if billing_store is not None:
         app.router.add_post(PAYSTACK_WEBHOOK_PATH, paystack_webhook)
         app.router.add_get(PAYSTACK_STATUS_PATH, billing_status)
+        app.router.add_get(PAYSTACK_PLANS_PATH, billing_plans)
     if paystack_secret and paystack_plans:
         app.router.add_post(PAYSTACK_CHECKOUT_PATH, create_checkout)
         app.router.add_post(PAYSTACK_MANAGE_PATH, manage_subscription)

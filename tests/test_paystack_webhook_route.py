@@ -16,7 +16,8 @@ except ImportError:
 from whisper_service.auth import TokenAuthenticator
 from whisper_service.billing import BillingStore
 from whisper_service.diarization_api import (
-    PAYSTACK_MANAGE_PATH, PAYSTACK_STATUS_PATH, PAYSTACK_WEBHOOK_PATH, make_app,
+    PAYSTACK_MANAGE_PATH, PAYSTACK_PLANS_PATH, PAYSTACK_STATUS_PATH,
+    PAYSTACK_WEBHOOK_PATH, make_app,
 )
 from whisper_service.entitlements import EntitlementStore, SubscriptionEntitlementStore
 from whisper_service.paystack import PaystackPlan
@@ -62,6 +63,10 @@ class _FakeSession:
 class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
     secret = "local-test-secret"
     plan = PaystackPlan("pro-monthly", "PLN_local", 1250, "GHS", ("diarization",))
+    manual_plan = PaystackPlan(
+        "pro-manual", "", 750, "GHS", ("cloud_transcription",),
+        billing_mode="one_time", period_days=14,
+    )
 
     async def asyncSetUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -78,11 +83,12 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
         self.entitlement_path = Path(self.temp.name) / "entitlements.json"
         entitlements = SubscriptionEntitlementStore(
             EntitlementStore(self.entitlement_path), self.store,
-            {"pro-monthly": self.plan.features},
+            {"pro-monthly": self.plan.features, "pro-manual": self.manual_plan.features},
         )
         app = make_app(
             auth, None, entitlements, billing_store=self.store,
-            paystack_secret=self.secret, paystack_plans={"pro-monthly": self.plan},
+            paystack_secret=self.secret,
+            paystack_plans={"pro-monthly": self.plan, "pro-manual": self.manual_plan},
         )
         self.client = TestClient(TestServer(app))
         await self.client.start_server()
@@ -144,6 +150,21 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, 200)
         self.assertEqual((await result.json())["management_url"], response.payload["data"]["link"])
         self.assertIn("/subscription/SUB_PRIVATE/manage/link", calls[0]["url"])
+
+    async def test_plan_catalog_is_authenticated_and_hides_provider_codes(self) -> None:
+        denied = await self.client.get(PAYSTACK_PLANS_PATH)
+        self.assertEqual(denied.status, 401)
+        response = await self.client.get(
+            PAYSTACK_PLANS_PATH,
+            headers={"Authorization": f"Bearer {self.auth_token}"},
+        )
+        self.assertEqual(response.status, 200)
+        payload = await response.json()
+        plans = {plan["plan_id"]: plan for plan in payload["plans"]}
+        self.assertEqual(plans["pro-monthly"]["renewal"], "automatic")
+        self.assertEqual(plans["pro-manual"]["renewal"], "manual")
+        self.assertEqual(plans["pro-manual"]["period_days"], 14)
+        self.assertNotIn("PLN_local", json.dumps(payload))
 
     async def test_charge_verification_and_duplicate_delivery_are_safe(self) -> None:
         data = {

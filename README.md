@@ -226,7 +226,9 @@ Paystack's HMAC-SHA512 signature and records account-linked subscription events
 in a private SQLite ledger with replay deduplication. Authenticated clients can
 read their own plan summaries and effective feature access from
 `GET /v1/billing/status`; provider subscription IDs and payment references are
-not returned. Recurring subscribers can request Paystack's hosted subscription
+not returned. `GET /v1/billing/plans` returns the configured customer-facing
+prices, features, and renewal type without exposing Paystack plan codes.
+Recurring subscribers can request Paystack's hosted subscription
 management page from `POST /v1/billing/manage`; one-time plans are excluded.
 Cancellation is reflected after Paystack's signed lifecycle webhook, and
 non-renewing subscribers retain access through their paid period. Configure
