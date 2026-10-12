@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./style.css";
 
 const preview = !window.__TAURI_INTERNALS__;
@@ -271,6 +272,12 @@ function beginSession(mode) {
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => openPage(button.dataset.page)));
+if (!preview) {
+  const appWindow = getCurrentWindow();
+  document.querySelector("#window-minimize").addEventListener("click", () => appWindow.minimize());
+  document.querySelector("#window-maximize").addEventListener("click", () => appWindow.toggleMaximize());
+  document.querySelector("#window-close").addEventListener("click", () => appWindow.close());
+}
 document.querySelectorAll("[data-shortcut-help]").forEach((button) => button.addEventListener("click", () => document.querySelector("#shortcut-dialog").showModal()));
 document.querySelector("#copy-shortcut-command").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText("wicx toggle"); notify("Shortcut command copied."); }
