@@ -462,7 +462,8 @@ async function ensureCloudEntitlement(backend, { force = false, fallback = false
 }
 
 async function toggleRecording() {
-  if (currentStatus?.state !== "RECORDING" && isCloudBackend(currentStatus?.backend)) {
+  const starting = currentStatus?.state !== "RECORDING";
+  if (starting && isCloudBackend(currentStatus?.backend)) {
     try {
       await ensureCloudEntitlement(currentStatus.backend, { fallback: true });
     } catch (error) {
@@ -470,6 +471,7 @@ async function toggleRecording() {
       return;
     }
   }
+  await invoke("hide_home").catch(() => {});
   await sendCommandAndHide("toggle");
 }
 const cancelRecording = () => sendCommandAndHide("cancel");
@@ -656,7 +658,7 @@ async function openKeySettings() {
     showError(error.message);
   }
 }
-ui.settings.addEventListener("click", openKeySettings);
+ui.settings.addEventListener("click", () => invoke("show_home").catch(showError));
 ui.manageKeys.addEventListener("click", openKeySettings);
 ui.errorKeys.addEventListener("click", openKeySettings);
 ui.errorProvider.addEventListener("click", () => openChooser("provider"));

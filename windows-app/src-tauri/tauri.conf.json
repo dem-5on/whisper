@@ -60,6 +60,24 @@
         "focus": false,
         "focusable": false,
         "shadow": false
+      },
+      {
+        "label": "home",
+        "title": "Wicx",
+        "url": "home.html",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 860,
+        "minHeight": 620,
+        "visible": false,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": true,
+        "focus": true,
+        "focusable": true,
+        "shadow": true
       }
     ],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:47651" }

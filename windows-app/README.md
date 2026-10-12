@@ -1,6 +1,6 @@
 # Wicx Windows desktop app
 
-This Tauri shell is the first Windows UI spike: a resident tray icon opens a hidden, non-activating panel anchored at the tray. The initial focus check is still a release gate; recording controls remain disabled until the no-focus-stealing behavior has been verified on Windows.
+Wicx has a full desktop Home window plus a resident tray, non-activating compact panel, and recording-status pill. The Home window contains Dictation, Lecture, and Meeting entry points, local session History, the custom Dictionary, and Settings. The compact panel and pill remain separate so they do not take focus away from the app receiving dictated text. The initial focus check is still a release gate for public distribution.
 
 ## Build and run on Windows
 
@@ -48,7 +48,7 @@ The packaged daemon writes rotating diagnostics to
 This remains available when the hidden sidecar has no console, and helps debug
 startup or transcription failures without requiring users to run PowerShell.
 
-The panel exposes the daemon's start/stop, cancel, retry, provider/model/microphone selection, live-transcription toggle and live text, and transcript-copy actions. Provider API keys, the live engine, hosted service URL, and live model/profile are configured in the separate focused settings window; the recording flyout itself remains non-activating so it does not take focus from the app where dictated text should be inserted.
+The full Home window exposes the three product modes, local recording history and transcript review/deletion, the custom vocabulary dictionary, and user-facing rewrite/pill settings. Account sign-in, plans, provider keys, and advanced live-engine settings open in the focused settings window. Lecture and Meeting show a consent confirmation before starting. The tray menu can open either the full Home window or the compact panel. Dictation started from Home hides the Home window before recording so text can return to the previously focused application.
 
 ## Focus test (must pass before controls or a public installer are enabled)
 

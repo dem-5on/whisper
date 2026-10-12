@@ -743,6 +743,30 @@ fn show_key_settings(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn show_home(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("home")
+        .ok_or_else(|| "Wicx home window is unavailable".to_string())?;
+    window.center().map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn show_compact_panel(app: tauri::AppHandle) -> Result<(), String> {
+    toggle_panel(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn hide_home(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("home") {
+        window.hide().map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn sync_recording_pill(
     app: tauri::AppHandle,
     state: String,
@@ -1141,7 +1165,7 @@ fn main() {
                     .iter()
                     .any(|argument| auth_handoff_code(argument).is_some())
                 {
-                    toggle_panel(app);
+                    let _ = show_home(app.clone());
                 }
             }))
             .plugin(tauri_plugin_deep_link::init())
@@ -1230,6 +1254,15 @@ fn main() {
                     }
                 });
             }
+            if let Some(home_window) = app.get_webview_window("home") {
+                let close_target = home_window.clone();
+                home_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = close_target.hide();
+                    }
+                });
+            }
             app.manage(PanelAnchor::default());
             app.manage(FocusBaseline::default());
             #[cfg(feature = "packaged-daemon")]
@@ -1276,8 +1309,9 @@ fn main() {
                 None::<&str>,
             )?;
             let open = MenuItem::with_id(app, "open", "Show / hide Wicx", true, None::<&str>)?;
+            let home = MenuItem::with_id(app, "home", "Open Wicx home", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit Wicx", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &cancel, &open, &quit])?;
+            let menu = Menu::with_items(app, &[&toggle, &cancel, &open, &home, &quit])?;
             let tray = TrayIconBuilder::with_id("whisper")
                 .icon(mic_tray_icon([132, 135, 145, 255]))
                 .tooltip("Wicx")
@@ -1318,6 +1352,9 @@ fn main() {
                         let _ = app.emit("cancel-recording", ());
                     }
                     "open" => toggle_panel(app),
+                    "home" => {
+                        let _ = show_home(app.clone());
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -1344,7 +1381,10 @@ fn main() {
             manage_subscription,
             show_key_settings,
             open_diagnostics_folder,
-            sync_recording_pill
+            sync_recording_pill,
+            show_home,
+            show_compact_panel,
+            hide_home
         ])
         .build(tauri::generate_context!())
         .expect("Wicx tray UI failed to start")
