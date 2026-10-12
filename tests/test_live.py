@@ -214,6 +214,22 @@ class StreamingRecorderTests(unittest.TestCase):
         command = process.send_signal.call_args  # SIGINT gracefully drains raw stdout
         self.assertIsNotNone(command)
 
+    def test_streaming_recorder_exposes_real_pcm_meter_and_waveform(self) -> None:
+        process = MagicMock()
+        process.stdout.read.side_effect = [loud_frame(), b""]
+        with patch("transcriber.audio.subprocess.Popen", return_value=process):
+            recorder = StreamingRecorder(AudioConfig(), frame_ms=50)
+            reserved = recorder.start()
+            try:
+                self.assertEqual(recorder.read_frame(timeout=2), loud_frame())
+                self.assertGreater(recorder.audio_level, 0.0)
+                self.assertEqual(len(recorder.audio_waveform), 24)
+                self.assertGreater(max(recorder.audio_waveform), 0.0)
+                recorder.stop().unlink(missing_ok=True)
+            finally:
+                recorder.cancel()
+                reserved.unlink(missing_ok=True)
+
     def test_bounded_queue_drops_oldest(self) -> None:
         process = MagicMock()
         process.stdout.read.side_effect = [loud_frame()] * 40 + [b""]

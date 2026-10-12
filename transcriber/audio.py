@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from pathlib import Path
 import os
 import queue
 import re
 import shutil
 import signal
+import struct
 import subprocess
 import tempfile
 import threading
@@ -26,6 +28,35 @@ class AudioSource:
     id: str
     name: str
     default: bool = False
+
+
+def pcm_audio_level(pcm: bytes) -> float:
+    """Map little-endian signed 16-bit PCM RMS to a perceptual 0..1 meter."""
+    sample_count = len(pcm) // 2
+    if not sample_count:
+        return 0.0
+    samples = struct.iter_unpack("<h", pcm[: sample_count * 2])
+    mean_square = sum(sample[0] * sample[0] for sample in samples) / sample_count
+    rms = math.sqrt(mean_square) / 32768.0
+    if rms <= 10 ** (-55 / 20):
+        return 0.0
+    return min(1.0, max(0.0, (20 * math.log10(rms) + 55) / 55))
+
+
+def pcm_audio_waveform(pcm: bytes, buckets: int = 12) -> tuple[float, ...]:
+    """Return min/max sample peaks for an actual captured PCM frame."""
+    sample_count = len(pcm) // 2
+    if not sample_count or buckets <= 0:
+        return ()
+    samples = [sample[0] / 32768.0 for sample in struct.iter_unpack("<h", pcm[: sample_count * 2])]
+    peaks: list[float] = []
+    for bucket in range(buckets):
+        start = bucket * sample_count // buckets
+        end = max(start + 1, (bucket + 1) * sample_count // buckets)
+        values = samples[start:min(end, sample_count)]
+        if values:
+            peaks.extend((min(values), max(values)))
+    return tuple(peaks)
 
 
 class SoxRecorder:
@@ -135,8 +166,20 @@ class StreamingRecorder:
         self._window_capacity = max(1, rolling_seconds) * config.sample_rate * 2
         self._captured_frames = 0
         self._capture_lock = threading.Lock()
+        self._audio_level = 0.0
+        self._audio_waveform: tuple[float, ...] = (0.0,) * 24
         self._stopping = threading.Event()
         self._start_error: Exception | None = None
+
+    @property
+    def audio_level(self) -> float:
+        with self._capture_lock:
+            return self._audio_level
+
+    @property
+    def audio_waveform(self) -> tuple[float, ...]:
+        with self._capture_lock:
+            return self._audio_waveform
 
     @property
     def live_available(self) -> bool:
@@ -166,6 +209,9 @@ class StreamingRecorder:
         self._drain_queue()
         self._window.clear()
         self._captured_frames = 0
+        with self._capture_lock:
+            self._audio_level = 0.0
+            self._audio_waveform = (0.0,) * 24
         self._stopping.clear()
         self._start_error = None
         try:
@@ -267,6 +313,10 @@ class StreamingRecorder:
                     self._window += chunk
                     if len(self._window) > self._window_capacity:
                         del self._window[: len(self._window) - self._window_capacity]
+                    measured_level = pcm_audio_level(chunk)
+                    blend = 0.62 if measured_level > self._audio_level else 0.24
+                    self._audio_level += (measured_level - self._audio_level) * blend
+                    self._audio_waveform = pcm_audio_waveform(chunk)
                 try:
                     self._frames.put_nowait(bytes(chunk))
                 except queue.Full:
