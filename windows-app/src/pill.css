@@ -1,0 +1,57 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  color: #f7f7fa;
+  background: transparent;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body { padding: 4px; }
+
+.pill {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, .17);
+  border-radius: 999px;
+  background: linear-gradient(145deg, rgba(27, 28, 34, .97), rgba(16, 17, 21, .98));
+  box-shadow: 0 9px 32px rgba(0, 0, 0, .48), inset 0 1px 0 rgba(255, 255, 255, .09);
+  backdrop-filter: blur(24px) saturate(150%);
+}
+
+.recording-controls { display: flex; align-items: center; justify-content: space-between; gap: 13px; width: 100%; }
+.recording-controls[hidden], .processing-state[hidden] { display: none; }
+.pill-action {
+  display: grid;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 50%;
+  color: #f8f8fb;
+  font: 400 25px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+.pill-action:hover { transform: scale(1.05); }
+.pill-action:active { transform: scale(.96); }
+.cancel { background: rgba(255, 255, 255, .08); }
+.cancel:hover { background: rgba(239, 68, 68, .42); }
+.finish { background: #0878d1; border-color: rgba(129, 194, 255, .5); font-size: 22px; }
+.finish:hover { background: #168ce8; }
+.stage-content { display: flex; flex: 1; align-items: center; justify-content: center; gap: 12px; min-width: 0; }
+.stage-label { color: #e5e7eb; font-size: 13px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
+.waveform { display: block; flex: 0 0 94px; width: 94px; height: 32px; overflow: visible; }
+.waveform polyline { fill: none; stroke: #8bc7ff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 3px rgba(55, 158, 255, .5)); transition: points 75ms linear; }
+.processing-state { display: flex; align-items: center; justify-content: center; gap: 11px; min-width: 138px; }
+.processing-indicator { width: 16px; height: 16px; border: 2px solid rgba(255, 255, 255, .2); border-top-color: #78bdff; border-radius: 50%; animation: spin .8s linear infinite; }
+body[data-stage="rewriting"] .processing-indicator { border-top-color: #bd9bff; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .processing-indicator { animation-duration: 2.5s; } }

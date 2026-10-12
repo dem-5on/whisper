@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Wicx recording status</title>
+  </head>
+  <body>
+    <main class="pill" aria-live="polite">
+      <div class="recording-controls" id="recording-controls">
+        <button class="pill-action cancel" type="button" aria-label="Cancel recording" title="Cancel recording">×</button>
+        <div class="stage-content">
+          <span class="stage-label">Recording</span>
+          <svg class="waveform" id="waveform" viewBox="0 0 100 30" preserveAspectRatio="none" role="img" aria-label="Live microphone waveform">
+            <polyline id="waveform-line" points="0,15 100,15" />
+          </svg>
+        </div>
+        <button class="pill-action finish" type="button" aria-label="Finish recording and transcribe" title="Finish recording">✓</button>
+      </div>
+      <div class="processing-state" id="processing-state" hidden>
+        <span class="processing-indicator" aria-hidden="true"></span>
+        <span class="stage-label" id="processing-label">Thinking</span>
+      </div>
+    </main>
+    <script type="module" src="/src/pill.js"></script>
+  </body>
+</html>

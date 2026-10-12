@@ -28,6 +28,22 @@ def pcm_audio_level(pcm: bytes) -> float:
     return min(1.0, max(0.0, (20 * math.log10(rms) + 55) / 55))
 
 
+def pcm_audio_waveform(pcm: bytes, buckets: int = 12) -> tuple[float, ...]:
+    """Return min/max sample peaks from captured PCM for a compact real waveform."""
+    sample_count = len(pcm) // 2
+    if not sample_count or buckets <= 0:
+        return ()
+    samples = [sample[0] / 32768.0 for sample in struct.iter_unpack("<h", pcm[: sample_count * 2])]
+    peaks: list[float] = []
+    for bucket in range(buckets):
+        start = bucket * sample_count // buckets
+        end = max(start + 1, (bucket + 1) * sample_count // buckets)
+        values = samples[start:min(end, sample_count)]
+        if values:
+            peaks.extend((min(values), max(values)))
+    return tuple(peaks)
+
+
 class WindowsRecorder:
     """Capture a WAV and expose bounded PCM frames to the shared live pipeline."""
 
@@ -51,6 +67,7 @@ class WindowsRecorder:
         self._captured_frames = 0
         self._capture_error: str | None = None
         self._audio_level = 0.0
+        self._audio_waveform: tuple[float, ...] = (0.0,) * 24
 
     @property
     def live_available(self) -> bool:
@@ -60,6 +77,11 @@ class WindowsRecorder:
     def audio_level(self) -> float:
         with self._lock:
             return self._audio_level
+
+    @property
+    def audio_waveform(self) -> tuple[float, ...]:
+        with self._lock:
+            return self._audio_waveform
 
     def start(self) -> Path:
         if self._stream is not None:
@@ -87,6 +109,7 @@ class WindowsRecorder:
         self._capture_error = None
         with self._lock:
             self._audio_level = 0.0
+            self._audio_waveform = (0.0,) * 24
         self._writer = threading.Thread(target=self._write_audio, name="whisper-audio-writer", daemon=True)
         self._writer.start()
 
@@ -140,6 +163,7 @@ class WindowsRecorder:
                 self._capture_error = str(exc)
                 continue
             measured_level = pcm_audio_level(data)
+            waveform = pcm_audio_waveform(data)
             with self._lock:
                 self._captured_frames += len(data) // (2 * self.config.channels)
                 self._rolling.extend(data)
@@ -149,6 +173,7 @@ class WindowsRecorder:
                 # while smoothing the 20ms capture blocks.
                 blend = 0.62 if measured_level > self._audio_level else 0.24
                 self._audio_level += (measured_level - self._audio_level) * blend
+                self._audio_waveform = waveform
             try:
                 self._frames.put_nowait(data)
             except queue.Full:

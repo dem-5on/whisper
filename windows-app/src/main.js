@@ -236,6 +236,13 @@ function updateStatus(status) {
         : active ? "ready" : "disconnected";
   ui.connection.dataset.recording = String(recording);
   renderAudioMeter(currentStatus.audio_level, recording && active);
+  invoke("sync_recording_pill", {
+    state,
+    audioLevel: Number(currentStatus.audio_level || 0),
+    waveform: Array.isArray(currentStatus.audio_waveform) ? currentStatus.audio_waveform : [],
+    rewriteState: String(currentStatus.rewrite_state || ""),
+    hidden: currentStatus.hide_recording_pill === true,
+  }).catch(() => {});
   setActionContent(ui.toggle, recording ? "stop" : "mic", recording
     ? "Stop recording"
     : state === "ERROR" ? "Try again" : "Start recording");
@@ -686,6 +693,10 @@ listen("recording-hotkey", () => {
     return;
   }
   void toggleRecording();
+});
+listen("pill-action", ({ payload }) => {
+  if (payload?.action === "finish") void toggleRecording();
+  else if (payload?.action === "cancel") void cancelRecording();
 });
 listen("cancel-recording", () => {
   if (!focusTestBuild) void cancelRecording();

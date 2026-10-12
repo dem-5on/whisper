@@ -25,6 +25,7 @@ const ui = {
   liveModel: document.querySelector("#live-model"),
   saveLive: document.querySelector("#save-live-settings"),
   rewrite: document.querySelector("#rewrite-enabled"),
+  hideRecordingPill: document.querySelector("#hide-recording-pill"),
   authUrl: document.querySelector("#auth-api-url"),
   saveAuthUrl: document.querySelector("#save-auth-api-url"),
   accountState: document.querySelector("#account-state"),
@@ -377,6 +378,8 @@ function updateStatus(status) {
   if (!status || typeof status !== "object") return;
   currentStatus = { ...currentStatus, ...status };
   ui.rewrite.checked = currentStatus.rewrite_enabled === true;
+  ui.hideRecordingPill.checked = currentStatus.hide_recording_pill === true;
+  ui.hideRecordingPill.disabled = ["RECORDING", "PROCESSING", "DELIVERING"].includes(currentStatus.state);
   renderKeyStatus();
   if (!liveSettingsDirty) {
     ui.liveEngine.value = currentStatus.live_engine || "local";
@@ -397,6 +400,20 @@ ui.rewrite.addEventListener("change", async () => {
     setFeedback(error.message, true);
   } finally {
     ui.rewrite.disabled = false;
+  }
+});
+
+ui.hideRecordingPill.addEventListener("change", async () => {
+  ui.hideRecordingPill.disabled = true;
+  try {
+    const status = await request("set_recording_pill_hidden", { hidden: ui.hideRecordingPill.checked });
+    updateStatus(status);
+    setFeedback(ui.hideRecordingPill.checked ? "The recording pill will stay hidden." : "The recording pill will appear during recording.");
+  } catch (error) {
+    ui.hideRecordingPill.checked = currentStatus.hide_recording_pill === true;
+    setFeedback(error.message, true);
+  } finally {
+    ui.hideRecordingPill.disabled = ["RECORDING", "PROCESSING", "DELIVERING"].includes(currentStatus.state);
   }
 });
 

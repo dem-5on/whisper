@@ -13,6 +13,6 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
-    rollupOptions: { input: ["index.html", "keys.html"] },
+    rollupOptions: { input: ["index.html", "keys.html", "pill.html"] },
   },
 });

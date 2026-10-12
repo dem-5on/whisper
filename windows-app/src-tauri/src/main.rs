@@ -27,6 +27,8 @@ use tauri::{
 const PANEL_WIDTH: i32 = 420;
 const PANEL_HEIGHT: i32 = 560;
 const EXPANDED_PANEL_HEIGHT: f64 = 760.0;
+const RECORDING_PILL_WIDTH: f64 = 280.0;
+const RECORDING_PILL_HEIGHT: f64 = 64.0;
 const SCREEN_GAP: i32 = 8;
 const UNINSTALL_ARGUMENT: &str = "--whisper-uninstall";
 
@@ -741,6 +743,68 @@ fn show_key_settings(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn sync_recording_pill(
+    app: tauri::AppHandle,
+    state: String,
+    audio_level: f64,
+    waveform: Vec<f64>,
+    rewrite_state: String,
+    hidden: bool,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window("pill")
+        .ok_or_else(|| "Wicx recording pill is unavailable".to_string())?;
+    let active = matches!(state.as_str(), "RECORDING" | "PROCESSING" | "DELIVERING");
+    if hidden || !active {
+        let _ = window.hide();
+        return Ok(());
+    }
+
+    let stage = if state == "RECORDING" {
+        "recording"
+    } else if rewrite_state == "rewriting" {
+        "rewriting"
+    } else {
+        "thinking"
+    };
+    let level = if audio_level.is_finite() {
+        audio_level.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    if !window.is_visible().unwrap_or(false) {
+        if let Ok(Some(monitor)) = app.primary_monitor() {
+            let origin = monitor.position();
+            let size = monitor.size();
+            let scale = monitor.scale_factor();
+            let width = (RECORDING_PILL_WIDTH * scale).round() as i32;
+            let height = (RECORDING_PILL_HEIGHT * scale).round() as i32;
+            let x = origin.x + (size.width as i32 - width) / 2;
+            let y = origin.y + size.height as i32 - height - (48.0 * scale).round() as i32;
+            let _ = window.set_size(LogicalSize::new(
+                RECORDING_PILL_WIDTH,
+                RECORDING_PILL_HEIGHT,
+            ));
+            present_panel(&window, x, y);
+        }
+        window.show().map_err(|error| error.to_string())?;
+    }
+    app.emit_to(
+        "pill",
+        "pill-status",
+        json!({
+            "stage": stage,
+            "audio_level": level,
+            "waveform": waveform.into_iter().map(|sample| {
+                if sample.is_finite() { sample.clamp(-1.0, 1.0) } else { 0.0 }
+            }).collect::<Vec<_>>(),
+        }),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_diagnostics_folder() -> Result<(), String> {
     #[cfg(windows)]
     {
@@ -1154,6 +1218,9 @@ fn main() {
             app.manage(WebsocketToken(websocket_token.clone()));
             prepare_non_activating_window(&window)?;
             apply_panel_backdrop(&window);
+            if let Some(pill_window) = app.get_webview_window("pill") {
+                prepare_non_activating_window(&pill_window)?;
+            }
             if let Some(key_window) = app.get_webview_window("keys") {
                 let close_target = key_window.clone();
                 key_window.on_window_event(move |event| {
@@ -1276,7 +1343,8 @@ fn main() {
             create_checkout,
             manage_subscription,
             show_key_settings,
-            open_diagnostics_folder
+            open_diagnostics_folder,
+            sync_recording_pill
         ])
         .build(tauri::generate_context!())
         .expect("Wicx tray UI failed to start")

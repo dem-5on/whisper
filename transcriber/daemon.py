@@ -248,6 +248,8 @@ class TranscriberDaemon:
             return self._set_streaming(params.get("enabled", None))
         if command == "set_rewrite":
             return self._set_rewrite(params.get("enabled", None))
+        if command == "set_recording_pill_hidden":
+            return self._set_recording_pill_hidden(params.get("hidden", None))
         if command == "rewrite_result":
             return self._complete_rewrite(
                 str(params.get("request_id", "")),
@@ -969,6 +971,17 @@ class TranscriberDaemon:
             self._persist_config_locked()
             return self._ok_locked()
 
+    def _set_recording_pill_hidden(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, bool):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "hidden must be true or false"}
+        with self._lock:
+            self.config = dataclasses.replace(
+                self.config, ui=dataclasses.replace(self.config.ui, hide_recording_pill=raw),
+            )
+            self._persist_config_locked()
+            return self._ok_locked()
+
     def _complete_rewrite(self, request_id: str, text: str, error: str) -> dict[str, Any]:
         with self._lock:
             waiter = self._rewrite_waiter
@@ -1593,8 +1606,10 @@ class TranscriberDaemon:
             provisional = ""
             live_text = committed
         audio_level = 0.0
+        audio_waveform: tuple[float, ...] = (0.0,) * 24
         if self._state == State.RECORDING:
             audio_level = min(1.0, max(0.0, float(getattr(self.recorder, "audio_level", 0.0))))
+            audio_waveform = tuple(getattr(self.recorder, "audio_waveform", audio_waveform))
         return {
             "state": self._state.value,
             "error": self._error or "",
@@ -1610,11 +1625,13 @@ class TranscriberDaemon:
             # This is only a normalized amplitude level; captured audio stays
             # on the existing transcription pipeline and is never sent to UI.
             "audio_level": round(audio_level, 3),
+            "audio_waveform": [round(max(-1.0, min(1.0, float(sample))), 4) for sample in audio_waveform],
             "processing_elapsed": round(processing_elapsed, 1),
             "last_audio": bool(self.last_audio_path.exists()),
             "last_backend": self._last_backend or "",
             "last_notice": self._last_notice,
             "rewrite_enabled": self.config.ui.rewrite_enabled,
+            "hide_recording_pill": self.config.ui.hide_recording_pill,
             "rewrite_state": self._rewrite_state,
             "last_duration": round(self._last_duration, 1) if self._last_duration is not None else 0,
             "last_preview": preview,

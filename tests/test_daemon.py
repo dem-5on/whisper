@@ -569,6 +569,7 @@ class DaemonTests(unittest.TestCase):
         self.assertTrue(config.ui.show_last_transcript)
         self.assertEqual(config.ui.preview_chars, 50)
         self.assertFalse(config.ui.rewrite_enabled)
+        self.assertFalse(config.ui.hide_recording_pill)
 
 
 class DaemonPersistenceTests(unittest.TestCase):
@@ -603,6 +604,16 @@ class DaemonPersistenceTests(unittest.TestCase):
         self.assertEqual(status["ok"], "true")
         self.assertTrue(load_config(self.config_path).ui.rewrite_enabled)
         self.assertEqual(self.daemon.command("set_rewrite", {"enabled": "yes"})["ok"], "false")
+
+    def test_recording_pill_hidden_preference_persists_and_defaults_visible(self) -> None:
+        from transcriber.config import load_config
+
+        self.assertFalse(self.daemon.command("status")["hide_recording_pill"])
+        status = self.daemon.command("set_recording_pill_hidden", {"hidden": True})
+        self.assertEqual(status["ok"], "true")
+        self.assertTrue(status["hide_recording_pill"])
+        self.assertTrue(load_config(self.config_path).ui.hide_recording_pill)
+        self.assertEqual(self.daemon.command("set_recording_pill_hidden", {"hidden": 1})["ok"], "false")
 
     def test_rewrite_handoff_returns_only_matching_result(self) -> None:
         from transcriber.streaming import LiveSession

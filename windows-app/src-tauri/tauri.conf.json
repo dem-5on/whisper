@@ -44,6 +44,22 @@
         "focus": true,
         "focusable": true,
         "shadow": true
+      },
+      {
+        "label": "pill",
+        "title": "Wicx recording status",
+        "url": "pill.html",
+        "width": 280,
+        "height": 64,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "focusable": false,
+        "shadow": false
       }
     ],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:47651" }
