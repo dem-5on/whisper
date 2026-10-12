@@ -560,6 +560,57 @@ async fn fetch_billing_status(
     public_billing_status(payload)
 }
 
+/// Rewrite dictation through the configured Wicx service. The account token
+/// remains inside the native shell and is never exposed to the WebView or
+/// transcription sidecar.
+#[tauri::command]
+async fn rewrite_transcript(
+    text: String,
+    auth: State<'_, OAuthClientState>,
+) -> Result<String, String> {
+    let text = text.trim();
+    if text.is_empty() || text.len() > 20_000 {
+        return Err("There is no transcript to rewrite, or it is too long.".to_string());
+    }
+    let origin = read_auth_api_url(&auth.api_url_path)?;
+    if origin.is_empty() {
+        return Err("Set your Wicx service URL before using rewrite.".to_string());
+    }
+    let token = keyring::Entry::new(AUTH_KEYRING_SERVICE, AUTH_KEYRING_ACCOUNT)
+        .and_then(|entry| entry.get_password())
+        .map_err(|_| "Sign in to use cloud rewriting.".to_string())?;
+    let response = reqwest::Client::new()
+        .post(format!("{origin}/v1/rewrite"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "text": text }))
+        .send()
+        .await
+        .map_err(|_| "Could not reach Wicx rewrite. Check your internet connection.".to_string())?;
+    match response.status().as_u16() {
+        401 => return Err("Your Wicx session has expired. Sign in again.".to_string()),
+        402 | 403 => return Err("Cloud rewriting requires an active subscription.".to_string()),
+        404 | 503 => {
+            return Err("Cloud rewriting is not available on this Wicx service yet.".to_string())
+        }
+        status if !response.status().is_success() => {
+            return Err(format!(
+                "Wicx could not rewrite this transcript (HTTP {status})."
+            ));
+        }
+        _ => {}
+    }
+    let payload = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| "Wicx rewrite returned an invalid response.".to_string())?;
+    payload
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .filter(|rewritten| !rewritten.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Wicx rewrite returned empty text.".to_string())
+}
+
 fn auth_handoff_code(candidate: &str) -> Option<String> {
     let url = url::Url::parse(candidate).ok()?;
     if url.scheme() != "wicx"
@@ -1216,6 +1267,7 @@ fn main() {
             auth_is_signed_in,
             sign_out,
             fetch_billing_status,
+            rewrite_transcript,
             fetch_billing_plans,
             create_checkout,
             manage_subscription,
