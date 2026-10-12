@@ -20,6 +20,9 @@ const ui = {
   hidePill: document.querySelector("#setting-hide-pill"),
   rewrite: document.querySelector("#setting-rewrite"),
   activeBanner: document.querySelector("#active-session-banner"),
+  micButton: document.querySelector("#choose-microphone"),
+  micDialog: document.querySelector("#mic-dialog"),
+  micOptions: document.querySelector("#microphone-options"),
 };
 
 const mockSessions = [
@@ -32,6 +35,7 @@ let historyFilter = "all";
 let selectedSessionId = "";
 let historyTimer;
 let pendingMode = "";
+let availableMics = [];
 
 function notify(text = "", error = false) {
   ui.feedback.textContent = text;
@@ -63,6 +67,10 @@ async function request(command, params = {}) {
     return { terms: [...mockTerms], ok: "true" };
   }
   if (command === "mics") return { mics: [{ id: "default", name: "System default", default: true }], ok: "true" };
+  if (command === "set_mic") {
+    mockStatus.mic = params.device || "default";
+    return { ...mockStatus, ok: "true" };
+  }
   if (command === "set_rewrite") mockStatus.rewrite_enabled = params.enabled;
   if (command === "set_recording_pill_hidden") mockStatus.hide_recording_pill = params.hidden;
   if (command === "toggle" && mockStatus.state === "RECORDING") {
@@ -103,7 +111,9 @@ function updateStatus(status) {
   ui.hidePill.checked = status.hide_recording_pill === true;
   ui.rewrite.checked = status.rewrite_enabled === true;
   document.querySelector("#model-name").textContent = `${status.backend === "local" ? "Local" : status.backend || "Local"} · ${status.effective_model || status.model || "base"}`;
-  document.querySelector("#mic-name").textContent = status.mic && status.mic !== "default" ? status.mic : "System default";
+  const activeMic = availableMics.find((mic) => mic.id === status.mic);
+  document.querySelector("#mic-name").textContent = activeMic?.name || (status.mic && status.mic !== "default" ? status.mic : "System default");
+  ui.micButton.disabled = busy;
   document.querySelectorAll("[data-session-mode], #start-dictation, #mode-dictation").forEach((button) => { button.disabled = busy || (!ready && !preview); });
   if (status.state === "ERROR" && status.error) notify(status.error, true);
 }
@@ -126,6 +136,68 @@ function openPage(page) {
   document.querySelectorAll(".nav-item[data-page]").forEach((button) => button.classList.toggle("selected", button.dataset.page === page));
   if (page === "history") void loadSessions();
   if (page === "dictionary") void loadDictionary();
+}
+
+async function refreshMicrophones() {
+  const response = await request("mics");
+  if (response.ok === "false") throw new Error(response.error || "Could not list microphones.");
+  availableMics = Array.isArray(response.mics) ? response.mics : [];
+  const activeMic = availableMics.find((mic) => mic.id === mockStatus.mic);
+  document.querySelector("#mic-name").textContent = activeMic?.name || (mockStatus.mic && mockStatus.mic !== "default" ? mockStatus.mic : "System default");
+  return availableMics;
+}
+
+async function openMicrophonePicker() {
+  ui.micDialog.showModal();
+  ui.micOptions.innerHTML = '<div class="empty-state">Loading microphones…</div>';
+  try {
+    await refreshMicrophones();
+    ui.micOptions.replaceChildren();
+    const currentDevice = mockStatus.mic && mockStatus.mic !== "default" ? mockStatus.mic : "default";
+    const choices = [
+      { id: "default", name: "System default", default: currentDevice === "default" },
+      ...availableMics.filter((mic) => mic.id !== "default"),
+    ];
+    if (choices.length === 1) {
+      const note = document.createElement("p");
+      note.className = "mic-empty-note";
+      note.textContent = "No other input devices were found.";
+      ui.micOptions.append(note);
+    }
+    choices.forEach((mic) => {
+      const choice = document.createElement("button");
+      choice.type = "button";
+      choice.className = "mic-option";
+      choice.setAttribute("aria-pressed", String(mic.id === currentDevice));
+      const copy = document.createElement("span");
+      const name = document.createElement("strong");
+      const detail = document.createElement("small");
+      name.textContent = mic.name;
+      detail.textContent = mic.id === "default" ? "Let the system choose" : mic.default ? "System default input" : "Input device";
+      copy.append(name, detail);
+      const selected = document.createElement("span");
+      selected.className = "mic-selected";
+      selected.setAttribute("aria-hidden", "true");
+      selected.textContent = mic.id === currentDevice ? "✓" : "";
+      choice.append(copy, selected);
+      choice.addEventListener("click", async () => {
+        choice.disabled = true;
+        try {
+          const response = await request("set_mic", { device: mic.id });
+          if (response.ok === "false") throw new Error(response.error || "Could not change microphone.");
+          updateStatus(response);
+          ui.micDialog.close();
+          notify(`Microphone set to ${mic.name}.`);
+        } catch (error) {
+          notify(error.message, true);
+          choice.disabled = false;
+        }
+      });
+      ui.micOptions.append(choice);
+    });
+  } catch (error) {
+    ui.micOptions.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function escapeHtml(value) {
@@ -272,6 +344,7 @@ function beginSession(mode) {
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => openPage(button.dataset.page)));
+ui.micButton.addEventListener("click", () => void openMicrophonePicker());
 if (!preview) {
   const appWindow = getCurrentWindow();
   document.querySelector("#window-minimize").addEventListener("click", () => appWindow.minimize());
@@ -334,5 +407,6 @@ ui.rewrite.addEventListener("change", async () => {
 });
 
 void refreshStatus();
+void refreshMicrophones().catch((error) => { if (!preview) notify(error.message, true); });
 void request("sessions", { limit: 3, offset: 0 }).then((response) => renderRecent(response.sessions || [])).catch(() => {});
 if (!preview) window.setInterval(() => void refreshStatus(), 1200);
