@@ -3,8 +3,7 @@ import "./style.css";
 
 const preview = !window.__TAURI_INTERNALS__;
 const ui = {
-  title: document.querySelector("#page-title"),
-  connection: document.querySelector("#connection"),
+  connection: document.querySelector("#service-status"),
   feedback: document.querySelector("#feedback"),
   pages: [...document.querySelectorAll(".page")],
   nav: [...document.querySelectorAll("[data-page]")],
@@ -86,7 +85,7 @@ function updateStatus(status) {
   mockStatus = { ...mockStatus, ...status };
   const ready = status.ok !== "false";
   ui.connection.dataset.ready = String(ready);
-  ui.connection.querySelector("span").textContent = preview ? "Preview mode" : ready ? "Service ready" : "Service unavailable";
+  ui.connection.querySelector("span").textContent = preview ? "Preview" : ready ? "Ready" : "Offline";
   const busy = ["RECORDING", "PROCESSING", "DELIVERING"].includes(status.state);
   const activeMode = status.session_mode || mockStatus.session_mode || "dictation";
   ui.activeBanner.hidden = !busy;
@@ -112,14 +111,12 @@ async function refreshStatus() {
   try { updateStatus(await request("status")); }
   catch (error) {
     ui.connection.dataset.ready = "false";
-    ui.connection.querySelector("span").textContent = preview ? "Preview mode" : "Service unavailable";
+    ui.connection.querySelector("span").textContent = preview ? "Preview" : "Offline";
     if (!preview) notify(error.message, true);
   }
 }
 
 function openPage(page) {
-  const names = { home: "Home", history: "History", dictionary: "Dictionary", settings: "Settings" };
-  ui.title.textContent = names[page] || "Home";
   ui.pages.forEach((element) => {
     const active = element.id === `page-${page}`;
     element.hidden = !active;
@@ -274,7 +271,6 @@ function beginSession(mode) {
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => openPage(button.dataset.page)));
-document.querySelectorAll("[data-open-settings]").forEach((button) => button.addEventListener("click", () => openPage("settings")));
 document.querySelectorAll("[data-shortcut-help]").forEach((button) => button.addEventListener("click", () => document.querySelector("#shortcut-dialog").showModal()));
 document.querySelector("#copy-shortcut-command").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText("wicx toggle"); notify("Shortcut command copied."); }
