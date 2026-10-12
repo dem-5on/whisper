@@ -24,6 +24,7 @@ import stat
 _PROVIDERS = frozenset({"google", "apple"})
 _PKCE_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43,128}\Z")
 _PKCE_VERIFIER = re.compile(r"[A-Za-z0-9._~-]{43,128}\Z")
+_STATE = re.compile(r"[A-Za-z0-9_-]{32,128}\Z")
 _TRANSACTION_TTL = timedelta(minutes=10)
 _HANDOFF_TTL = timedelta(minutes=2)
 
@@ -117,7 +118,8 @@ class OAuthTransactionStore:
     def pending_callback(self, *, provider: str, state: str,
                           now: datetime | None = None) -> PendingOAuthCallback:
         """Read a pending transaction so the caller can validate the ID-token nonce."""
-        if provider not in _PROVIDERS or not isinstance(state, str) or not state:
+        if (not isinstance(provider, str) or provider not in _PROVIDERS or
+                not isinstance(state, str) or not _STATE.fullmatch(state)):
             raise OAuthTransactionError("OAuth callback state is invalid")
         current = _aware_utc(now)
         try:
@@ -144,7 +146,8 @@ class OAuthTransactionStore:
         nonce before this call; requiring the verified nonce here binds that
         validation to this exact transaction.
         """
-        if provider not in _PROVIDERS or not isinstance(state, str) or not state:
+        if (not isinstance(provider, str) or provider not in _PROVIDERS or
+                not isinstance(state, str) or not _STATE.fullmatch(state)):
             raise OAuthTransactionError("OAuth callback state is invalid")
         if not isinstance(account_id, str) or not account_id.strip() or len(account_id) > 128:
             raise ValueError("account ID is invalid")
@@ -180,7 +183,7 @@ class OAuthTransactionStore:
     def redeem_handoff(self, *, code: str, pkce_verifier: str,
                        now: datetime | None = None) -> str:
         """Consume a handoff once, only when the desktop proves its PKCE verifier."""
-        if not isinstance(code, str) or not code:
+        if not isinstance(code, str) or not code or len(code) > 256:
             raise OAuthTransactionError("OAuth handoff is invalid")
         if not isinstance(pkce_verifier, str) or not _PKCE_VERIFIER.fullmatch(pkce_verifier):
             raise OAuthTransactionError("OAuth handoff proof is invalid")
@@ -251,12 +254,15 @@ def authorization_url(*, provider: str, client_id: str, redirect_uri: str,
                       transaction: OAuthStart) -> str:
     """Build the provider authorization URL; secrets never enter the desktop."""
     from urllib.parse import urlencode
+    from urllib.parse import urlparse
 
     if provider not in _PROVIDERS:
         raise ValueError("identity provider must be google or apple")
     if not client_id or len(client_id) > 512:
         raise ValueError("provider client ID is required")
-    if not redirect_uri.startswith("https://") or len(redirect_uri) > 2048:
+    redirect = urlparse(redirect_uri)
+    if (redirect.scheme != "https" or not redirect.hostname or redirect.username or
+            redirect.password or redirect.fragment or len(redirect_uri) > 2048):
         raise ValueError("provider callback must be an HTTPS URL")
     endpoint = {
         "google": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -266,7 +272,9 @@ def authorization_url(*, provider: str, client_id: str, redirect_uri: str,
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": "openid email profile" if provider == "google" else "openid email",
+        # Apple accepts only its `name` and `email` scopes; Google requires
+        # `openid` to request an OIDC identity token.
+        "scope": "openid email profile" if provider == "google" else "email",
         "state": transaction.state,
         "nonce": transaction.nonce,
         "code_challenge": transaction.provider_pkce_challenge,

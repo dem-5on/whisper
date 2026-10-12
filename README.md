@@ -251,11 +251,26 @@ examples are illustrative only. The server supplies the plan code (for
 recurring plans), amount, payment channel, and account metadata; clients cannot
 set billing values or the account ID. Signed successful-charge
 events are accepted only when Paystack's verified reference, amount, and
-currency match the stored checkout and configured plan. The request currently
-uses an email as payer contact because Google/Apple sign-in is not implemented
-yet. A private identity-store foundation maps already-verified provider
-subjects to stable Wicx account IDs without linking by email, but OAuth
-verification and sign-in are still pending. Each checkout reference is stored against the
+currency match the stored checkout and configured plan. Checkout initialization
+currently accepts a payer email in the authenticated request. A private identity
+store maps already-verified provider subjects to stable Wicx account IDs without
+linking by email; Google/Apple sign-in is implemented in the optional hosted
+OAuth service.
+To enable sign-in routes, set `WHISPER_ENABLE_OAUTH=1` and configure
+`WHISPER_OAUTH_BASE_URL` to the public HTTPS origin. Google requires
+`WHISPER_GOOGLE_CLIENT_ID` and `WHISPER_GOOGLE_CLIENT_SECRET`. Apple requires
+`WHISPER_APPLE_CLIENT_ID` (the Services ID), `WHISPER_APPLE_TEAM_ID`,
+`WHISPER_APPLE_KEY_ID`, and `WHISPER_APPLE_PRIVATE_KEY_FILE`; register the
+corresponding HTTPS callback URLs ending in
+`/v1/auth/oauth/google/callback` and `/v1/auth/oauth/apple/callback` with the
+providers. OAuth transaction records and account identities/sessions are kept
+in private SQLite databases (`WHISPER_OAUTH_DATABASE` and
+`WHISPER_ACCOUNTS_DATABASE` can override their paths). Provider secrets and
+Apple's signing key remain server-side. The desktop obtains a one-time
+PKCE-bound handoff and exchanges it at `POST /v1/auth/session/exchange` for a
+30-day bearer session. The current desktop clients still need deep-link
+registration and sign-in UI wiring before this flow is usable end to end.
+Each checkout reference is stored against the
 authenticated account, and successful charge webhooks are checked against
 Paystack's transaction-verification API before they update the billing ledger.
 Verified subscription status now feeds the hosted `cloud_transcription` and

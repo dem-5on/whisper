@@ -123,7 +123,9 @@ class OAuthTransactionStoreTests(unittest.TestCase):
             provider="apple", client_id="apple-service-id", redirect_uri="https://auth.example.com/callback/apple",
             transaction=started,
         )
-        self.assertEqual(parse_qs(urlparse(apple_url).query)["response_mode"], ["form_post"])
+        apple = parse_qs(urlparse(apple_url).query)
+        self.assertEqual(apple["response_mode"], ["form_post"])
+        self.assertEqual(apple["scope"], ["email"])
         with self.assertRaisesRegex(ValueError, "HTTPS"):
             authorization_url(
                 provider="apple", client_id="client", redirect_uri="http://localhost/callback",

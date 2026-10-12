@@ -22,6 +22,10 @@ from .paystack import (
     PaystackPlan, PaystackWebhookError, apply_paystack_subscription_event,
     validate_checkout_request, verified_transaction_matches, verify_paystack_webhook,
 )
+from .accounts import AccountStore, AccountStoreError
+from .oauth import OAuthTransactionError, OAuthTransactionStore, authorization_url
+from .oauth_flow import OAuthProviderConfig, exchange_and_verify
+from .oidc import OIDCVerificationError
 
 
 logger = logging.getLogger("whisper_service.diarization")
@@ -31,6 +35,9 @@ PAYSTACK_CHECKOUT_PATH = "/v1/billing/checkout"
 PAYSTACK_STATUS_PATH = "/v1/billing/status"
 PAYSTACK_MANAGE_PATH = "/v1/billing/manage"
 PAYSTACK_PLANS_PATH = "/v1/billing/plans"
+OAUTH_START_PATH = "/v1/auth/oauth/{provider}/start"
+OAUTH_CALLBACK_PATH = "/v1/auth/oauth/{provider}/callback"
+OAUTH_EXCHANGE_PATH = "/v1/auth/session/exchange"
 MAX_UPLOAD_BYTES = 1_000_000_000
 MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -40,7 +47,11 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
              entitlements: EntitlementStore | None, *,
              billing_store: BillingStore | None = None,
              paystack_secret: str | None = None,
-             paystack_plans: dict[str, PaystackPlan] | None = None) -> Any:
+             paystack_plans: dict[str, PaystackPlan] | None = None,
+             oauth_transactions: OAuthTransactionStore | None = None,
+             account_store: AccountStore | None = None,
+             oauth_providers: dict[str, OAuthProviderConfig] | None = None,
+             oauth_app_redirect: str = "wicx://auth/callback") -> Any:
     try:
         from aiohttp import web
     except ImportError as exc:
@@ -49,6 +60,9 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
     @web.middleware
     async def authenticate(request: Any, handler: Any) -> Any:
         if request.path == PAYSTACK_WEBHOOK_PATH and request.method == "POST":
+            return await handler(request)
+        if oauth_transactions is not None and (
+                request.path.startswith("/v1/auth/oauth/") or request.path == OAUTH_EXCHANGE_PATH):
             return await handler(request)
         user_id = authenticator.authenticate(request.headers.get("Authorization"))
         if user_id is None:
@@ -368,6 +382,82 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             return web.json_response({"error": "subscription_management_unavailable"}, status=502)
         return web.json_response({"management_url": manage_url})
 
+    async def oauth_start(request: Any) -> Any:
+        if oauth_transactions is None:
+            return web.json_response({"error": "sign_in_unavailable"}, status=503)
+        provider = request.match_info["provider"]
+        config = (oauth_providers or {}).get(provider)
+        if config is None:
+            return web.json_response({"error": "provider_unavailable"}, status=503)
+        try:
+            data = await request.json()
+            challenge = data.get("code_challenge") if isinstance(data, dict) else None
+            transaction = oauth_transactions.begin(provider=provider, pkce_challenge=challenge)
+            target = authorization_url(
+                provider=provider, client_id=config.client_id,
+                redirect_uri=config.redirect_uri, transaction=transaction,
+            )
+        except (ValueError, OAuthTransactionError):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        return web.json_response({"authorization_url": target})
+
+    async def oauth_callback(request: Any) -> Any:
+        if oauth_transactions is None or account_store is None:
+            return web.json_response({"error": "sign_in_unavailable"}, status=503)
+        provider = request.match_info["provider"]
+        config = (oauth_providers or {}).get(provider)
+        if config is None:
+            return web.json_response({"error": "provider_unavailable"}, status=503)
+        try:
+            values = await request.post() if request.method == "POST" else request.query
+            state, code = values.get("state", ""), values.get("code", "")
+            if values.get("error") or not code:
+                return web.Response(text="Wicx sign-in was cancelled or could not be completed.", status=400)
+            pending = oauth_transactions.pending_callback(provider=provider, state=state)
+            from aiohttp import ClientSession, ClientTimeout
+
+            async with ClientSession(timeout=ClientTimeout(total=15)) as session:
+                identity = await exchange_and_verify(
+                    config=config, code=code,
+                    provider_pkce_verifier=pending.provider_pkce_verifier,
+                    nonce=pending.nonce, session=session,
+                )
+            account = account_store.resolve_verified_identity(
+                provider=identity.provider, subject=identity.subject,
+                email=identity.email, email_verified=identity.email_verified,
+            )
+            handoff = oauth_transactions.complete_callback(
+                provider=provider, state=state, verified_nonce=identity.nonce,
+                account_id=account.account_id,
+            )
+            from urllib.parse import urlencode
+
+            return web.HTTPFound(f"{oauth_app_redirect}?{urlencode({'code': handoff})}")
+        except (OAuthTransactionError, OIDCVerificationError, AccountStoreError, ValueError) as exc:
+            logger.info("OAuth callback rejected (%s)", type(exc).__name__)
+            return web.Response(
+                text="Wicx could not verify this sign-in. Return to the app and try again.", status=400,
+            )
+        except Exception as exc:
+            logger.warning("OAuth callback failed (%s)", type(exc).__name__)
+            return web.Response(text="Wicx sign-in is temporarily unavailable.", status=502)
+
+    async def exchange_oauth_session(request: Any) -> Any:
+        if oauth_transactions is None or account_store is None:
+            return web.json_response({"error": "sign_in_unavailable"}, status=503)
+        try:
+            data = await request.json()
+            handoff = data.get("code") if isinstance(data, dict) else None
+            verifier = data.get("code_verifier") if isinstance(data, dict) else None
+            account_id = oauth_transactions.redeem_handoff(code=handoff, pkce_verifier=verifier)
+            token = account_store.issue_session(account_id)
+        except (ValueError, OAuthTransactionError):
+            return web.json_response({"error": "invalid_or_expired_handoff"}, status=400)
+        except AccountStoreError:
+            logger.exception("Could not create OAuth account session")
+            return web.json_response({"error": "session_unavailable"}, status=503)
+        return web.json_response({"access_token": token, "token_type": "Bearer", "expires_in": 2592000})
+
     app = web.Application(middlewares=[authenticate], client_max_size=MAX_UPLOAD_BYTES)
     if jobs is not None:
         app.router.add_post(JOBS_PATH, create_job)
@@ -379,6 +469,11 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
     if paystack_secret and paystack_plans:
         app.router.add_post(PAYSTACK_CHECKOUT_PATH, create_checkout)
         app.router.add_post(PAYSTACK_MANAGE_PATH, manage_subscription)
+    if oauth_transactions is not None:
+        app.router.add_post(OAUTH_START_PATH, oauth_start)
+        app.router.add_get(OAUTH_CALLBACK_PATH, oauth_callback)
+        app.router.add_post(OAUTH_CALLBACK_PATH, oauth_callback)
+        app.router.add_post(OAUTH_EXCHANGE_PATH, exchange_oauth_session)
     return app
 
 
@@ -403,6 +498,10 @@ async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobMana
                      billing_store: BillingStore | None = None,
                      paystack_secret: str | None = None,
                      paystack_plans: dict[str, PaystackPlan] | None = None,
+                     oauth_transactions: OAuthTransactionStore | None = None,
+                     account_store: AccountStore | None = None,
+                     oauth_providers: dict[str, OAuthProviderConfig] | None = None,
+                     oauth_app_redirect: str = "wicx://auth/callback",
                      host: str = "127.0.0.1", port: int = 8766) -> None:
     try:
         from aiohttp import web
@@ -414,6 +513,8 @@ async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobMana
         authenticator, jobs, entitlements,
         billing_store=billing_store, paystack_secret=paystack_secret,
         paystack_plans=paystack_plans,
+        oauth_transactions=oauth_transactions, account_store=account_store,
+        oauth_providers=oauth_providers, oauth_app_redirect=oauth_app_redirect,
     ), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

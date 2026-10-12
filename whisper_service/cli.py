@@ -71,6 +71,9 @@ def main() -> None:
     serve.add_argument("--enable-billing", action="store_true",
                        default=os.environ.get("WHISPER_ENABLE_BILLING", "").lower() in {"1", "true", "yes"},
                        help="enable the Paystack subscription webhook endpoint on the HTTP service")
+    serve.add_argument("--enable-oauth", action="store_true",
+                       default=os.environ.get("WHISPER_ENABLE_OAUTH", "").lower() in {"1", "true", "yes"},
+                       help="enable Google/Apple account sign-in routes on the HTTP service")
     serve.add_argument("--http-host", default=None, help="diarization API bind address (defaults to --host)")
     serve.add_argument("--http-port", type=int, default=8766)
     serve.add_argument("--diarization-device", choices=("cpu", "cuda"), default="cpu")
@@ -160,7 +163,7 @@ async def _run_service(args: argparse.Namespace) -> None:
             manual_entitlements, billing_store,
             {plan_id: plan.features for plan_id, plan in paystack_plans.items()},
         )
-    if not args.enable_diarization and not args.enable_billing:
+    if not args.enable_diarization and not args.enable_billing and not args.enable_oauth:
         await serve_websocket(authenticator, manager, entitlements=entitlements,
                               host=args.host, port=args.port)
         return
@@ -180,6 +183,20 @@ async def _run_service(args: argparse.Namespace) -> None:
         )
         http_entitlements = entitlements
 
+    oauth_transactions = None
+    oauth_providers = None
+    oauth_app_redirect = "wicx://auth/callback"
+    if args.enable_oauth:
+        from .oauth import OAuthTransactionStore
+
+        oauth_transactions = OAuthTransactionStore(_default_oauth_database())
+        oauth_providers = _oauth_providers_from_environment()
+        oauth_app_redirect = os.environ.get("WHISPER_OAUTH_APP_REDIRECT", oauth_app_redirect)
+        if not oauth_providers:
+            raise RuntimeError("Configure at least one complete Google or Apple provider before enabling OAuth")
+        if not oauth_app_redirect.startswith("wicx://"):
+            raise RuntimeError("WHISPER_OAUTH_APP_REDIRECT must use the wicx:// scheme")
+
     await asyncio.gather(
         serve_websocket(authenticator, manager, entitlements=entitlements,
                         host=args.host, port=args.port),
@@ -188,6 +205,10 @@ async def _run_service(args: argparse.Namespace) -> None:
                    billing_store=billing_store,
                    paystack_secret=paystack_secret if args.enable_billing else None,
                    paystack_plans=paystack_plans if args.enable_billing else None,
+                   oauth_transactions=oauth_transactions,
+                   account_store=account_store if args.enable_oauth else None,
+                   oauth_providers=oauth_providers,
+                   oauth_app_redirect=oauth_app_redirect,
                    host=args.http_host or args.host, port=args.http_port),
     )
 
@@ -222,6 +243,46 @@ def _default_account_database() -> Path:
         return Path(override)
     data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     return data_home / "whisper-server" / "accounts.sqlite3"
+
+
+def _default_oauth_database() -> Path:
+    override = os.environ.get("WHISPER_OAUTH_DATABASE")
+    if override:
+        return Path(override)
+    data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    return data_home / "whisper-server" / "oauth.sqlite3"
+
+
+def _oauth_providers_from_environment() -> dict[str, "OAuthProviderConfig"]:
+    from .oauth_flow import OAuthProviderConfig
+
+    base_url = os.environ.get("WHISPER_OAUTH_BASE_URL", "").rstrip("/")
+    if not base_url.startswith("https://"):
+        raise RuntimeError("WHISPER_OAUTH_BASE_URL must be the public HTTPS origin for OAuth callbacks")
+    providers: dict[str, OAuthProviderConfig] = {}
+    google_id = os.environ.get("WHISPER_GOOGLE_CLIENT_ID")
+    google_secret = os.environ.get("WHISPER_GOOGLE_CLIENT_SECRET")
+    if google_id and google_secret:
+        providers["google"] = OAuthProviderConfig(
+            "google", google_id, f"{base_url}/v1/auth/oauth/google/callback",
+            client_secret=google_secret,
+        )
+    apple_id = os.environ.get("WHISPER_APPLE_CLIENT_ID")
+    apple_team = os.environ.get("WHISPER_APPLE_TEAM_ID")
+    apple_key_id = os.environ.get("WHISPER_APPLE_KEY_ID")
+    apple_key_file = os.environ.get("WHISPER_APPLE_PRIVATE_KEY_FILE")
+    if apple_id and apple_team and apple_key_id and apple_key_file:
+        key_path = Path(apple_key_file)
+        try:
+            apple_private_key = key_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError("Could not read WHISPER_APPLE_PRIVATE_KEY_FILE") from exc
+        providers["apple"] = OAuthProviderConfig(
+            "apple", apple_id, f"{base_url}/v1/auth/oauth/apple/callback",
+            apple_team_id=apple_team, apple_key_id=apple_key_id,
+            apple_private_key=apple_private_key,
+        )
+    return providers
 
 
 def _paystack_plans_from_environment() -> dict[str, PaystackPlan]:
