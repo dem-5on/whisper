@@ -16,7 +16,7 @@ except ImportError:
 from whisper_service.auth import TokenAuthenticator
 from whisper_service.billing import BillingStore
 from whisper_service.diarization_api import (
-    PAYSTACK_MANAGE_PATH, PAYSTACK_PLANS_PATH, PAYSTACK_STATUS_PATH,
+    PAYSTACK_CHECKOUT_PATH, PAYSTACK_MANAGE_PATH, PAYSTACK_PLANS_PATH, PAYSTACK_STATUS_PATH,
     PAYSTACK_WEBHOOK_PATH, make_app,
 )
 from whisper_service.entitlements import EntitlementStore, SubscriptionEntitlementStore
@@ -55,6 +55,10 @@ class _FakeSession:
         return None
 
     def get(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        return _ResponseContext(self.response)
+
+    def post(self, url, **kwargs):
         self.calls.append({"url": url, **kwargs})
         return _ResponseContext(self.response)
 
@@ -165,6 +169,61 @@ class PaystackWebhookRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(plans["pro-manual"]["renewal"], "manual")
         self.assertEqual(plans["pro-manual"]["period_days"], 14)
         self.assertNotIn("PLN_local", json.dumps(payload))
+
+    async def test_one_time_checkout_uses_server_price_and_persists_account_mapping(self) -> None:
+        calls: list[dict] = []
+        paystack_response = _FakeResponse(200, {
+            "status": True,
+            "data": {
+                "authorization_url": "https://checkout.paystack.com/session-token",
+                "reference": "manual-checkout-http",
+            },
+        })
+        with patch("aiohttp.ClientSession", side_effect=lambda **_kwargs: _FakeSession(paystack_response, calls)):
+            response = await self.client.post(
+                PAYSTACK_CHECKOUT_PATH,
+                json={"plan_id": "pro-manual", "email": "payer@example.com",
+                      "amount": 1, "currency": "USD", "user_id": "another-account"},
+                headers={"Authorization": f"Bearer {self.auth_token}"},
+            )
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["reference"], "manual-checkout-http")
+        payload = calls[0]["json"]
+        self.assertEqual(payload["amount"], 750)
+        self.assertEqual(payload["currency"], "GHS")
+        self.assertEqual(payload["channels"], ["mobile_money"])
+        self.assertEqual(payload["metadata"], {
+            "wicx_user_id": "account-owner", "wicx_plan_id": "pro-manual",
+        })
+        self.assertNotIn("plan", payload)
+        checkout = self.store.get_checkout("manual-checkout-http")
+        self.assertEqual(checkout["user_id"], "account-owner")
+        self.assertEqual(checkout["plan_id"], "pro-manual")
+        self.assertEqual(checkout["amount_minor"], 750)
+        self.assertEqual(checkout["billing_mode"], "one_time")
+        self.assertEqual(checkout["period_days"], 14)
+
+    async def test_recurring_checkout_uses_server_plan_code_without_client_price(self) -> None:
+        calls: list[dict] = []
+        paystack_response = _FakeResponse(200, {
+            "status": True,
+            "data": {
+                "authorization_url": "https://checkout.paystack.com/recurring-session",
+                "reference": "recurring-checkout-http",
+            },
+        })
+        with patch("aiohttp.ClientSession", side_effect=lambda **_kwargs: _FakeSession(paystack_response, calls)):
+            response = await self.client.post(
+                PAYSTACK_CHECKOUT_PATH,
+                json={"plan_id": "pro-monthly", "email": "payer@example.com", "amount": 1},
+                headers={"Authorization": f"Bearer {self.auth_token}"},
+            )
+        self.assertEqual(response.status, 200)
+        payload = calls[0]["json"]
+        self.assertEqual(payload["plan"], "PLN_local")
+        self.assertNotIn("amount", payload)
+        self.assertEqual(payload["metadata"]["wicx_user_id"], "account-owner")
+        self.assertEqual(self.store.get_checkout("recurring-checkout-http")["billing_mode"], "recurring")
 
     async def test_charge_verification_and_duplicate_delivery_are_safe(self) -> None:
         data = {
