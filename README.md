@@ -252,8 +252,10 @@ recurring plans), amount, payment channel, and account metadata; clients cannot
 set billing values or the account ID. Signed successful-charge
 events are accepted only when Paystack's verified reference, amount, and
 currency match the stored checkout and configured plan. The request currently
-uses an email as payer contact because stable Google/Apple account identities
-are not implemented yet. Each checkout reference is stored against the
+uses an email as payer contact because Google/Apple sign-in is not implemented
+yet. A private identity-store foundation maps already-verified provider
+subjects to stable Wicx account IDs without linking by email, but OAuth
+verification and sign-in are still pending. Each checkout reference is stored against the
 authenticated account, and successful charge webhooks are checked against
 Paystack's transaction-verification API before they update the billing ledger.
 Verified subscription status now feeds the hosted `cloud_transcription` and
