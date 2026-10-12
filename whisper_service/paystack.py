@@ -232,9 +232,11 @@ def apply_paystack_subscription_event(
             status = "completed" if data.get("status") == "complete" else "cancelled"
         elif event.name == "invoice.payment_failed":
             status = "attention"
-        elif data.get("paid") is True or data.get("status") == "success":
-            status = "active"
         else:
+            # subscription.create and invoice.update are lifecycle notices, not
+            # independently verified charges. Only charge.success (verified by
+            # the HTTP adapter against Paystack's transaction API) may grant or
+            # restore paid access.
             status = current["status"]
     else:
         return False
@@ -242,9 +244,11 @@ def apply_paystack_subscription_event(
     if current and current["status"] == "disputed":
         # Keep the account hold through renewals and routine subscription events.
         status = "disputed"
-    elif (current and current["status"] in {"refunded", "cancelled", "completed", "expired"}
-          and status in {"active", "non_renewing"} and event.occurred_at is None):
-        # Untimed lifecycle notifications must not restore a denied account.
+    elif (event.name != "charge.success" and current and
+          current["status"] in {"attention", "refunded", "cancelled", "completed", "expired"} and
+          status in {"active", "non_renewing"}):
+        # A lifecycle notice cannot restore paid access, even if it is newer.
+        # Only the verified charge.success path may do that.
         status = current["status"]
 
     period_end = _first_string(

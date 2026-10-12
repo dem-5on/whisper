@@ -200,6 +200,12 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         self.assertTrue(apply_paystack_subscription_event(self.store, refund, self.plans))
         self.assertFalse(apply_paystack_subscription_event(self.store, refund, self.plans))
         self.assertEqual(self.store.get_subscription("paystack", "SUB_REFUND")["status"], "refunded")
+        late_cancellation = self.event("subscription.not_renew", "5", {
+            "createdAt": "2026-10-12T10:00:00Z",
+            "subscription": {"subscription_code": "SUB_REFUND"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, late_cancellation, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_REFUND")["status"], "refunded")
 
     def test_dispute_hold_cannot_be_cleared_by_a_later_successful_charge(self) -> None:
         initial = self.event("charge.success", "h", {
@@ -294,6 +300,42 @@ class PaystackSubscriptionEventTests(unittest.TestCase):
         })
         self.assertTrue(apply_paystack_subscription_event(self.store, delayed_resolution, self.plans))
         self.assertEqual(self.store.get_subscription("paystack", "SUB_REPEAT")["status"], "disputed")
+
+    def test_invoice_update_cannot_grant_access_without_verified_charge(self) -> None:
+        initial = self.event("charge.success", "1", {
+            "status": "success", "reference": "charge-invoice-flow",
+            "created_at": "2026-10-01T10:00:00Z", "amount": 1250, "currency": "GHS",
+            "metadata": {"wicx_user_id": "user-1", "wicx_plan_id": "pro-monthly"},
+            "subscription": {"subscription_code": "SUB_INVOICE", "next_payment_date": "2026-11-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, initial, self.plans))
+        failed = self.event("invoice.payment_failed", "2", {
+            "createdAt": "2026-11-10T10:00:00Z",
+            "subscription": {"subscription_code": "SUB_INVOICE"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, failed, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_INVOICE")["status"], "attention")
+
+        invoice_updated = self.event("invoice.update", "3", {
+            "paid": True, "status": "success", "createdAt": "2026-11-11T10:00:00Z",
+            "subscription": {"subscription_code": "SUB_INVOICE"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, invoice_updated, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_INVOICE")["status"], "attention")
+        non_renewing = self.event("subscription.not_renew", "5", {
+            "createdAt": "2026-11-11T10:00:30Z",
+            "subscription": {"subscription_code": "SUB_INVOICE"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, non_renewing, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_INVOICE")["status"], "attention")
+
+        verified_charge = self.event("charge.success", "4", {
+            "status": "success", "reference": "charge-invoice-renewal",
+            "created_at": "2026-11-11T10:01:00Z", "amount": 1250, "currency": "GHS",
+            "subscription": {"subscription_code": "SUB_INVOICE", "next_payment_date": "2026-12-11T00:00:00Z"},
+        })
+        self.assertTrue(apply_paystack_subscription_event(self.store, verified_charge, self.plans))
+        self.assertEqual(self.store.get_subscription("paystack", "SUB_INVOICE")["status"], "active")
 
     def test_unknown_refund_reference_does_not_change_any_account(self) -> None:
         refund = self.event("refund.processed", "k", {
