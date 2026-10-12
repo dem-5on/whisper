@@ -20,6 +20,7 @@ const ui = {
   hidePill: document.querySelector("#setting-hide-pill"),
   rewrite: document.querySelector("#setting-rewrite"),
   activeBanner: document.querySelector("#active-session-banner"),
+  recordingWaveform: document.querySelector("#recording-waveform"),
   micButton: document.querySelector("#choose-microphone"),
   micDialog: document.querySelector("#mic-dialog"),
   micOptions: document.querySelector("#microphone-options"),
@@ -36,6 +37,13 @@ let selectedSessionId = "";
 let historyTimer;
 let pendingMode = "";
 let availableMics = [];
+let statusTimer;
+
+for (let index = 0; index < 12; index += 1) {
+  const bar = document.createElement("span");
+  bar.className = "waveform-bar";
+  ui.recordingWaveform.append(bar);
+}
 
 function notify(text = "", error = false) {
   ui.feedback.textContent = text;
@@ -96,13 +104,24 @@ function updateStatus(status) {
   ui.connection.dataset.ready = String(ready);
   ui.connection.querySelector("span").textContent = preview ? "Preview" : ready ? "Ready" : "Offline";
   const busy = ["RECORDING", "PROCESSING", "DELIVERING"].includes(status.state);
+  const processing = ["PROCESSING", "DELIVERING"].includes(status.state);
   const activeMode = status.session_mode || mockStatus.session_mode || "dictation";
-  ui.activeBanner.hidden = !busy;
+  ui.activeBanner.hidden = !busy || status.hide_recording_pill === true;
+  const recording = status.state === "RECORDING";
+  ui.recordingWaveform.dataset.recording = String(recording);
+  const waveform = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
+  ui.recordingWaveform.querySelectorAll(".waveform-bar").forEach((bar, index) => {
+    const low = Math.abs(Number(waveform[index * 2]) || 0);
+    const high = Math.abs(Number(waveform[index * 2 + 1]) || 0);
+    const peak = recording ? Math.max(low, high) : 0;
+    const height = peak === 0 ? 4 : 4 + Math.sqrt(peak) * 32;
+    bar.style.height = `${height.toFixed(1)}px`;
+  });
   if (busy) {
-    const processing = status.state !== "RECORDING";
     const modeName = activeMode[0].toUpperCase() + activeMode.slice(1);
-    document.querySelector("#active-session-title").textContent = processing ? `Finishing your ${activeMode}` : `${modeName} in progress`;
-    document.querySelector("#active-session-description").textContent = processing ? (status.rewrite_state ? "Rewriting your transcript…" : "Transcribing your audio…") : "Recording is saved on this device.";
+    const rewriting = status.rewrite_state === "rewriting";
+    document.querySelector("#active-session-title").textContent = recording ? `${modeName} recording` : rewriting ? "Rewriting" : "Thinking";
+    document.querySelector("#active-session-description").textContent = recording ? "Listening to your microphone…" : rewriting ? "Polishing your transcript before inserting it…" : "Transcribing your audio…";
     document.querySelector("#cancel-active-session").hidden = processing;
     document.querySelector("#finish-active-session").hidden = processing;
   } else {
@@ -125,6 +144,12 @@ async function refreshStatus() {
     ui.connection.querySelector("span").textContent = preview ? "Preview" : "Offline";
     if (!preview) notify(error.message, true);
   }
+}
+
+async function pollStatus() {
+  await refreshStatus();
+  const delay = mockStatus.state === "RECORDING" ? 100 : ["PROCESSING", "DELIVERING"].includes(mockStatus.state) ? 250 : 1200;
+  statusTimer = window.setTimeout(pollStatus, delay);
 }
 
 function openPage(page) {
@@ -406,7 +431,9 @@ ui.rewrite.addEventListener("change", async () => {
   catch (error) { ui.rewrite.checked = !ui.rewrite.checked; notify(error.message, true); }
 });
 
-void refreshStatus();
 void refreshMicrophones().catch((error) => { if (!preview) notify(error.message, true); });
 void request("sessions", { limit: 3, offset: 0 }).then((response) => renderRecent(response.sessions || [])).catch(() => {});
-if (!preview) window.setInterval(() => void refreshStatus(), 1200);
+if (!preview) {
+  window.clearTimeout(statusTimer);
+  void pollStatus();
+} else void refreshStatus();
