@@ -349,3 +349,12 @@ h1,h2,h3,p { margin-top:0; }
 .privacy-card { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; }
 .privacy-card .privacy-point { padding:16px 18px; border:1px solid #eaecf0; border-radius:16px; background:#fff; box-shadow:0 6px 22px #14204108; }
 .privacy-card .privacy-point + .privacy-point { border-top:1px solid #eaecf0; }
+
+/* Walkthrough has no sidebar: the user has not reached the main app yet */
+body.in-setup .sidebar { display:none; }
+body.in-setup .window-chrome { left:0; }
+
+/* Welcome: three square privacy cards */
+.privacy-card { grid-template-columns:repeat(3, minmax(0, 1fr)); align-items:stretch; }
+.privacy-card .privacy-point { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; aspect-ratio:1/1; padding:20px 16px; text-align:center; }
+@media (max-width:680px) { .privacy-card { grid-template-columns:1fr; } .privacy-card .privacy-point { aspect-ratio:auto; } }

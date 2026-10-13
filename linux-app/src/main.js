@@ -170,6 +170,7 @@ async function pollStatus() {
 }
 
 function openPage(page) {
+  document.body.classList.toggle("in-setup", page === "setup");
   ui.pages.forEach((element) => {
     const active = element.id === `page-${page}`;
     element.hidden = !active;
