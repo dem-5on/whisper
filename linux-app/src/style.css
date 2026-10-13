@@ -361,3 +361,7 @@ body.in-setup .window-chrome { left:0; }
 
 /* Walkthrough content is centered on both axes */
 body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
+
+/* Walkthrough breadcrumb: big, bold, centered, well clear of the cards */
+.setup-crumb { justify-content:center; gap:14px; margin:6px 0 96px; color:#9aa0a8; font-size:19px; font-weight:800; }
+.setup-crumb [data-phase].selected { color:#17181b; }
