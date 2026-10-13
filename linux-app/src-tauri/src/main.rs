@@ -100,8 +100,11 @@ fn update_recording_pill(
         .map_err(|error| format!("Could not check recording pill visibility: {error}"))?;
     if visible != currently_visible {
         if visible {
-            // X11 supports explicit placement. Wayland compositors may reject it;
-            // in that case the compositor chooses a safe position for the overlay.
+            pill.show()
+                .map_err(|error| format!("Could not show recording pill: {error}"))?;
+            // Position only after the surface is visible/realized. On X11 this
+            // anchors the compact pill above the bottom edge; Wayland compositors
+            // retain final placement authority and may ignore client requests.
             if let Ok(Some(monitor)) = pill.current_monitor() {
                 if let (Ok(window_size), Ok(scale)) = (pill.outer_size(), pill.scale_factor()) {
                     let monitor_position = monitor.position();
@@ -115,8 +118,6 @@ fn update_recording_pill(
                     let _ = pill.set_position(PhysicalPosition::new(x, y));
                 }
             }
-            pill.show()
-                .map_err(|error| format!("Could not show recording pill: {error}"))?;
         } else {
             pill.hide()
                 .map_err(|error| format!("Could not hide recording pill: {error}"))?;

@@ -25,11 +25,11 @@ listen("recording-status", ({ payload }) => {
   waveform.dataset.recording = String(recording);
 
   const samples = Array.isArray(payload.audio_waveform) ? payload.audio_waveform : [];
-  const level = Math.min(1, Math.max(0, Number(payload.audio_level) || 0));
   bars.forEach((bar, index) => {
     const peak = Math.max(Math.abs(Number(samples[index * 2]) || 0), Math.abs(Number(samples[index * 2 + 1]) || 0));
-    const measured = peak || level;
-    const height = measured === 0 ? 3 : 3 + Math.sqrt(measured) * 38;
+    // Use only captured PCM peaks: a silent/failed microphone stays visibly
+    // still instead of presenting a synthetic animation as live audio.
+    const height = peak < 0.002 ? 2 : 2 + Math.pow(peak, 0.34) * 23;
     bar.style.height = `${height.toFixed(1)}px`;
   });
 });
