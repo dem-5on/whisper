@@ -253,3 +253,25 @@ h1,h2,h3,p { margin-top:0; }
 .mic-option small { margin-top:3px; color:#858b95; font-size:10px; }
 .mic-selected { min-width:18px; color:#3565e8; font-size:14px; font-weight:700; }
 .mic-empty-note { margin:9px 0 0!important; color:#858b95; font-size:10px!important; }
+
+/* Keep update details quiet and anchored at the bottom of the activity rail. */
+.right-rail { min-height:calc(100vh - 145px); grid-template-rows:auto 1fr auto; }
+.update-footer { display:grid; align-content:end; justify-items:end; gap:5px; padding:0 8px 5px; color:#9298a1; font-size:10px; }
+.update-footer button { padding:0; border:0; color:#737982; background:transparent; font:inherit; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+.update-footer button:hover { color:#303640; }
+.update-footer button:disabled { opacity:.6; cursor:wait; }
+.update-dialog { width:min(500px,calc(100vw - 32px)); padding:0; border:1px solid #e2e5ea; border-radius:14px; box-shadow:0 20px 65px #11182730; }
+.update-dialog::backdrop { background:#20253170; backdrop-filter:blur(3px); }
+.update-dialog form { position:relative; padding:27px 28px 23px; }
+.update-dialog h2 { margin:0 0 10px; font:700 21px Manrope,sans-serif; letter-spacing:-.4px; }
+.update-dialog form>p:not(.eyebrow) { max-width:410px; margin:0; color:#737a85; font-size:14px; line-height:1.55; }
+.update-dialog .dialog-actions { margin-top:22px; }
+.update-dialog .secondary-button { text-decoration:none; }
+@media (max-width:840px) {
+  .right-rail { min-height:0; grid-template-rows:auto auto; }
+  .update-footer { grid-column:1/-1; }
+}
+@media (max-width:680px) {
+  .right-rail { grid-template-rows:auto auto; }
+  .update-footer { grid-column:auto; }
+}

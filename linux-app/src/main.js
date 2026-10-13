@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import appInfo from "../package.json";
 import "./style.css";
 
 const preview = !window.__TAURI_INTERNALS__;
@@ -13,7 +14,6 @@ const ui = {
   historySearch: document.querySelector("#history-search"),
   termList: document.querySelector("#term-list"),
   termCount: document.querySelector("#term-count"),
-  recentSessions: document.querySelector("#recent-sessions"),
   consent: document.querySelector("#consent-dialog"),
   consentCheck: document.querySelector("#consent-confirm"),
   confirmSession: document.querySelector("#confirm-session"),
@@ -22,7 +22,15 @@ const ui = {
   micButton: document.querySelector("#choose-microphone"),
   micDialog: document.querySelector("#mic-dialog"),
   micOptions: document.querySelector("#microphone-options"),
+  updateButton: document.querySelector("#check-updates"),
+  updateDialog: document.querySelector("#update-dialog"),
+  updateTitle: document.querySelector("#update-title"),
+  updateMessage: document.querySelector("#update-message"),
+  updateReleaseLink: document.querySelector("#update-release-link"),
 };
+
+const currentVersion = String(appInfo.version);
+document.querySelector("#app-version").textContent = `Version v${currentVersion}`;
 
 const mockSessions = [
   { id: "preview-lecture", mode: "lecture", state: "complete", created_at: new Date(Date.now() - 86400000).toISOString(), source_transcript: "Today we discussed the foundations of distributed systems, including consistency, availability, and how services communicate across a network.", audio_available: true },
@@ -114,7 +122,6 @@ function updateStatus(status) {
   if (status.state === "ERROR" && status.error) notify(status.error, true);
   if (previousState !== status.state && !busy) {
     void loadActivityStats();
-    void request("sessions", { limit: 3, offset: 0 }).then((response) => renderRecent(response.sessions || [])).catch(() => {});
   }
   previousState = status.state;
 }
@@ -302,7 +309,6 @@ async function loadSessions() {
       row.append(title, meta, previewText);
       ui.sessionList.append(row);
     });
-    renderRecent(sessions.slice(0, 3));
     if (selectedSessionId && sessions.some((session) => session.id === selectedSessionId)) await loadSession(selectedSessionId);
     else showSessionPlaceholder();
   } catch (error) {
@@ -310,20 +316,63 @@ async function loadSessions() {
   }
 }
 
-function renderRecent(sessions) {
-  ui.recentSessions.replaceChildren();
-  if (!sessions.length) {
-    ui.recentSessions.innerHTML = '<div class="recent-empty">Your recordings will show up here.</div>';
-    return;
+function normalizeVersion(version) {
+  const value = version.replace(/^v/i, "");
+  // Existing Linux release tags use DDMMYY while the app package uses YYYY.MM.DD.
+  if (/^\d{6}$/.test(value)) return `20${value.slice(4, 6)}.${value.slice(2, 4)}.${value.slice(0, 2)}`;
+  return value;
+}
+
+function compareVersions(left, right) {
+  const parts = (version) => normalizeVersion(version).split(/[.+-]/).map((part) => /^\d+$/.test(part) ? Number(part) : part.toLowerCase());
+  const a = parts(left);
+  const b = parts(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const first = a[index] ?? 0;
+    const second = b[index] ?? 0;
+    if (first === second) continue;
+    if (typeof first === "number" && typeof second === "number") return first > second ? 1 : -1;
+    return String(first).localeCompare(String(second), undefined, { numeric: true });
   }
-  sessions.forEach((session) => {
-    const row = document.createElement("button");
-    row.className = "recent-row";
-    row.type = "button";
-    row.innerHTML = `<span class="recent-type">${session.mode === "lecture" ? "▤" : session.mode === "meeting" ? "◉" : "♪"}</span><span><strong>${session.mode[0].toUpperCase()}${session.mode.slice(1)}</strong><small>${new Date(session.created_at).toLocaleDateString()}</small></span>`;
-    row.addEventListener("click", () => openPage("history"));
-    ui.recentSessions.append(row);
-  });
+  return 0;
+}
+
+async function checkForUpdates() {
+  ui.updateTitle.textContent = "Checking for updates…";
+  ui.updateMessage.textContent = "Please wait while Wicx checks the latest release.";
+  ui.updateReleaseLink.hidden = true;
+  ui.updateButton.disabled = true;
+  if (!ui.updateDialog.open) ui.updateDialog.showModal();
+  try {
+    const response = await fetch("https://api.github.com/repos/dem-5on/whisper/releases/latest", {
+      headers: { Accept: "application/vnd.github+json" },
+      cache: "no-store",
+    });
+    if (response.status === 404) {
+      ui.updateTitle.textContent = "No update is available yet";
+      ui.updateMessage.textContent = "There isn't a published Wicx release to compare with this version yet.";
+      return;
+    }
+    if (!response.ok) throw new Error(response.status === 403 ? "GitHub is temporarily limiting update checks. Try again in a little while." : `Update check failed (HTTP ${response.status}).`);
+    const release = await response.json();
+    const releaseTag = String(release.tag_name || "");
+    if (!releaseTag) throw new Error("The latest release does not include a version number.");
+    const latestVersion = normalizeVersion(releaseTag);
+    if (compareVersions(latestVersion, currentVersion) > 0) {
+      ui.updateTitle.textContent = `Wicx v${latestVersion} is available`;
+      ui.updateMessage.textContent = `You're using v${currentVersion}. A newer version is ready to download.`;
+      ui.updateReleaseLink.href = release.html_url;
+      ui.updateReleaseLink.hidden = false;
+    } else {
+      ui.updateTitle.textContent = "You're up to date!";
+      ui.updateMessage.textContent = `Wicx v${currentVersion} is the newest version available.`;
+    }
+  } catch (error) {
+    ui.updateTitle.textContent = "Couldn't check for updates";
+    ui.updateMessage.textContent = error instanceof TypeError ? "Connect to the internet and try again." : error.message;
+  } finally {
+    ui.updateButton.disabled = false;
+  }
 }
 
 async function loadSession(id) {
@@ -488,7 +537,7 @@ ui.rewrite.addEventListener("change", async () => {
 });
 
 void refreshMicrophones().catch((error) => { if (!preview) notify(error.message, true); });
-void request("sessions", { limit: 3, offset: 0 }).then((response) => renderRecent(response.sessions || [])).catch(() => {});
+ui.updateButton.addEventListener("click", () => void checkForUpdates());
 void loadActivityStats();
 if (!preview) {
   window.clearTimeout(statusTimer);
