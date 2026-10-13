@@ -344,3 +344,8 @@ h1,h2,h3,p { margin-top:0; }
 .privacy-card .privacy-point + .privacy-point { border-top:1px solid #f0f1f4; }
 .privacy-point svg { width:22px; height:22px; flex:none; margin-top:2px; fill:none; stroke:#536fc8; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .setup-centered .setup-actions { margin-top:16px; }
+
+/* Welcome: three separate privacy cards */
+.privacy-card { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; }
+.privacy-card .privacy-point { padding:16px 18px; border:1px solid #eaecf0; border-radius:16px; background:#fff; box-shadow:0 6px 22px #14204108; }
+.privacy-card .privacy-point + .privacy-point { border-top:1px solid #eaecf0; }
