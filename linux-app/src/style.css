@@ -376,3 +376,7 @@ body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
 /* Welcome: centered, bigger Continue */
 .setup-centered .setup-actions { justify-content:center; }
 .setup-centered .primary-button { padding:14px 48px; font-size:16px; border-radius:12px; }
+
+/* Welcome: airier card grid and clear run-up to Continue */
+.privacy-card { gap:30px; }
+.setup-centered .setup-actions { margin-top:38px; }
