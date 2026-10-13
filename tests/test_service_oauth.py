@@ -69,7 +69,10 @@ class OAuthTransactionStoreTests(unittest.TestCase):
                 provider="google", state=started.state, verified_nonce=pending.nonce,
                 account_id="account-1", now=self.now,
             )
-        self.assertEqual(self.store.redeem_handoff(code=code, pkce_verifier=self.verifier), "account-1")
+        self.assertEqual(
+            self.store.redeem_handoff(code=code, pkce_verifier=self.verifier, now=self.now),
+            "account-1",
+        )
 
     def test_transactions_and_handoffs_expire(self) -> None:
         started = self._start()
@@ -95,7 +98,10 @@ class OAuthTransactionStoreTests(unittest.TestCase):
         )
         with self.assertRaises(OAuthTransactionError):
             self.store.redeem_handoff(code=code, pkce_verifier="x" * 48, now=self.now)
-        self.assertEqual(self.store.redeem_handoff(code=code, pkce_verifier=self.verifier), "account-1")
+        self.assertEqual(
+            self.store.redeem_handoff(code=code, pkce_verifier=self.verifier, now=self.now),
+            "account-1",
+        )
 
     def test_rejects_invalid_provider_pkce_and_naive_time(self) -> None:
         with self.assertRaisesRegex(ValueError, "provider"):

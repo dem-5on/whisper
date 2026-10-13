@@ -109,6 +109,9 @@ class TranscriberDaemon:
             config.audio,
             # Keep Linux PCM capture active for the microphone meter even
             # when live transcription is disabled for batch providers.
+            # On Linux, capture PCM even when live transcription is disabled:
+            # the UI's microphone meter and pill need real samples regardless
+            # of whether the selected batch provider supports streaming.
             streaming_enabled=config.streaming.enabled or os.name != "nt",
             frame_ms=config.streaming.frame_ms,
             max_queue_seconds=config.streaming.max_queue_seconds,
