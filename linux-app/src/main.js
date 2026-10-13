@@ -171,7 +171,6 @@ async function pollStatus() {
 
 function openPage(page) {
   document.body.classList.toggle("in-setup", page === "setup");
-  void setupBgControl();
   ui.pages.forEach((element) => {
     const active = element.id === `page-${page}`;
     element.hidden = !active;
@@ -180,6 +179,7 @@ function openPage(page) {
   document.querySelectorAll(".nav-item[data-page]").forEach((button) => button.classList.toggle("selected", button.dataset.page === page));
   if (page === "history") void loadSessions();
   if (page === "dictionary") void loadDictionary();
+  void setupBgControl();
 }
 
 async function loadActivityStats() {
