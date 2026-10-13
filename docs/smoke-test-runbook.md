@@ -59,7 +59,7 @@ Run on each OS/desktop-environment combination claimed as supported. Record OS v
 - Python tests excluding Windows-specific checks passed with the repository virtual environment: `.venv/bin/python -m pytest -q -p no:cacheprovider -k 'not windows'` (one aiohttp `NotAppKeyWarning`).
 - Five assertions in `tests/test_windows_tauri_spike.py` currently disagree with the Windows app's configured width, style, and dependency/source state. Resolve those on the `windows` branch; do not weaken them without checking the intended behavior.
 - Two OAuth tests were missing the fixed fixture time for PKCE handoff redemption. Their calls now pass `now=self.now` so the tests remain deterministic.
-- Node.js/npm were unavailable in the 2026-10-13 agent execution environment, so frontend test/build commands were not run there.
+- Node.js was available through the user's NVM installation but was not on the default shell `PATH`. The Linux Vite build and Windows Node unit tests were run using the explicit Node path; the Windows Vite production build and Tauri package build remain unverified in this environment.
 
 ## Reporting results
 
