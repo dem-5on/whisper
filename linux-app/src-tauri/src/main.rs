@@ -8,6 +8,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use tauri::{Emitter, Manager, PhysicalPosition};
 
 fn daemon_socket() -> PathBuf {
     if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
@@ -84,9 +85,54 @@ fn daemon_request(command: String, params: Option<Value>) -> Result<Value, Strin
     Ok(response)
 }
 
+#[tauri::command]
+fn update_recording_pill(
+    app: tauri::AppHandle,
+    visible: bool,
+    status: Value,
+) -> Result<(), String> {
+    let pill = app
+        .get_webview_window("recording-pill")
+        .ok_or_else(|| "The Wicx recording pill window was not created.".to_string())?;
+
+    let currently_visible = pill
+        .is_visible()
+        .map_err(|error| format!("Could not check recording pill visibility: {error}"))?;
+    if visible != currently_visible {
+        if visible {
+            // X11 supports explicit placement. Wayland compositors may reject it;
+            // in that case the compositor chooses a safe position for the overlay.
+            if let Ok(Some(monitor)) = pill.current_monitor() {
+                if let (Ok(window_size), Ok(scale)) = (pill.outer_size(), pill.scale_factor()) {
+                    let monitor_position = monitor.position();
+                    let monitor_size = monitor.size();
+                    let width = window_size.width as i32;
+                    let height = window_size.height as i32;
+                    let x = monitor_position.x + (monitor_size.width as i32 - width) / 2;
+                    let y = monitor_position.y + monitor_size.height as i32
+                        - height
+                        - (36.0 * scale) as i32;
+                    let _ = pill.set_position(PhysicalPosition::new(x, y));
+                }
+            }
+            pill.show()
+                .map_err(|error| format!("Could not show recording pill: {error}"))?;
+        } else {
+            pill.hide()
+                .map_err(|error| format!("Could not hide recording pill: {error}"))?;
+        }
+    }
+
+    app.emit_to("recording-pill", "recording-status", status)
+        .map_err(|error| format!("Could not update recording pill: {error}"))
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![daemon_request])
+        .invoke_handler(tauri::generate_handler![
+            daemon_request,
+            update_recording_pill
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Wicx Linux desktop app");
 }

@@ -1,7 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emitTo } from "@tauri-apps/api/event";
-import { currentMonitor, getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./style.css";
 
 const preview = !window.__TAURI_INTERNALS__;
@@ -147,35 +145,20 @@ async function syncRecordingPill(status, busy, activeMode, recording) {
   pillSyncing = true;
   try {
     const shouldShow = busy && status.hide_recording_pill !== true;
-    const pill = await WebviewWindow.getByLabel("recording-pill");
-    if (!pill) return;
     const rewriting = status.rewrite_state === "rewriting";
-    await emitTo("recording-pill", "recording-status", {
-      state: status.state,
-      mode: activeMode,
-      recording,
-      title: recording ? "Recording" : rewriting ? "Rewriting" : "Thinking",
-      audio_waveform: status.audio_waveform,
-      audio_level: status.audio_level,
+    await invoke("update_recording_pill", {
+      visible: shouldShow,
+      status: {
+        state: status.state,
+        mode: activeMode,
+        recording,
+        title: recording ? "Recording" : rewriting ? "Rewriting" : "Thinking",
+        audio_waveform: status.audio_waveform,
+        audio_level: status.audio_level,
+      },
     });
-    if (shouldShow && !pillVisible) {
-      try {
-        const monitor = await currentMonitor();
-        if (monitor) {
-          const scale = monitor.scaleFactor;
-          const x = monitor.position.x + Math.round((monitor.size.width - 286 * scale) / 2);
-          const y = monitor.position.y + monitor.size.height - Math.round(72 * scale) - Math.round(36 * scale);
-          await pill.setPosition(new PhysicalPosition(x, y));
-        }
-      } catch { /* Some Wayland compositors do not allow clients to position windows. */ }
-      await pill.show();
-      pillVisible = true;
-      ui.activeBanner.hidden = true;
-    } else if (!shouldShow && pillVisible) {
-      await pill.hide();
-      pillVisible = false;
-      ui.activeBanner.hidden = !busy || status.hide_recording_pill === true;
-    }
+    pillVisible = shouldShow;
+    ui.activeBanner.hidden = !busy || status.hide_recording_pill === true || pillVisible;
   } catch (error) {
     console.warn("Floating recording pill is unavailable; retaining the in-app status banner.", error);
   } finally {
