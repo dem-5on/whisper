@@ -1,14 +1,27 @@
 //! Global keyboard shortcuts for the Linux desktop app.
 //!
 //! Three mode bindings (Dictation, Meeting, Lecture) are stored in
-//! `$XDG_CONFIG_HOME/wicx/shortcuts.json` and registered through
-//! `tauri-plugin-global-shortcut`. Registration is best-effort: Wayland
-//! compositors without the Global Shortcuts portal will refuse, in which
-//! case the error is reported per action and the desktop-environment custom
-//! shortcut fallback (`wicx toggle`, `wicx start-session`, ...) remains the
-//! supported path.
+//! `$XDG_CONFIG_HOME/wicx/shortcuts.json`. Combinations are registered
+//! through `tauri-plugin-global-shortcut`; registration is best-effort on
+//! Wayland and per-action refusal is reported with the desktop-environment
+//! custom-shortcut fallback (`wicx toggle`, `wicx start-session`, ...).
+//!
+//! A bare Right Alt cannot be expressed in any hotkey API, so Dictation's
+//! default is monitored directly at the evdev layer instead: a RightAlt
+//! press followed by release with no other key in between toggles
+//! Dictation. Monitoring is read-only (never grabs the device, never logs
+//! keys) and needs read access to `/dev/input/event*` (the `input` group,
+//! same privilege class as the existing `/dev/uinput` requirement).
 
-use std::{collections::HashMap, fs, path::PathBuf, str::FromStr, sync::Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+    str::FromStr,
+    sync::Mutex,
+};
+
+use evdev::{Device, EventType, KeyCode};
 
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
@@ -20,12 +33,16 @@ pub const ACTIONS: &[&str] = &["dictation", "meeting", "lecture"];
 
 pub struct ShortcutState_ {
     errors: Mutex<HashMap<String, String>>,
+    monitored: Mutex<HashSet<PathBuf>>,
+    monitor_error: Mutex<Option<String>>,
 }
 
 impl ShortcutState_ {
     pub fn new() -> Self {
         Self {
             errors: Mutex::new(HashMap::new()),
+            monitored: Mutex::new(HashSet::new()),
+            monitor_error: Mutex::new(None),
         }
     }
 
@@ -69,7 +86,7 @@ fn default_store() -> Value {
         "setup_completed": false,
         "long_consent": false,
         "bindings": {
-            "dictation": {"display": "Alt + Space", "accelerator": "Alt+Space"},
+            "dictation": {"display": "Right Alt", "accelerator": "RightAlt"},
             "meeting": {"display": "", "accelerator": null},
             "lecture": {"display": "", "accelerator": null},
         },
@@ -116,14 +133,23 @@ fn save_store(store: &Value) -> Result<(), String> {
 
 /// Validate a user-captured accelerator before it is stored or registered.
 ///
-/// Accepts modifier combos, function keys, and the bare `Alt` default (meant
-/// as Right Alt; the plugin cannot isolate left from right). Bare Left
-/// Ctrl/Shift/Super and single typing characters are refused because they
-/// would break normal use.
-pub fn validate_accelerator(accelerator: &str) -> Result<(), String> {
+/// `RightAlt` is the bare Right Alt tap (evdev-monitored) and is only valid
+/// for Dictation. Combinations go through the hotkey API. Bare Left
+/// Ctrl/Shift/Super/Alt and single typing characters are refused because
+/// they would break normal use.
+pub fn validate_accelerator(accelerator: &str, action: &str) -> Result<(), String> {
     let text = accelerator.trim();
     if text.is_empty() {
         return Err("Press a key combination first.".to_string());
+    }
+    if text == "RightAlt" {
+        if action == "dictation" {
+            return Ok(());
+        }
+        return Err(
+            "Right Alt alone is reserved for Dictation. Pick a combination for this mode."
+                .to_string(),
+        );
     }
     let upper = text.to_uppercase();
     if upper == "ALT" {
@@ -179,6 +205,12 @@ fn register_all(app: &AppHandle) {
             shortcuts.clear_error(action);
             continue;
         };
+        if accelerator == "RightAlt" {
+            // Bare Right Alt is monitored at the evdev layer, not the
+            // hotkey API. Its status is reported through ensure_monitor.
+            shortcuts.clear_error(action);
+            continue;
+        }
         let parsed = match Shortcut::from_str(&accelerator) {
             Ok(parsed) => parsed,
             Err(_) => {
@@ -207,6 +239,136 @@ fn fire_action(app: &AppHandle, action: &str) {
     };
     if let Err(error) = result {
         eprintln!("wicx shortcut '{action}' failed: {error}");
+    }
+}
+
+/// Tracks a lone Right Alt tap: press arms, any other key press disarms,
+/// release fires only when nothing else was pressed in between. Pure logic
+/// so it can be unit-tested without hardware.
+#[derive(Default)]
+struct TapTracker {
+    right_alt_down: bool,
+    other_pressed: bool,
+}
+
+impl TapTracker {
+    /// Feed one key event. `value` follows evdev (1 press, 2 repeat, 0 release).
+    /// Returns true exactly when a lone tap completed and should fire.
+    fn key_event(&mut self, is_right_alt: bool, value: i32) -> bool {
+        match (is_right_alt, value) {
+            (true, 1) => {
+                // Arm without clearing other_pressed: a key already held
+                // down before this press still disarms the tap.
+                self.right_alt_down = true;
+                false
+            }
+            (true, 2) => false,
+            (true, _) => {
+                let fire = self.right_alt_down && !self.other_pressed;
+                self.right_alt_down = false;
+                self.other_pressed = false;
+                fire
+            }
+            (false, 1) | (false, 2) => {
+                self.other_pressed = true;
+                false
+            }
+            (false, _) => false,
+        }
+    }
+}
+
+const RIGHT_ALT_CODE: u16 = 100;
+
+fn has_right_alt(device: &Device) -> bool {
+    device
+        .supported_keys()
+        .map(|keys| keys.contains(KeyCode::KEY_RIGHTALT))
+        .unwrap_or(false)
+}
+
+fn monitor_device(app: AppHandle, path: PathBuf) {
+    std::thread::spawn(move || {
+        let mut device = match Device::open(&path) {
+            Ok(device) => device,
+            Err(error) => {
+                eprintln!("wicx: cannot monitor {}: {error}", path.display());
+                return;
+            }
+        };
+        let mut tracker = TapTracker::default();
+        loop {
+            let events = match device.fetch_events() {
+                Ok(events) => events,
+                Err(error) => {
+                    eprintln!("wicx: key monitor on {} ended: {error}", path.display());
+                    return;
+                }
+            };
+            for event in events {
+                if event.event_type() != EventType::KEY {
+                    continue;
+                }
+                if tracker.key_event(event.code() == RIGHT_ALT_CODE, event.value()) {
+                    // Re-read the binding at fire time: threads are spawned
+                    // once per device and must follow later rebinds.
+                    let (_, accelerator) = binding(&load_store(), "dictation");
+                    if accelerator.as_deref() == Some("RightAlt") {
+                        fire_action(&app, "dictation");
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Ensure keyboard devices are monitored for the Right Alt tap. Safe to call
+/// repeatedly: already-monitored devices are skipped, and firing always
+/// follows the current stored binding.
+fn ensure_monitor(app: &AppHandle) {
+    let mut probed = 0;
+    let mut fresh_paths: Vec<PathBuf> = vec![];
+    for (path, device) in evdev::enumerate() {
+        probed += 1;
+        if !has_right_alt(&device) {
+            continue;
+        }
+        let fresh = match app.try_state::<ShortcutState_>() {
+            Some(state) => match state.monitored.lock() {
+                Ok(mut set) => set.insert(path.clone()),
+                Err(_) => false,
+            },
+            None => return,
+        };
+        if fresh {
+            fresh_paths.push(path);
+        }
+    }
+    // enumerate() silently skips devices it cannot open, so probe access
+    // directly to tell "no keyboards" apart from "no permission".
+    let access_error = if probed == 0 {
+        match std::fs::read_dir("/dev/input") {
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Some(
+                "Wicx cannot read keyboard devices (need the “input” group — sign out and back in after install, then reopen setup). The desktop-settings fallback below still works."
+                    .to_string(),
+            ),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    match app.try_state::<ShortcutState_>() {
+        Some(state) => match state.monitor_error.lock() {
+            Ok(mut slot) => {
+                *slot = access_error;
+            }
+            Err(_) => {}
+        },
+        None => {}
+    }
+    for path in fresh_paths {
+        monitor_device(app.clone(), path);
     }
 }
 
@@ -239,6 +401,7 @@ fn toggle_long_session(app: &AppHandle, mode: &str) -> Result<Value, String> {
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
     register_all(app);
+    ensure_monitor(app);
     Ok(())
 }
 
@@ -263,15 +426,22 @@ pub fn handle_press(app: &AppHandle, id: &Shortcut) {
 pub fn get_shortcuts(app: AppHandle) -> Result<Value, String> {
     let store = load_store();
     let errors = app.try_state::<ShortcutState_>();
+    let monitor_error = errors
+        .as_ref()
+        .and_then(|s| s.monitor_error.lock().ok().and_then(|slot| slot.clone()));
     let mut bindings = Map::new();
     for action in ACTIONS {
         let (display, accelerator) = binding(&store, action);
+        let mut register_error = errors.as_ref().and_then(|s| s.error(action));
+        if *action == "dictation" && register_error.is_none() {
+            register_error = monitor_error.clone();
+        }
         bindings.insert(
             (*action).to_string(),
             json!({
                 "display": display,
                 "accelerator": accelerator,
-                "register_error": errors.as_ref().and_then(|s| s.error(action)),
+                "register_error": register_error,
             }),
         );
     }
@@ -295,7 +465,7 @@ pub fn set_shortcut(
     let mut store = load_store();
     match accelerator {
         Some(text) if !text.trim().is_empty() => {
-            validate_accelerator(&text)?;
+            validate_accelerator(&text, &action)?;
             if let Some(bindings) = store.get_mut("bindings").and_then(Value::as_object_mut) {
                 bindings.insert(
                     action.clone(),
@@ -311,6 +481,7 @@ pub fn set_shortcut(
     }
     save_store(&store)?;
     register_all(&app);
+    ensure_monitor(&app);
     get_shortcuts(app)
 }
 
@@ -336,13 +507,13 @@ pub fn complete_setup() -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_accelerator;
+    use super::{validate_accelerator, TapTracker};
 
     #[test]
     fn bare_system_modifiers_are_rejected() {
         for banned in ["Shift", "Control", "Super", "CTRL", "meta"] {
             assert!(
-                validate_accelerator(banned).is_err(),
+                validate_accelerator(banned, "dictation").is_err(),
                 "{banned} must be rejected"
             );
         }
@@ -351,7 +522,10 @@ mod tests {
     #[test]
     fn single_typing_characters_are_rejected() {
         for key in ["a", "M", "5"] {
-            assert!(validate_accelerator(key).is_err(), "{key} must be rejected");
+            assert!(
+                validate_accelerator(key, "dictation").is_err(),
+                "{key} must be rejected"
+            );
         }
     }
 
@@ -359,7 +533,7 @@ mod tests {
     fn alt_default_combos_and_function_keys_pass() {
         for good in ["Alt+Space", "Alt+KeyM", "Control+Shift+Space", "F9"] {
             assert!(
-                validate_accelerator(good).is_ok(),
+                validate_accelerator(good, "dictation").is_ok(),
                 "{good} must be accepted"
             );
         }
@@ -367,14 +541,64 @@ mod tests {
 
     #[test]
     fn bare_alt_alone_is_rejected_with_guidance() {
-        let error = validate_accelerator("Alt").unwrap_err();
+        let error = validate_accelerator("Alt", "dictation").unwrap_err();
         assert!(error.contains("Alt+Space"), "unexpected message: {error}");
     }
 
     #[test]
     fn empty_and_garbage_are_rejected() {
-        assert!(validate_accelerator("").is_err());
-        assert!(validate_accelerator("   ").is_err());
-        assert!(validate_accelerator("Not+A+Key+At+All+X1").is_err());
+        assert!(validate_accelerator("", "dictation").is_err());
+        assert!(validate_accelerator("   ", "dictation").is_err());
+        assert!(validate_accelerator("Not+A+Key+At+All+X1", "dictation").is_err());
+    }
+
+    #[test]
+    fn right_alt_tap_is_dictation_only() {
+        assert!(validate_accelerator("RightAlt", "dictation").is_ok());
+        assert!(validate_accelerator("RightAlt", "meeting").is_err());
+        assert!(validate_accelerator("RightAlt", "lecture").is_err());
+    }
+
+    #[test]
+    fn lone_right_alt_tap_fires() {
+        let mut tracker = TapTracker::default();
+        assert!(!tracker.key_event(true, 1));
+        assert!(tracker.key_event(true, 0));
+    }
+
+    #[test]
+    fn altgr_plus_key_does_not_fire() {
+        let mut tracker = TapTracker::default();
+        assert!(!tracker.key_event(true, 1));
+        assert!(!tracker.key_event(false, 1));
+        assert!(!tracker.key_event(false, 0));
+        assert!(!tracker.key_event(true, 0));
+    }
+
+    #[test]
+    fn held_key_repeat_does_not_disarm_before_release() {
+        let mut tracker = TapTracker::default();
+        assert!(!tracker.key_event(true, 1));
+        assert!(!tracker.key_event(true, 2));
+        assert!(tracker.key_event(true, 0));
+    }
+
+    #[test]
+    fn other_key_first_disarms_the_tap() {
+        let mut tracker = TapTracker::default();
+        assert!(!tracker.key_event(false, 1));
+        assert!(!tracker.key_event(false, 0));
+        assert!(!tracker.key_event(true, 1));
+        assert!(!tracker.key_event(true, 0));
+    }
+
+    #[test]
+    fn tracker_recovers_for_the_next_tap() {
+        let mut tracker = TapTracker::default();
+        assert!(!tracker.key_event(true, 1));
+        assert!(!tracker.key_event(false, 1));
+        assert!(!tracker.key_event(true, 0));
+        assert!(!tracker.key_event(true, 1));
+        assert!(tracker.key_event(true, 0));
     }
 }
