@@ -394,3 +394,6 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 
 /* Backdrop canvas must cover the viewport, not the default 300x150 box */
 #setup-bg { width:100vw; height:100vh; }
+
+/* Shortcut test cards need air between them */
+#shortcut-tests { display:grid; gap:22px; }
