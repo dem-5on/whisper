@@ -19,8 +19,6 @@ const ui = {
   confirmSession: document.querySelector("#confirm-session"),
   hidePill: document.querySelector("#setting-hide-pill"),
   rewrite: document.querySelector("#setting-rewrite"),
-  activeBanner: document.querySelector("#active-session-banner"),
-  recordingWaveform: document.querySelector("#recording-waveform"),
   micButton: document.querySelector("#choose-microphone"),
   micDialog: document.querySelector("#mic-dialog"),
   micOptions: document.querySelector("#microphone-options"),
@@ -38,14 +36,8 @@ let historyTimer;
 let pendingMode = "";
 let availableMics = [];
 let statusTimer;
-let pillVisible = false;
 let pillSyncing = false;
-
-for (let index = 0; index < 12; index += 1) {
-  const bar = document.createElement("span");
-  bar.className = "waveform-bar";
-  ui.recordingWaveform.append(bar);
-}
+let previousState = "IDLE";
 
 function notify(text = "", error = false) {
   ui.feedback.textContent = text;
@@ -106,27 +98,9 @@ function updateStatus(status) {
   ui.connection.dataset.ready = String(ready);
   ui.connection.querySelector("span").textContent = preview ? "Preview" : ready ? "Ready" : "Offline";
   const busy = ["RECORDING", "PROCESSING", "DELIVERING"].includes(status.state);
-  const processing = ["PROCESSING", "DELIVERING"].includes(status.state);
   const activeMode = status.session_mode || mockStatus.session_mode || "dictation";
-  ui.activeBanner.hidden = !busy || status.hide_recording_pill === true || (!preview && pillVisible);
   const recording = status.state === "RECORDING";
-  ui.recordingWaveform.dataset.recording = String(recording);
-  const waveform = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
-  ui.recordingWaveform.querySelectorAll(".waveform-bar").forEach((bar, index) => {
-    const low = Math.abs(Number(waveform[index * 2]) || 0);
-    const high = Math.abs(Number(waveform[index * 2 + 1]) || 0);
-    const peak = recording ? Math.max(low, high) : 0;
-    const height = peak === 0 ? 4 : 4 + Math.sqrt(peak) * 32;
-    bar.style.height = `${height.toFixed(1)}px`;
-  });
-  if (busy) {
-    const modeName = activeMode[0].toUpperCase() + activeMode.slice(1);
-    const rewriting = status.rewrite_state === "rewriting";
-    document.querySelector("#active-session-title").textContent = recording ? `${modeName} recording` : rewriting ? "Rewriting" : "Thinking";
-    document.querySelector("#active-session-description").textContent = recording ? "Listening to your microphone…" : rewriting ? "Polishing your transcript before inserting it…" : "Transcribing your audio…";
-    document.querySelector("#cancel-active-session").hidden = processing;
-    document.querySelector("#finish-active-session").hidden = processing;
-  } else {
+  if (!busy) {
     mockStatus.session_mode = "";
   }
   void syncRecordingPill(status, busy, activeMode, recording);
@@ -138,6 +112,11 @@ function updateStatus(status) {
   ui.micButton.disabled = busy;
   document.querySelectorAll("[data-session-mode], #start-dictation, #mode-dictation").forEach((button) => { button.disabled = busy || (!ready && !preview); });
   if (status.state === "ERROR" && status.error) notify(status.error, true);
+  if (previousState !== status.state && !busy) {
+    void loadActivityStats();
+    void request("sessions", { limit: 3, offset: 0 }).then((response) => renderRecent(response.sessions || [])).catch(() => {});
+  }
+  previousState = status.state;
 }
 
 async function syncRecordingPill(status, busy, activeMode, recording) {
@@ -157,10 +136,8 @@ async function syncRecordingPill(status, busy, activeMode, recording) {
         audio_level: status.audio_level,
       },
     });
-    pillVisible = shouldShow;
-    ui.activeBanner.hidden = !busy || status.hide_recording_pill === true || pillVisible;
   } catch (error) {
-    console.warn("Floating recording pill is unavailable; retaining the in-app status banner.", error);
+    console.warn("Floating recording pill is unavailable.", error);
   } finally {
     pillSyncing = false;
   }
@@ -190,6 +167,41 @@ function openPage(page) {
   document.querySelectorAll(".nav-item[data-page]").forEach((button) => button.classList.toggle("selected", button.dataset.page === page));
   if (page === "history") void loadSessions();
   if (page === "dictionary") void loadDictionary();
+}
+
+async function loadActivityStats() {
+  const sessions = [];
+  try {
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore && offset < 100000) {
+      const response = await request("sessions", { limit: 1000, offset });
+      sessions.push(...(Array.isArray(response.sessions) ? response.sessions : []));
+      hasMore = response.has_more === true;
+      offset += 1000;
+    }
+    const today = new Date();
+    const sameDay = (date) => date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
+    let totalWords = 0;
+    let todaySeconds = 0;
+    let totalSeconds = 0;
+    sessions.forEach((session) => {
+      const transcript = String(session.source_transcript || "").trim();
+      const words = transcript ? transcript.split(/\s+/u).length : 0;
+      totalWords += words;
+      const started = Date.parse(session.created_at || "");
+      const ended = Date.parse(session.finished_at || "");
+      const seconds = Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? (ended - started) / 1000 : 0;
+      totalSeconds += seconds;
+      if (Number.isFinite(started) && sameDay(new Date(started))) todaySeconds += seconds;
+    });
+    document.querySelector("#stat-today-minutes").textContent = `${Math.round(todaySeconds / 60)} min`;
+    document.querySelector("#stat-total-words").textContent = new Intl.NumberFormat().format(totalWords);
+    document.querySelector("#stat-average-wpm").textContent = totalSeconds > 0 ? `${Math.round(totalWords / (totalSeconds / 60))}` : "—";
+    document.querySelector("#stat-total-minutes").textContent = `${Math.round(totalSeconds / 60)} min`;
+  } catch (error) {
+    console.warn("Could not calculate local activity stats.", error);
+  }
 }
 
 async function refreshMicrophones() {
@@ -416,6 +428,12 @@ function beginSession(mode) {
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => openPage(button.dataset.page)));
+document.querySelector("[data-account-open]").addEventListener("click", () => {
+  openPage("settings");
+  document.querySelectorAll("[data-settings-section]").forEach((item) => item.classList.toggle("selected", item.dataset.settingsSection === "account"));
+  document.querySelectorAll("[data-settings-panel]").forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== "account"; });
+});
+document.querySelector("#open-help").addEventListener("click", () => document.querySelector("#help-dialog").showModal());
 ui.micButton.addEventListener("click", () => void openMicrophonePicker());
 if (!preview) {
   const appWindow = getCurrentWindow();
@@ -429,15 +447,6 @@ document.querySelector("#copy-shortcut-command").addEventListener("click", async
   catch { notify("Copy is unavailable here. Select and copy `wicx toggle` from the dialog.", true); }
 });
 document.querySelectorAll("[data-session-mode]").forEach((button) => button.addEventListener("click", () => beginSession(button.dataset.sessionMode)));
-document.querySelector("#finish-active-session").addEventListener("click", async () => {
-  try { updateStatus(await request(mockStatus.session_mode === "dictation" ? "toggle" : "stop_session")); notify("Finishing your recording…"); }
-  catch (error) { notify(error.message, true); }
-});
-document.querySelector("#cancel-active-session").addEventListener("click", async () => {
-  if (!window.confirm("Cancel this recording and discard the audio captured so far?")) return;
-  try { updateStatus(await request("cancel")); notify("Recording cancelled."); }
-  catch (error) { notify(error.message, true); }
-});
 ui.consentCheck.addEventListener("change", () => { ui.confirmSession.disabled = !ui.consentCheck.checked; });
 ui.confirmSession.addEventListener("click", async (event) => {
   event.preventDefault();
@@ -480,6 +489,7 @@ ui.rewrite.addEventListener("change", async () => {
 
 void refreshMicrophones().catch((error) => { if (!preview) notify(error.message, true); });
 void request("sessions", { limit: 3, offset: 0 }).then((response) => renderRecent(response.sessions || [])).catch(() => {});
+void loadActivityStats();
 if (!preview) {
   window.clearTimeout(statusTimer);
   void pollStatus();

@@ -180,6 +180,71 @@ h1,h2,h3,p { margin-top:0; }
   .shortcut-action.setup-shortcut { font-size:9px; }
   .home-heading .lead { font-size:12px; }
 }
+
+/* Typeless-inspired home refinements: shortcut rows, quiet utilities, useful activity. */
+.sidebar-utility { display:flex; align-items:center; justify-content:space-around; margin:0 2px; padding:9px 0 7px; border-top:1px solid #eceef1; }
+.utility-button { display:grid; width:34px; height:34px; place-items:center; padding:0; border:0; border-radius:8px; color:#68707b; background:transparent; cursor:pointer; }
+.utility-button:hover { color:#252a32; background:#f1f2f5; }
+.utility-button svg { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.65; stroke-linecap:round; stroke-linejoin:round; }
+.sidebar-footnote { margin-top:7px; }
+.shortcut-list { display:grid; gap:0; min-height:0; margin-bottom:27px; padding:0 17px; border-radius:15px; }
+.shortcut-row { display:flex; min-height:72px; align-items:center; gap:15px; border-bottom:1px solid #eff0f2; }
+.shortcut-row:last-child { border-bottom:0; }
+.shortcut-row .shortcut-copy { flex:0 0 42%; }
+.shortcut-row .shortcut-copy strong { display:block; color:#242831; font-size:14px; }
+.shortcut-row .shortcut-copy p { margin:4px 0 0; color:#878d97; font-size:12px; }
+.shortcut-row .shortcut-binding { justify-items:start; margin-left:auto; }
+.shortcut-row .shortcut-binding code { padding:5px 9px; border-radius:6px; color:#333943; background:#f8f9fb; font-size:12px; }
+.shortcut-row .shortcut-action.setup-shortcut { width:auto; min-width:66px; height:32px; }
+.shortcut-row.upcoming { opacity:.62; }
+.coming-soon { margin-left:auto; padding:5px 8px; border-radius:20px; color:#737b89; background:#f3f4f6; font-size:10px; white-space:nowrap; }
+.stats-card { padding:16px; }
+.stats-card .rail-title { align-items:center; }
+.stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:17px 9px; padding:5px 0 15px; }
+.stat-item { display:flex; min-width:0; align-items:center; gap:9px; }
+.stat-icon { display:grid; width:25px; height:25px; flex:none; place-items:center; color:#303640; font-size:17px; }
+.stat-item strong,.stat-item small { display:block; }
+.stat-item strong { color:#262a31; font-size:15px; font-weight:700; white-space:nowrap; }
+.stat-item small { margin-top:2px; color:#858b95; font-size:10px; white-space:nowrap; }
+.setup-mini { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 0 0; border-top:1px solid #eff0f2; }
+.setup-mini small,.setup-mini strong { display:block; }
+.setup-mini small { margin-bottom:3px; color:#9298a1; font-size:9px; }
+.setup-mini strong { max-width:140px; overflow:hidden; color:#444a54; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.setup-mini button { max-width:128px; overflow:hidden; padding:5px 7px; border:0; border-radius:6px; color:#636b77; background:#f6f7f9; font-size:10px; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.community-card { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:83px; background:linear-gradient(110deg,#f5f9fb,#f5f5fb); }
+.community-card h2 { margin:0 0 6px; font:700 13px Manrope,sans-serif; }
+.community-card p { margin:0; color:#737b87; font-size:11px; line-height:1.4; }
+.community-tag { flex:none; color:#8a9099; font-size:9px; white-space:nowrap; }
+.help-note { display:grid; gap:4px; margin-top:9px; padding:10px; border-radius:8px; background:#f5f6f8; }
+.help-note strong { color:#343943; font-size:11px; }
+.help-note span { color:#727986; font-size:10px; line-height:1.45; }
+#active-session-banner { display:none!important; }
+@media (max-width:1080px) {
+  .shortcut-row .shortcut-copy { flex-basis:38%; }
+  .stat-item { gap:5px; }
+  .stat-item strong { font-size:13px; }
+  .stat-item small { font-size:9px; }
+}
+@media (max-width:840px) {
+  .stats-card { grid-column:1/-1; }
+  .right-rail { grid-template-columns:1fr 1fr; }
+  .recent-card { grid-column:1/-1; }
+  .community-card { min-height:75px; }
+}
+@media (max-width:680px) {
+  .sidebar-utility { width:100%; flex-direction:column; gap:5px; border:0; }
+  .sidebar-footnote { display:none; }
+  .shortcut-list { gap:0; padding:0 12px; }
+  .shortcut-row { min-height:67px; gap:7px; }
+  .shortcut-row .shortcut-copy { flex:1 1 auto; }
+  .shortcut-row .shortcut-copy strong { font-size:12px; }
+  .shortcut-row .shortcut-copy p { max-width:190px; font-size:10px; }
+  .shortcut-row .shortcut-binding { display:none; }
+  .shortcut-row .shortcut-action.setup-shortcut { min-width:55px; }
+  .coming-soon { font-size:8px; }
+  .right-rail { grid-template-columns:1fr; }
+  .stats-card,.recent-card { grid-column:auto; }
+}
 .mic-options { display:grid; gap:5px; margin:16px 0; }
 .mic-option { display:flex; width:100%; align-items:center; justify-content:space-between; gap:12px; padding:11px 12px; border:1px solid #e7e9ed; border-radius:8px; background:white; text-align:left; cursor:pointer; }
 .mic-option:hover,.mic-option[aria-pressed="true"] { background:#f6f8ff; border-color:#dce4fb; }
