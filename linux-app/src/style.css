@@ -383,3 +383,6 @@ body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
 
 /* Welcome: Continue sits as far below the cards as the cards sit below the breadcrumb */
 .setup-centered .setup-actions { margin-top:96px; }
+
+/* Welcome: double the cards-to-Continue run-up */
+.setup-centered .setup-actions { margin-top:192px; }
