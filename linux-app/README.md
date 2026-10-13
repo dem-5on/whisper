@@ -31,7 +31,9 @@ The app talks to the existing per-user daemon over its Unix socket. It does not
 change the transcription service or claim that global shortcuts, tray menus,
 focus handling, or synthetic text insertion work identically on all Linux
 desktop environments. Those integrations remain environment-specific and must
-be validated per the Linux compatibility matrix before public release.
+be validated per the [Linux compatibility matrix](COMPATIBILITY.md) before
+public release. Current matrix entries distinguish build checks from actual
+audio, overlay, shortcut, and focused-app validation.
 
 The first UI slice includes Home, Dictation/Lecture/Meeting entry points,
 recording consent, local History, custom Dictionary, and preferences for the

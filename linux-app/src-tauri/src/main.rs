@@ -27,6 +27,18 @@ fn libc_uid() -> u32 {
     0
 }
 
+fn bottom_center_pill_position(
+    monitor_position: (i32, i32),
+    monitor_size: (u32, u32),
+    pill_size: (u32, u32),
+    scale_factor: f64,
+) -> (i32, i32) {
+    let x = monitor_position.0 + (monitor_size.0 as i32 - pill_size.0 as i32) / 2;
+    let bottom_gap = (36.0 * scale_factor) as i32;
+    let y = monitor_position.1 + monitor_size.1 as i32 - pill_size.1 as i32 - bottom_gap;
+    (x, y)
+}
+
 #[tauri::command]
 fn daemon_request(command: String, params: Option<Value>) -> Result<Value, String> {
     const ALLOWED: &[&str] = &[
@@ -109,12 +121,12 @@ fn update_recording_pill(
                 if let (Ok(window_size), Ok(scale)) = (pill.outer_size(), pill.scale_factor()) {
                     let monitor_position = monitor.position();
                     let monitor_size = monitor.size();
-                    let width = window_size.width as i32;
-                    let height = window_size.height as i32;
-                    let x = monitor_position.x + (monitor_size.width as i32 - width) / 2;
-                    let y = monitor_position.y + monitor_size.height as i32
-                        - height
-                        - (36.0 * scale) as i32;
+                    let (x, y) = bottom_center_pill_position(
+                        (monitor_position.x, monitor_position.y),
+                        (monitor_size.width, monitor_size.height),
+                        (window_size.width, window_size.height),
+                        scale,
+                    );
                     let _ = pill.set_position(PhysicalPosition::new(x, y));
                 }
             }
@@ -148,4 +160,33 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wicx Linux desktop app");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bottom_center_pill_position;
+
+    #[test]
+    fn pill_is_centered_and_inset_from_bottom() {
+        assert_eq!(
+            bottom_center_pill_position((0, 0), (1920, 1080), (400, 74), 1.0),
+            (760, 970),
+        );
+    }
+
+    #[test]
+    fn pill_position_respects_negative_monitor_origin() {
+        assert_eq!(
+            bottom_center_pill_position((-1920, -200), (1920, 1080), (400, 74), 1.0),
+            (-1160, 770),
+        );
+    }
+
+    #[test]
+    fn bottom_inset_scales_with_display_density() {
+        assert_eq!(
+            bottom_center_pill_position((50, 100), (1440, 900), (400, 72), 1.5),
+            (570, 874),
+        );
+    }
 }
