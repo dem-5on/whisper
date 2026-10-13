@@ -30,15 +30,16 @@
       </aside>
 
       <main class="workspace">
-        <section class="page" id="page-setup" hidden><div class="setup-crumb"><span data-phase="welcome">Welcome</span><span>›</span><span data-phase="setup">Set up</span><span>›</span><span data-phase="experience">Experience it</span></div><div class="page-intro"><div><p class="eyebrow" id="setup-eyebrow">FIRST-RUN SETUP</p><h1 id="setup-title">Choose your shortcuts</h1><p id="setup-subtitle">Press a key or combination for each mode, in order. The same key starts and stops recording.</p></div><ol class="setup-progress" id="setup-progress" hidden></ol></div>
+        <section class="page" id="page-setup" hidden><div class="setup-crumb"><span data-phase="welcome">Welcome</span><span>›</span><span data-phase="setup">Set up</span><span>›</span><span data-phase="experience">Experience it</span></div><div class="page-intro" id="setup-head"><div><p class="eyebrow" id="setup-eyebrow">FIRST-RUN SETUP</p><h1 id="setup-title">Choose your shortcuts</h1><p id="setup-subtitle">Press a key or combination for each mode, in order. The same key starts and stops recording.</p></div><ol class="setup-progress" id="setup-progress" hidden></ol></div>
         <div class="setup-step-page" data-setup-page="welcome">
-          <h2 class="setup-h2">Thanks for trusting us, we value your privacy</h2>
-          <div class="privacy-points">
-            <div class="privacy-point"><span>◉</span><div><strong>Your voice stays on this device</strong><small>Local dictation is transcribed on your computer. Audio is never stored by us.</small></div></div>
-            <div class="privacy-point"><span>◉</span><div><strong>Cloud features are opt-in</strong><small>Rewriting and long-form analysis run only with a subscription, and only on what you send.</small></div></div>
-            <div class="privacy-point"><span>◉</span><div><strong>Your history is yours</strong><small>Recordings and transcripts live on this device until you delete or export them.</small></div></div>
+          <div class="setup-centered">
+          <div class="privacy-card">
+            <div class="privacy-point"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><div><strong>Your voice stays on this device</strong><small>Local dictation is transcribed on your computer. Audio is never stored by us.</small></div></div>
+            <div class="privacy-point"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 1 1 .6-7.96A5.5 5.5 0 0 1 18.3 12H18a3 3 0 0 1 0 6z"/></svg><div><strong>Cloud features are opt-in</strong><small>Rewriting and long-form analysis run only with a subscription, and only on what you send.</small></div></div>
+            <div class="privacy-point"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M2 19h20"/></svg><div><strong>Your history is yours</strong><small>Recordings and transcripts live on this device until you delete or export them.</small></div></div>
           </div>
           <div class="dialog-actions setup-actions"><span></span><button class="primary-button" data-setup-go="shortcuts" type="button">Continue</button></div>
+          </div>
         </div>
         <div class="setup-step-page" data-setup-page="shortcuts" hidden>
           <div id="shortcut-tests"></div>

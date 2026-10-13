@@ -753,6 +753,8 @@ const SETUP_PHASE = {
 
 function showSetup(name) {
   setupScreen = name;
+  const head = document.querySelector("#setup-head");
+  if (head) head.hidden = name !== "shortcuts";
   document.querySelectorAll("[data-setup-page]").forEach((page) => {
     page.hidden = page.dataset.setupPage !== name;
   });
