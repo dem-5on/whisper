@@ -107,7 +107,10 @@ class TranscriberDaemon:
         self.config = config
         self.recorder = make_recorder(
             config.audio,
-            streaming_enabled=config.streaming.enabled,
+            # On Linux, capture PCM even when live transcription is disabled:
+            # the UI's microphone meter and pill need real samples regardless
+            # of whether the selected batch provider supports streaming.
+            streaming_enabled=config.streaming.enabled or os.name != "nt",
             frame_ms=config.streaming.frame_ms,
             max_queue_seconds=config.streaming.max_queue_seconds,
             rolling_seconds=config.streaming.window_seconds,
@@ -847,7 +850,7 @@ class TranscriberDaemon:
                 if recreate_recorder:
                     self.recorder = make_recorder(
                         self.config.audio,
-                        streaming_enabled=streaming.enabled,
+                        streaming_enabled=streaming.enabled or os.name != "nt",
                         frame_ms=streaming.frame_ms,
                         max_queue_seconds=streaming.max_queue_seconds,
                         rolling_seconds=streaming.window_seconds,
@@ -949,7 +952,7 @@ class TranscriberDaemon:
                 # streaming PCM frames vs. direct-to-WAV.
                 self.recorder = make_recorder(
                     self.config.audio,
-                    streaming_enabled=target,
+                    streaming_enabled=target or os.name != "nt",
                     frame_ms=self.config.streaming.frame_ms,
                     max_queue_seconds=self.config.streaming.max_queue_seconds,
                     rolling_seconds=self.config.streaming.window_seconds,

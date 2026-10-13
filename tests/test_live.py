@@ -526,14 +526,14 @@ class DaemonStreamingSwitchTests(unittest.TestCase):
             self.tmp.cleanup()
 
     def test_set_streaming_disables_and_rebuilds_recorder(self) -> None:
-        from transcriber.audio import SoxRecorder, StreamingRecorder
+        from transcriber.audio import StreamingRecorder
         from transcriber.config import load_config
 
         self.assertIsInstance(self.daemon.recorder, StreamingRecorder)
         response = self.daemon.command("set_streaming", {"enabled": False})
         self.assertEqual(response["ok"], "true")
         self.assertFalse(response["streaming"])
-        self.assertIsInstance(self.daemon.recorder, SoxRecorder)
+        self.assertIsInstance(self.daemon.recorder, StreamingRecorder)
         self.assertFalse(load_config(self.config_path).streaming.enabled)
         response = self.daemon.command("set_streaming", {"enabled": "true"})
         self.assertTrue(response["streaming"])
