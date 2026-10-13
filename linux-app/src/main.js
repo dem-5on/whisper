@@ -171,6 +171,7 @@ async function pollStatus() {
 
 function openPage(page) {
   document.body.classList.toggle("in-setup", page === "setup");
+  void setupBgControl();
   ui.pages.forEach((element) => {
     const active = element.id === `page-${page}`;
     element.hidden = !active;
@@ -763,6 +764,7 @@ function showSetup(name) {
     item.classList.toggle("selected", item.dataset.phase === SETUP_PHASE[name]);
   });
   void setTestMode(name === "shortcuts" || name === "mic");
+  void setupBgControl();
   if (name === "shortcuts") renderTestCards();
   if (name === "mic") void renderSetupMics();
   if (name === "role") renderRoleGrid();
@@ -1187,6 +1189,66 @@ document.querySelectorAll("[data-clear]").forEach((button) => {
     renderTestCards();
     void shortcutInvoke("set_shortcut", { action, display: "", accelerator: null }).catch(() => {});
   });
+});
+let setupBgRunning = false;
+
+function setupBgDraw(now) {
+  const canvas = document.querySelector("#setup-bg");
+  if (!canvas) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const w = window.innerWidth;
+  const hgt = window.innerHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(hgt * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(hgt * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, hgt);
+  const t = now / 1000;
+  const ribbons = [
+    { y: 0.40, a: 44, f: 0.0062, sp: 0.35, r: 2.1, al: 0.20 },
+    { y: 0.55, a: 68, f: 0.0041, sp: -0.22, r: 1.6, al: 0.12 },
+    { y: 0.48, a: 24, f: 0.0110, sp: 0.50, r: 1.2, al: 0.10 },
+  ];
+  for (const ribbon of ribbons) {
+    for (let x = -20; x < w + 20; x += 9) {
+      const y = hgt * ribbon.y
+        + Math.sin(x * ribbon.f + t * ribbon.sp) * ribbon.a
+        + Math.sin(x * ribbon.f * 2.7 + t * ribbon.sp * 1.6) * ribbon.a * 0.35;
+      const edge = Math.abs(y - hgt * ribbon.y) / (ribbon.a * 1.4);
+      const alpha = Math.max(0.02, ribbon.al * (1 - edge));
+      ctx.beginPath();
+      ctx.fillStyle = "rgba(23, 24, 27, " + alpha.toFixed(3) + ")";
+      ctx.arc(x, y, ribbon.r, 0, 6.2832);
+      ctx.fill();
+    }
+  }
+}
+
+function setupBgLoop(now) {
+  setupBgDraw(now);
+  if (setupBgRunning) requestAnimationFrame(setupBgLoop);
+}
+
+function setupBgControl() {
+  const canvas = document.querySelector("#setup-bg");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const page = document.querySelector("#page-setup");
+  const active = document.body.classList.contains("in-setup") && !!page && !page.hidden;
+  if (canvas) canvas.hidden = !active;
+  if (!active || reduce) setupBgRunning = false;
+  if (active && !reduce && !setupBgRunning) {
+    setupBgRunning = true;
+    requestAnimationFrame(setupBgLoop);
+  }
+  if (active && reduce) setupBgDraw(1200);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) setupBgRunning = false;
+  else void setupBgControl();
 });
 void bootShortcuts();
 

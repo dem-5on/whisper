@@ -386,3 +386,8 @@ body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
 
 /* Welcome: double the cards-to-Continue run-up */
 .setup-centered .setup-actions { margin-top:192px; }
+
+/* Walkthrough monochrome dotted-wave backdrop */
+#setup-bg { position:fixed; inset:0; z-index:0; pointer-events:none; }
+body.in-setup .workspace { background:#f6f7f9; }
+body.in-setup #page-setup { position:relative; z-index:1; }
