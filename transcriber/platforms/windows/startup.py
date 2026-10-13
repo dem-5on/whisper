@@ -30,12 +30,12 @@ def enable() -> tuple[bool, str]:
     )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
-        return False, detail or "Task Scheduler could not register Whisper."
-    return True, "Whisper will start automatically when you sign in to Windows."
+        return False, detail or "Task Scheduler could not register Wicx."
+    return True, "Wicx will start automatically when you sign in to Windows."
 
 
 def disable() -> tuple[bool, str]:
-    """Remove Whisper's per-user logon task."""
+    """Remove Wicx's per-user logon task."""
     if os.name != "nt":
         return False, "Windows startup registration is only available on Windows."
     result = subprocess.run(
@@ -46,5 +46,5 @@ def disable() -> tuple[bool, str]:
     )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
-        return False, detail or "Task Scheduler could not remove Whisper's startup task."
-    return True, "Whisper will no longer start automatically."
+        return False, detail or "Task Scheduler could not remove Wicx's startup task."
+    return True, "Wicx will no longer start automatically."

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
 import os
@@ -59,8 +60,10 @@ class FakeRecorder:
         self.cancelled = False
         self.config = None
 
-    def start(self) -> Path:
+    def start(self, destination: Path | None = None) -> Path:
         self.started = True
+        if destination is not None:
+            self.audio = destination
         return self.audio
 
     def stop(self) -> Path:
@@ -115,6 +118,86 @@ class DaemonTests(unittest.TestCase):
             time.sleep(0.01)
         self.fail(f"daemon did not reach {states}; at {self.daemon.state}")
 
+    def test_sessions_command_exposes_page_metadata(self) -> None:
+        first = self.daemon._session_store.create("lecture")
+        self.daemon._session_store.update(first.id, source_transcript="Kubernetes lecture")
+        self.daemon._session_store.create("meeting")
+
+        page = self.daemon.command("sessions", {"limit": 1, "offset": 0})
+
+        self.assertEqual(page["ok"], "true")
+        self.assertEqual(page["offset"], 0)
+        self.assertEqual(page["limit"], 1)
+        self.assertTrue(page["has_more"])
+        self.assertEqual(len(page["sessions"]), 1)
+        last_page = self.daemon.command("sessions", {"limit": 1, "offset": 1})
+        self.assertFalse(last_page["has_more"])
+        self.assertNotEqual(page["sessions"][0]["id"], first.id)
+        filtered = self.daemon.command("sessions", {"mode": "lecture", "search": "kubernetes"})
+        self.assertEqual([item["id"] for item in filtered["sessions"]], [first.id])
+        self.assertEqual(filtered["mode"], "lecture")
+
+    def test_rename_speaker_command_persists_meeting_display_name(self) -> None:
+        meeting = self.daemon._session_store.create("meeting")
+
+        renamed = self.daemon.command("rename_speaker", {
+            "session_id": meeting.id, "speaker_id": "speaker_1", "name": "Dr. Mensah",
+        })
+
+        self.assertEqual(renamed["ok"], "true")
+        self.assertEqual(renamed["name"], "Dr. Mensah")
+        listed = self.daemon.command("sessions", {"mode": "meeting"})["sessions"]
+        self.assertEqual(listed[0]["speaker_names"], {"speaker_1": "Dr. Mensah"})
+
+    def test_meeting_speaker_correction_commands_update_segments(self) -> None:
+        meeting = self.daemon._session_store.create("meeting")
+        self.daemon._session_store.update(meeting.id, segments=[
+            {"start_seconds": 0, "end_seconds": 1, "text": "Hello", "speaker_id": "speaker_1"},
+            {"start_seconds": 1, "end_seconds": 2, "text": "Hi", "speaker_id": "speaker_2"},
+            {"start_seconds": 2, "end_seconds": 3, "text": "Again", "speaker_id": None},
+        ])
+
+        corrected = self.daemon.command("assign_segment_speaker", {
+            "session_id": meeting.id, "segment_index": 2, "speaker_id": "speaker_2",
+        })
+        self.daemon.command("rename_speaker", {
+            "session_id": meeting.id, "speaker_id": "speaker_2", "name": "Ama",
+        })
+        merged = self.daemon.command("merge_speakers", {
+            "session_id": meeting.id, "source_id": "speaker_1", "target_id": "speaker_2",
+        })
+
+        self.assertEqual(corrected["ok"], "true")
+        self.assertEqual(merged["ok"], "true")
+        saved = self.daemon._session_store.get(meeting.id)
+        self.assertEqual([segment["speaker_id"] for segment in saved.segments], [
+            "speaker_2", "speaker_2", "speaker_2",
+        ])
+        self.assertEqual(saved.outputs["speaker_names"], {"speaker_2": "Ama"})
+
+    def test_speaker_correction_rejects_non_meeting_session(self) -> None:
+        lecture = self.daemon._session_store.create("lecture")
+
+        response = self.daemon.command("assign_segment_speaker", {
+            "session_id": lecture.id, "segment_index": 0, "speaker_id": "speaker_1",
+        })
+
+        self.assertEqual(response["ok"], "false")
+        self.assertIn("Meeting", response["error"])
+
+    def test_get_session_returns_timestamped_segments(self) -> None:
+        meeting = self.daemon._session_store.create("meeting")
+        self.daemon._session_store.update(meeting.id, segments=[{
+            "start_seconds": 3.5, "end_seconds": 4.25,
+            "text": "Let's begin.", "speaker_id": "speaker_1",
+        }])
+
+        response = self.daemon.command("get_session", {"session_id": meeting.id})
+
+        self.assertEqual(response["ok"], "true")
+        self.assertEqual(response["session"]["segments"][0]["speaker_id"], "speaker_1")
+        self.assertEqual(response["session"]["segments"][0]["start_seconds"], 3.5)
+
     def test_existing_daemon_adoption_is_limited_to_authenticated_windows_sidecars(self) -> None:
         self.assertEqual(_existing_daemon_exit_code("nt", "per-user-token"), 75)
         self.assertEqual(_existing_daemon_exit_code("nt", None), 1)
@@ -137,6 +220,14 @@ class DaemonTests(unittest.TestCase):
         self.assertFalse(self.audio.exists())
         self.assertTrue((self.data / "last.wav").exists())
         self.assertEqual((self.data / "last.txt").read_text(), " kubectl get pods ")
+        history = self.daemon.command("history")
+        self.assertEqual(history["ok"], "true")
+        self.assertEqual(history["history"][0]["mode"], "dictation")
+        self.assertEqual(history["history"][0]["transcript"], " kubectl get pods ")
+        dictation_audio = self.data / "sessions" / history["history"][0]["id"] / "recording.wav"
+        self.assertFalse(dictation_audio.exists())
+        restarted = TranscriberDaemon(Config(), data_dir=self.data)
+        self.assertEqual(restarted.command("history")["history"][0]["transcript"], " kubectl get pods ")
 
     def test_hosted_final_is_delivered_without_a_second_batch_transcription(self) -> None:
         delivery = FakeDelivery()
@@ -152,6 +243,24 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(delivery.inserted, ["Remote final transcript"])
         self.assertEqual(self.daemon.command("status")["last_backend"], "hosted-whisper")
 
+    def test_hosted_usage_limit_falls_back_to_local_and_reports_why(self) -> None:
+        delivery = FakeDelivery()
+        self.daemon.command("toggle")
+        self.daemon._hosted_live_session = True
+        self.daemon._hosted_live_error = "usage_limit: cloud allowance is used"
+        self.daemon._hosted_final_event.set()
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("Local transcript")) as make_backend, patch(
+            "transcriber.daemon.make_delivery", return_value=delivery
+        ):
+            self.daemon.command("toggle")
+            self.wait_for(State.IDLE)
+
+        self.assertEqual(delivery.inserted, ["Local transcript"])
+        self.assertEqual(make_backend.call_args.args[0].backend, "local")
+        status = self.daemon.command("status")
+        self.assertEqual(status["last_backend"], "local-fallback")
+        self.assertIn("allowance reached", status["last_notice"])
+
     def test_cancel_discards_recording_without_transcribing(self) -> None:
         with patch("transcriber.daemon.make_backend") as backend:
             self.daemon.command("toggle")
@@ -159,6 +268,148 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(response["state"], "IDLE")
         self.assertTrue(self.recorder.cancelled)
         backend.assert_not_called()
+        self.assertEqual(self.daemon.command("history")["history"], [])
+
+    def test_history_rejects_invalid_limit(self) -> None:
+        response = self.daemon.command("history", {"limit": 0})
+        self.assertEqual(response["ok"], "false")
+        self.assertIn("between 1 and 1000", response["error"])
+
+    def test_delete_session_removes_saved_dictation_history(self) -> None:
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("saved text")), patch(
+            "transcriber.daemon.make_delivery", return_value=FakeDelivery()
+        ):
+            self.daemon.command("toggle")
+            self.daemon.command("toggle")
+            self.wait_for(State.IDLE)
+        session_id = self.daemon.command("history")["history"][0]["id"]
+        deleted = self.daemon.command("delete_session", {"session_id": session_id})
+        self.assertEqual(deleted["ok"], "true")
+        self.assertEqual(self.daemon.command("history")["history"], [])
+        self.assertEqual(self.daemon.command("delete_session", {"session_id": session_id})["ok"], "false")
+
+    def test_export_session_writes_markdown_without_overwriting(self) -> None:
+        stored = self.daemon._session_store.create("lecture")
+        stored.audio_path.write_bytes(b"RIFF" + b"\x00" * 40 + b"audio")
+        self.daemon._session_store.update(
+            stored.id,
+            state="ready",
+            source_transcript="The lesson begins.",
+            outputs={"notes": ["First topic"]},
+            finished=True,
+        )
+        destination = self.data / "exports" / "lecture.md"
+        destination.parent.mkdir()
+
+        exported = self.daemon.command("export_session", {
+            "session_id": stored.id, "output": str(destination),
+        })
+
+        self.assertEqual(exported["ok"], "true")
+        self.assertEqual(Path(exported["export_path"]), destination)
+        self.assertIn("The lesson begins.", destination.read_text(encoding="utf-8"))
+        audio_destination = self.data / "exports" / "lecture.wav"
+        audio_export = self.daemon.command("export_session_audio", {
+            "session_id": stored.id, "output": str(audio_destination),
+        })
+        self.assertEqual(audio_export["ok"], "true")
+        self.assertEqual(audio_destination.read_bytes(), stored.audio_path.read_bytes())
+        refused = self.daemon.command("export_session", {
+            "session_id": stored.id, "output": str(destination),
+        })
+        self.assertEqual(refused["ok"], "false")
+        self.assertIn("already exists", refused["error"])
+
+    def test_dictionary_commands_persist_terms_and_supply_local_recognition_hint(self) -> None:
+        added = self.daemon.command("dictionary", {"action": "add", "term": "CTranslate2"})
+        duplicate = self.daemon.command("dictionary", {"action": "add", "term": "ctranslate2"})
+        listed = self.daemon.command("dictionary", {"action": "list"})
+        self.assertEqual(added["ok"], "true")
+        self.assertTrue(added["changed"])
+        self.assertFalse(duplicate["changed"])
+        self.assertEqual(listed["terms"], ["CTranslate2"])
+
+        backend = type("PromptBackend", (), {"set_initial_prompt": lambda self, value: setattr(self, "prompt", value)})()
+        with patch("transcriber.daemon.make_backend", return_value=backend):
+            self.daemon._make_backend(self.daemon.config.transcription)
+        self.assertIn("CTranslate2", backend.prompt)
+
+        removed = self.daemon.command("dictionary", {"action": "remove", "term": "ctranslate2"})
+        self.assertTrue(removed["changed"])
+        self.assertEqual(self.daemon.command("dictionary")["terms"], [])
+
+    def test_active_session_cannot_be_deleted(self) -> None:
+        self.daemon.command("toggle")
+        session_id = self.daemon._stored_session_id
+        response = self.daemon.command("delete_session", {"session_id": session_id})
+        self.assertEqual(response["ok"], "false")
+        self.assertEqual(response["error"], "Cannot delete the active session")
+        self.daemon.command("cancel")
+
+    def test_long_session_requires_consent_and_preserves_audio_without_typing_it(self) -> None:
+        refused = self.daemon.command("start_session", {"mode": "meeting"})
+        self.assertEqual(refused["ok"], "false")
+        self.assertIn("informed", refused["error"])
+        self.assertFalse(self.recorder.started)
+
+        remote_config = dataclasses.replace(
+            self.daemon.config.transcription, backend="openrouter", model="openai/whisper-large-v3"
+        )
+        self.daemon.config = dataclasses.replace(self.daemon.config, transcription=remote_config)
+        delivery = FakeDelivery()
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("lecture words")) as backend, patch(
+            "transcriber.daemon.make_delivery", return_value=delivery
+        ) as make_delivery:
+            started = self.daemon.command("start_session", {
+                "mode": "meeting", "consent_acknowledged": True,
+            })
+            self.assertEqual(started["state"], "RECORDING")
+            self.assertIsNone(self.daemon._timer)
+            session_id = self.daemon._stored_session_id
+            audio_path = self.recorder.audio
+            self.assertEqual(audio_path, self.data / "sessions" / session_id / "recording.wav")
+            finished = self.daemon.command("stop_session")
+            self.assertEqual(finished["state"], "PROCESSING")
+            self.wait_for(State.IDLE)
+
+        backend.assert_called_once()
+        self.assertEqual(backend.call_args.args[0].backend, "local")
+        make_delivery.assert_not_called()
+        self.assertEqual(delivery.inserted, [])
+        saved = self.daemon._session_store.get(session_id)
+        self.assertEqual(saved.mode, "meeting")
+        self.assertEqual(saved.source_transcript, "lecture words")
+        self.assertEqual(saved.segments, [])
+        session_list = self.daemon.command("sessions")["sessions"]
+        self.assertEqual(session_list[0]["mode"], "meeting")
+        self.assertTrue(session_list[0]["audio_available"])
+        self.assertEqual(audio_path.read_bytes(), b"wav")
+
+    def test_long_session_persists_timestamped_transcription_segments(self) -> None:
+        delivery = FakeDelivery()
+        segments = [{
+            "start_seconds": 0.25,
+            "end_seconds": 1.5,
+            "text": "lecture words",
+            "speaker_id": None,
+        }]
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend()), patch(
+            "transcriber.daemon.transcribe_long_audio_with_segments",
+            return_value=("lecture words", segments),
+        ), patch("transcriber.daemon.make_delivery", return_value=delivery):
+            started = self.daemon.command("start_session", {
+                "mode": "lecture", "consent_acknowledged": True,
+            })
+            self.assertEqual(started["state"], "RECORDING")
+            session_id = self.daemon._stored_session_id
+            self.assertIsNotNone(session_id)
+            self.daemon.command("stop_session")
+            self.wait_for(State.IDLE)
+
+        assert session_id is not None
+        saved = self.daemon._session_store.get(session_id)
+        self.assertEqual(saved.source_transcript, "lecture words")
+        self.assertEqual(saved.segments, segments)
 
     def test_processing_failure_enters_error_with_reason(self) -> None:
         with patch("transcriber.daemon.make_backend", side_effect=RuntimeError("boom")):
@@ -317,6 +568,8 @@ class DaemonTests(unittest.TestCase):
         config = _parse({"ui": {"show_last_transcript": True, "preview_chars": 50}})
         self.assertTrue(config.ui.show_last_transcript)
         self.assertEqual(config.ui.preview_chars, 50)
+        self.assertFalse(config.ui.rewrite_enabled)
+        self.assertFalse(config.ui.hide_recording_pill)
 
 
 class DaemonPersistenceTests(unittest.TestCase):
@@ -342,6 +595,51 @@ class DaemonPersistenceTests(unittest.TestCase):
         self.assertEqual(reloaded.transcription.backend, "openrouter")
         self.assertEqual(reloaded.transcription.model, "openai/whisper-large-v3")
         self.assertEqual(reloaded.audio.input_device, "usb-mic")
+
+    def test_rewrite_preference_persists_and_defaults_off(self) -> None:
+        from transcriber.config import load_config
+
+        self.assertFalse(self.daemon.command("status")["rewrite_enabled"])
+        status = self.daemon.command("set_rewrite", {"enabled": True})
+        self.assertEqual(status["ok"], "true")
+        self.assertTrue(load_config(self.config_path).ui.rewrite_enabled)
+        self.assertEqual(self.daemon.command("set_rewrite", {"enabled": "yes"})["ok"], "false")
+
+    def test_recording_pill_hidden_preference_persists_and_defaults_visible(self) -> None:
+        from transcriber.config import load_config
+
+        self.assertFalse(self.daemon.command("status")["hide_recording_pill"])
+        status = self.daemon.command("set_recording_pill_hidden", {"hidden": True})
+        self.assertEqual(status["ok"], "true")
+        self.assertTrue(status["hide_recording_pill"])
+        self.assertTrue(load_config(self.config_path).ui.hide_recording_pill)
+        self.assertEqual(self.daemon.command("set_recording_pill_hidden", {"hidden": 1})["ok"], "false")
+
+    def test_rewrite_handoff_returns_only_matching_result(self) -> None:
+        from transcriber.streaming import LiveSession
+
+        self.daemon._session = LiveSession()
+        output: list[str] = []
+        worker = threading.Thread(target=lambda: output.append(self.daemon._rewrite_transcript("raw words")))
+        worker.start()
+        for _ in range(100):
+            with self.daemon._lock:
+                waiter = self.daemon._rewrite_waiter
+            if waiter:
+                break
+            time.sleep(0.01)
+        self.assertIsNotNone(waiter)
+        request_id = waiter[0]
+        self.assertEqual(self.daemon.command("rewrite_result", {
+            "request_id": "not-the-active-id", "text": "wrong",
+        })["ok"], "false")
+        self.assertEqual(self.daemon.command("rewrite_result", {
+            "request_id": request_id, "text": "polished words",
+        })["ok"], "true")
+        worker.join(timeout=1)
+        self.assertEqual(output, ["polished words"])
+        events, _ = self.daemon.events_since(0)
+        self.assertEqual(events[-1]["type"], "rewrite_request")
 
     def test_status_reports_key_presence_only(self) -> None:
         import os

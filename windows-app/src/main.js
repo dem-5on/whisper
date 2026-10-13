@@ -5,6 +5,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { deriveControlState } from "./control-state.js";
 import { formatRecordingText, sessionResetPatch } from "./status-view.js";
 import { microphoneLabel } from "./display.js";
+import { hasFeature, isCloudBackend } from "./feature-access.js";
 import "./style.css";
 
 const SOCKET_URL = "ws://127.0.0.1:47651";
@@ -104,6 +105,9 @@ const ui = {
 };
 
 let currentStatus = null;
+let cloudEntitlement = false;
+let cloudEntitlementCheckedAt = 0;
+let cloudEntitlementRequest = null;
 let currentChooser = null;
 let reconnectDelay = 400;
 let connecting = false;
@@ -221,7 +225,7 @@ function updateStatus(status) {
   const label = recording
     ? `Recording · ${Number(currentStatus.recording_elapsed || 0).toFixed(1)}s`
     : busy
-      ? "Transcribing…"
+      ? (currentStatus.rewrite_state === "rewriting" ? "Rewriting…" : "Transcribing…")
       : state === "ERROR"
         ? "Attention required"
         : "Ready";
@@ -232,6 +236,13 @@ function updateStatus(status) {
         : active ? "ready" : "disconnected";
   ui.connection.dataset.recording = String(recording);
   renderAudioMeter(currentStatus.audio_level, recording && active);
+  invoke("sync_recording_pill", {
+    state,
+    audioLevel: Number(currentStatus.audio_level || 0),
+    waveform: Array.isArray(currentStatus.audio_waveform) ? currentStatus.audio_waveform : [],
+    rewriteState: String(currentStatus.rewrite_state || ""),
+    hidden: currentStatus.hide_recording_pill === true,
+  }).catch(() => {});
   setActionContent(ui.toggle, recording ? "stop" : "mic", recording
     ? "Stop recording"
     : state === "ERROR" ? "Try again" : "Start recording");
@@ -273,7 +284,9 @@ function updateStatus(status) {
     });
     ui.liveTranscript.hidden = false;
   } else if (busy) {
-    ui.liveTranscript.textContent = liveText ? `Finalizing: ${liveText}` : "Transcribing… full text appears here when done.";
+    ui.liveTranscript.textContent = currentStatus.rewrite_state === "rewriting"
+      ? "Rewriting your transcript…"
+      : liveText ? `Finalizing: ${liveText}` : "Transcribing… full text appears here when done.";
     ui.liveTranscript.hidden = false;
   } else {
     ui.liveTranscript.textContent = "";
@@ -281,7 +294,8 @@ function updateStatus(status) {
   }
   ui.transcript.textContent = currentStatus.last_preview || "";
   ui.transcript.hidden = !currentStatus.last_preview;
-  showError(currentStatus.error || "");
+  if (currentStatus.error) showError(currentStatus.error);
+  else showFeedback(currentStatus.last_notice || "", Boolean(currentStatus.last_notice));
   const requiresKey = /API[_ ]KEY|API key|authentication|unauthorized/i.test(currentStatus.error || "");
   ui.statusActions.hidden = !requiresKey;
   ui.statusKind.hidden = !requiresKey;
@@ -320,7 +334,7 @@ async function connect() {
     // The development daemon has no launch token; packaged builds do.
   }
   connection = new WebSocket(socketUrl);
-  setConnection("Connecting to Whisper…");
+  setConnection("Connecting to Wicx…");
   connection.addEventListener("open", () => {
     connecting = false;
     reconnectDelay = 400;
@@ -342,7 +356,7 @@ async function connect() {
       if (waiter) {
         pending.delete(message.request_id);
         clearTimeout(waiter.timeout);
-        if (message.ok === "false") waiter.reject(new Error(message.error || "Whisper command failed"));
+        if (message.ok === "false") waiter.reject(new Error(message.error || "Wicx command failed"));
         else waiter.resolve(message);
       }
     }
@@ -353,6 +367,11 @@ async function connect() {
         currentStatus = { ...currentStatus, last_preview: event.text };
         updateStatus(currentStatus);
       }
+      if (event.type === "rewrite_request" && event.request_id && event.text) {
+        currentStatus = { ...currentStatus, rewrite_state: "rewriting" };
+        updateStatus(currentStatus);
+        void completeRewrite(event);
+      }
     }
     if (message.state) updateStatus(message);
   });
@@ -360,10 +379,10 @@ async function connect() {
     connecting = false;
     for (const waiter of pending.values()) {
       clearTimeout(waiter.timeout);
-      waiter.reject(new Error("Whisper daemon disconnected"));
+      waiter.reject(new Error("Wicx transcription service disconnected"));
     }
     pending.clear();
-    setConnection(unavailableDetail || "Whisper daemon unavailable");
+    setConnection(unavailableDetail || "Wicx transcription service unavailable");
     window.setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(5000, reconnectDelay * 1.7);
   });
@@ -375,24 +394,39 @@ function requestReconnect() {
   void connect();
 }
 
-function request(command, parameters = {}) {
+function request(command, parameters = {}, timeoutMs = 10000) {
   if (!connection || connection.readyState !== WebSocket.OPEN) {
-    return Promise.reject(new Error("Whisper daemon is unavailable"));
+    return Promise.reject(new Error("Wicx transcription service is unavailable"));
   }
   const requestId = ++requestSequence;
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       pending.delete(requestId);
-      reject(new Error("Whisper did not respond in time"));
-    }, 10000);
+      reject(new Error("Wicx did not respond in time"));
+    }, timeoutMs);
     pending.set(requestId, { resolve, reject, timeout });
     connection.send(JSON.stringify({ command, request_id: requestId, ...parameters }));
   });
 }
 
+async function completeRewrite(event) {
+  let result;
+  try {
+    const text = await invoke("rewrite_transcript", { text: event.text });
+    result = { request_id: event.request_id, text };
+  } catch (error) {
+    result = { request_id: event.request_id, error: error?.message || "Cloud rewrite is unavailable" };
+  }
+  try {
+    updateStatus(await request("rewrite_result", result, 10000));
+  } catch (error) {
+    showError(error.message || "Could not finish rewritten dictation");
+  }
+}
+
 async function sendCommandAndHide(command) {
   if (!connection || connection.readyState !== WebSocket.OPEN) {
-    showError("Whisper daemon is unavailable");
+    showError("Wicx transcription service is unavailable");
     return;
   }
   const pendingRequest = request(command);
@@ -404,8 +438,54 @@ async function sendCommandAndHide(command) {
   }
 }
 
-const toggleRecording = () => sendCommandAndHide("toggle");
+async function refreshCloudEntitlement(force = false) {
+  if (!force && Date.now() - cloudEntitlementCheckedAt < 5 * 60_000) return cloudEntitlement;
+  if (cloudEntitlementRequest) return cloudEntitlementRequest;
+  cloudEntitlementRequest = invoke("fetch_billing_status")
+    .then((status) => { cloudEntitlement = hasFeature(status?.features, "cloud_transcription"); })
+    .catch(() => { cloudEntitlement = false; })
+    .then(() => {
+      cloudEntitlementCheckedAt = Date.now();
+      cloudEntitlementRequest = null;
+      return cloudEntitlement;
+    });
+  return cloudEntitlementRequest;
+}
+
+async function ensureCloudEntitlement(backend, { force = false, fallback = false } = {}) {
+  if (!isCloudBackend(backend) || await refreshCloudEntitlement(force)) return true;
+  if (!fallback) throw new Error("Cloud transcription requires an active Wicx subscription. Local transcription remains free.");
+  const status = await request("set_backend", { backend: "local" });
+  updateStatus(status);
+  showFeedback("Cloud access could not be verified. Switched to Local so you can keep dictating.");
+  return false;
+}
+
+async function toggleRecording() {
+  const starting = currentStatus?.state !== "RECORDING";
+  if (starting && isCloudBackend(currentStatus?.backend)) {
+    try {
+      await ensureCloudEntitlement(currentStatus.backend, { fallback: true });
+    } catch (error) {
+      showError(error.message);
+      return;
+    }
+  }
+  await invoke("hide_home").catch(() => {});
+  await sendCommandAndHide("toggle");
+}
 const cancelRecording = () => sendCommandAndHide("cancel");
+
+async function retryTranscription() {
+  try {
+    if (isCloudBackend(currentStatus?.backend)) {
+      await ensureCloudEntitlement(currentStatus.backend, { fallback: true });
+    }
+    await sendCommandAndHide("retry");
+  } catch (error) {
+    showError(error.message);
+  }
+}
 
 function queuePendingHotkey() {
   pendingHotkeyToggles = (pendingHotkeyToggles + 1) % 2;
@@ -502,7 +582,10 @@ async function openChooser(kind) {
   try {
     if (kind === "provider") {
       renderChoices("provider", "Choose a provider", "provider", PROVIDERS.map(([id, label, detail]) => ({ id, label, detail })),
-        currentStatus?.backend || "local", (choice) => request("set_backend", { backend: choice.id }));
+        currentStatus?.backend || "local", async (choice) => {
+          await ensureCloudEntitlement(choice.id, { force: true });
+          return request("set_backend", { backend: choice.id });
+        });
     } else if (kind === "model") {
       const response = await request("models");
       renderChoices("model", "Choose a transcription model", "model", (response.models || []).map((model) => ({ id: model.id, label: model.id })),
@@ -549,7 +632,7 @@ ui.copy.addEventListener("click", async () => {
     showFeedback(error.message);
   }
 });
-ui.retry.addEventListener("click", () => sendCommandAndHide("retry"));
+ui.retry.addEventListener("click", retryTranscription);
 document.querySelectorAll(".tile").forEach((tile) => {
   tile.disabled = true;
   tile.addEventListener("click", () => openChooser(tile.dataset.setting));
@@ -575,7 +658,7 @@ async function openKeySettings() {
     showError(error.message);
   }
 }
-ui.settings.addEventListener("click", openKeySettings);
+ui.settings.addEventListener("click", () => invoke("show_home").catch(showError));
 ui.manageKeys.addEventListener("click", openKeySettings);
 ui.errorKeys.addEventListener("click", openKeySettings);
 ui.errorProvider.addEventListener("click", () => openChooser("provider"));
@@ -591,8 +674,8 @@ listen("daemon-process", ({ payload }) => {
     ? `Transcription service unavailable${reason ? `: ${reason}` : ""}`
     : `Transcription service stopped${reason ? ` (${reason})` : ""}`;
   showError(couldNotStart
-    ? `Whisper could not start its transcription service${reason ? `: ${reason}` : ". It will retry automatically."}`
-    : `Whisper's transcription service stopped unexpectedly${reason ? ` (${reason})` : ""}. It will restart automatically.`);
+    ? `Wicx could not start its transcription service${reason ? `: ${reason}` : ". It will retry automatically."}`
+    : `Wicx's transcription service stopped unexpectedly${reason ? ` (${reason})` : ""}. It will restart automatically.`);
   if (connection?.readyState !== WebSocket.OPEN) setConnection(unavailableDetail);
 });
 ui.reconnect.addEventListener("click", requestReconnect);
@@ -613,6 +696,10 @@ listen("recording-hotkey", () => {
   }
   void toggleRecording();
 });
+listen("pill-action", ({ payload }) => {
+  if (payload?.action === "finish") void toggleRecording();
+  else if (payload?.action === "cancel") void cancelRecording();
+});
 listen("cancel-recording", () => {
   if (!focusTestBuild) void cancelRecording();
 });
@@ -622,4 +709,5 @@ document.addEventListener("keydown", (event) => {
 // The elapsed timer renders from daemon status pushes (the bridge sends them
 // every 0.5 s while recording); no locally estimated clock here.
 connect();
+void refreshCloudEntitlement();
 loadBuildMode();

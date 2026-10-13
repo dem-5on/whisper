@@ -67,6 +67,7 @@ class LiveEvent:
     session_id: str
     revision: int
     text: str = ""
+    request_id: str = ""
     at: float = field(default_factory=time.time)
 
 

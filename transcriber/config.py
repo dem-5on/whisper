@@ -59,6 +59,8 @@ class DeliveryConfig:
 class UiConfig:
     show_last_transcript: bool = False
     preview_chars: int = 120
+    rewrite_enabled: bool = False
+    hide_recording_pill: bool = False
 
 
 @dataclass(frozen=True)
@@ -257,8 +259,10 @@ def _parse(raw: dict[str, Any]) -> Config:
         raise ConfigurationError("cleanup and submit_after_insert must be booleans")
     if not isinstance(result.processing.replacements, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in result.processing.replacements.items()):
         raise ConfigurationError("processing.replacements must map strings to strings")
-    if not isinstance(result.ui.show_last_transcript, bool):
-        raise ConfigurationError("ui.show_last_transcript must be a boolean")
+    if (not isinstance(result.ui.show_last_transcript, bool)
+            or not isinstance(result.ui.rewrite_enabled, bool)
+            or not isinstance(result.ui.hide_recording_pill, bool)):
+        raise ConfigurationError("ui.show_last_transcript, ui.rewrite_enabled, and ui.hide_recording_pill must be booleans")
     if (not isinstance(result.ui.preview_chars, int) or isinstance(result.ui.preview_chars, bool)
             or result.ui.preview_chars <= 0 or result.ui.preview_chars > 500):
         raise ConfigurationError("ui.preview_chars must be a positive integer (max 500)")
@@ -290,7 +294,7 @@ def _parse(raw: dict[str, Any]) -> Config:
     if stream.engine == "local" and stream.model not in {"tiny", "base", "small", "medium", "large-v3", "turbo"}:
         raise ConfigurationError("Local live model must be tiny, base, small, medium, large-v3, or turbo")
     if stream.engine == "hosted-whisper" and (not stream.model.strip() or any(ch.isspace() for ch in stream.model)):
-        raise ConfigurationError("Hosted Whisper profile must be a non-empty profile ID without spaces")
+        raise ConfigurationError("Hosted transcription profile must be a non-empty profile ID without spaces")
     if (not isinstance(stream.frame_ms, int) or isinstance(stream.frame_ms, bool)
             or stream.frame_ms < 20 or stream.frame_ms > 100):
         raise ConfigurationError("streaming.frame_ms must be an integer in 20..100")

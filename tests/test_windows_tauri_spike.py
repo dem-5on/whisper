@@ -46,7 +46,7 @@ def test_settings_uses_native_close_control_to_hide_to_tray():
 
     assert config["app"]["windows"][1]["decorations"] is True
     assert 'id="close-keys"' not in settings
-    assert "Close this window to keep Whisper running in the tray." in settings
+    assert "Close this window to keep Wicx running in the tray." in settings
     assert "WindowEvent::CloseRequested" in rust
     assert "api.prevent_close()" in rust
     assert "close_target.hide()" in rust
@@ -219,11 +219,11 @@ def test_windows_installer_workflow_smoke_tests_install_startup_and_uninstall():
     assert "Microsoft\\Windows\\CurrentVersion\\Run" in workflow
     assert "Start menu shortcut" in workflow
     assert "Get-Process -Name 'whisper-daemon*'" in workflow
-    assert "The installed Whisper daemon sidecar did not launch." in workflow
-    assert "Whisper daemon sidecar did not stop with the app." in workflow
+    assert "The installed Wicx daemon sidecar did not launch." in workflow
+    assert "Wicx daemon sidecar did not stop with the app." in workflow
     assert "--whisper-uninstall" in workflow
     assert "Start-Process -FilePath $Uninstaller -ArgumentList '/S'" in workflow
-    assert "Uninstall left Whisper in the Windows sign-in startup registry." in workflow
+    assert "Uninstall left Wicx or a legacy Whisper value in the Windows sign-in startup registry." in workflow
 
 
 def test_windows_release_versions_match_the_python_project_version():
@@ -255,7 +255,7 @@ def test_retired_powershell_installer_stays_out_of_the_download_path():
     assert "install.ps1" not in windows_section.lower()
     assert "whisper-installer.ps1" not in website.lower()
     assert "Windows download temporarily unavailable" not in windows_section
-    assert "Install Whisper on Windows" in windows_section
+    assert "Install Wicx on Windows" in windows_section
     assert "Download Windows installer" in windows_section
     assert "old PowerShell" in readme
     assert "not the supported Windows installation path" in readme
@@ -462,14 +462,14 @@ def test_nsis_installs_per_user_starts_whisper_and_cleans_up_autostart():
     nsis = config["bundle"]["windows"]["nsis"]
 
     assert nsis["installMode"] == "currentUser"
-    assert nsis["startMenuFolder"] == "Whisper"
+    assert nsis["startMenuFolder"] == "Wicx"
     assert nsis["installerHooks"] == "windows/installer-hooks.nsh"
     assert '!macro NSIS_HOOK_POSTINSTALL' in hooks
-    assert 'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "Whisper"' in hooks
+    assert 'WriteRegStr HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "Wicx"' in hooks
     assert 'Exec \'"$INSTDIR\\whisper-windows-ui.exe"\'' in hooks
     assert '!macro NSIS_HOOK_PREUNINSTALL' in hooks
     assert 'ExecWait \'"$INSTDIR\\whisper-windows-ui.exe" --whisper-uninstall\'' in hooks
-    assert 'DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "Whisper"' in hooks
+    assert 'DeleteRegValue HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Run" "Wicx"' in hooks
 
 
 def test_uninstaller_closes_the_resident_app_and_its_daemon_cleanly():
@@ -501,7 +501,7 @@ def test_packaged_tauri_app_registers_global_recording_shortcut():
     assert 'unavailable: "Ctrl+Space is unavailable because another app is using it"' in frontend
     assert 'app.emit("recording-hotkey", ())' in rust
     assert 'listen("recording-hotkey"' in frontend
-    assert 'const toggleRecording = () => sendCommandAndHide("toggle")' in frontend
+    assert "async function toggleRecording()" in frontend
     assert "const HOTKEY_PENDING_WINDOW_MS = 2000" in frontend
     assert "pendingHotkeyToggles = (pendingHotkeyToggles + 1) % 2" in frontend
     assert "if (shouldToggle) void toggleRecording()" in frontend
@@ -573,7 +573,7 @@ def test_website_no_longer_offers_the_legacy_powershell_installer():
     assert not (ROOT / "uninstall.ps1").exists()
     assert not (ROOT / "website/download/whisper-installer.ps1").exists()
     assert "Windows installer is being rebuilt" not in page
-    assert "Install Whisper on Windows" in page
+    assert "Install Wicx on Windows" in page
     assert "Download Windows installer" in page
     assert "Download PowerShell installer" not in page
     assert "install.ps1" not in page

@@ -6,7 +6,7 @@ SOURCE_DIR=""
 DOWNLOAD_DIR=""
 
 status() {
-    printf '\nWhisper: %s\n' "$1"
+    printf '\nWicx: %s\n' "$1"
 }
 
 run_quiet() {
@@ -35,7 +35,7 @@ if [[ -z "$SOURCE_DIR" || ! -f "$SOURCE_DIR/pyproject.toml" || ! -d "$SOURCE_DIR
     done
     DOWNLOAD_DIR="$(mktemp -d)"
     trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
-    status "Downloading Whisper..."
+    status "Downloading Wicx..."
     curl -fsSL "$REPO_URL/archive/refs/heads/main.tar.gz" \
         | tar -xz --strip-components=1 -C "$DOWNLOAD_DIR"
     SOURCE_DIR="$DOWNLOAD_DIR"
@@ -48,12 +48,12 @@ if [[ "${1:-}" == "--from-download" ]]; then
 fi
 
 if [[ "${XDG_SESSION_TYPE:-}" != "wayland" ]]; then
-    echo "Whisper's packaged desktop integration currently supports GNOME on Wayland." >&2
+    echo "Wicx's packaged desktop integration currently supports GNOME on Wayland." >&2
     echo "Log into a GNOME Wayland session, then run this installer again." >&2
     exit 1
 fi
 if [[ "${XDG_CURRENT_DESKTOP:-}:${DESKTOP_SESSION:-}" != *GNOME* ]]; then
-    echo "Whisper's packaged desktop integration currently supports GNOME on Wayland." >&2
+    echo "Wicx's packaged desktop integration currently supports GNOME on Wayland." >&2
     echo "Detected desktop: ${XDG_CURRENT_DESKTOP:-unknown}." >&2
     exit 1
 fi
@@ -83,7 +83,7 @@ for candidate in python3 python3.12 python3.11; do
     fi
 done
 if [[ -z "$PYTHON" ]]; then
-    echo "Whisper requires Python 3.11 or newer. Install it, then re-run this installer." >&2
+    echo "Wicx requires Python 3.11 or newer. Install it, then re-run this installer." >&2
     exit 1
 fi
 
@@ -97,7 +97,7 @@ EXTENSION_DIR="$USER_HOME/.local/share/gnome-shell/extensions/transcriber@local"
 UNIT_DIR="$CONFIG_HOME/systemd/user"
 
 mkdir -p "$APP_DIR" "$BIN_DIR" "$EXTENSION_DIR" "$UNIT_DIR" "$CONFIG_HOME/transcriber"
-status "Preparing Whisper..."
+status "Preparing Wicx..."
 cp -a "$SOURCE_DIR/transcriber" "$SOURCE_DIR/whisper_service" "$APP_DIR/"
 cp "$SOURCE_DIR/pyproject.toml" "$SOURCE_DIR/README.md" "$APP_DIR/"
 cp "$SOURCE_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
@@ -105,10 +105,13 @@ if [[ ! -f "$CONFIG_HOME/transcriber/config.yaml" ]]; then
     cp "$SOURCE_DIR/config.example.yaml" "$CONFIG_HOME/transcriber/config.yaml"
 fi
 
-status "Installing Whisper and transcription dependencies..."
+status "Installing Wicx and transcription dependencies..."
 run_quiet "$PYTHON" -m venv "$VENV_DIR"
 run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet --upgrade pip
 run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet "${APP_DIR}[local,realtime]"
+ln -sfn "$VENV_DIR/bin/wicx" "$BIN_DIR/wicx"
+ln -sfn "$VENV_DIR/bin/wicx-daemon" "$BIN_DIR/wicx-daemon"
+# Keep the former command names working for existing shortcuts and scripts.
 ln -sfn "$VENV_DIR/bin/whisper" "$BIN_DIR/whisper"
 ln -sfn "$VENV_DIR/bin/whisper-daemon" "$BIN_DIR/whisper-daemon"
 ln -sfn "$VENV_DIR/bin/transcriber" "$BIN_DIR/transcriber"
@@ -118,17 +121,17 @@ cp "$SOURCE_DIR/extension/metadata.json" "$SOURCE_DIR/extension/extension.js" \
     "$SOURCE_DIR/extension/stylesheet.css" "$EXTENSION_DIR/"
 
 UNIT_FILE="$UNIT_DIR/transcriber.service"
-if [[ -f "$UNIT_FILE" ]] && ! grep -qF "$VENV_DIR/bin/whisper-daemon" "$UNIT_FILE"; then
+if [[ -f "$UNIT_FILE" ]] && ! grep -qF "$VENV_DIR/bin/wicx-daemon" "$UNIT_FILE"; then
     cp "$UNIT_FILE" "$UNIT_FILE.backup-$(date +%Y%m%d%H%M%S)"
 fi
 cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=Whisper voice transcription daemon
+Description=Wicx voice transcription daemon
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=$VENV_DIR/bin/whisper-daemon
+ExecStart=$VENV_DIR/bin/wicx-daemon
 Restart=on-failure
 RestartSec=2
 
@@ -141,20 +144,20 @@ run_quiet systemctl --user daemon-reload
 run_quiet systemctl --user enable --now transcriber.service
 if command -v gnome-extensions >/dev/null; then
     if ! gnome-extensions enable transcriber@local >/dev/null; then
-        echo "Whisper installed, but GNOME could not enable the panel extension." >&2
+        echo "Wicx installed, but GNOME could not enable the panel extension." >&2
         echo "Try enabling it manually with: gnome-extensions enable transcriber@local" >&2
     fi
 else
-    echo "Whisper installed, but gnome-extensions was not found." >&2
-    echo "Open the Extensions app and enable 'Transcriber' manually." >&2
+    echo "Wicx installed, but gnome-extensions was not found." >&2
+    echo "Open the Extensions app and enable 'Wicx' manually." >&2
 fi
 
-status "Whisper is ready."
+status "Wicx is ready."
 echo
 echo "The local base model downloads the first time it starts."
 echo "If GNOME does not show the panel icon yet, sign out and back in once."
-echo "Open Extensions and enable 'Transcriber' if it is not enabled already."
+echo "Open Extensions and enable 'Wicx' if it is not enabled already."
 echo "Wayland text insertion needs ydotool access to /dev/uinput. If the first recording"
 echo "transcribes but doesn't type into the active app, open README.md → Installation help"
 echo "for the one-time device permission check."
-echo "Run 'whisper status' to check the daemon."
+echo "Run 'wicx status' to check the daemon."

@@ -14,6 +14,7 @@ from transcriber.platforms.windows.audio import (
     WindowsRecorder,
     list_sources as windows_list_sources,
     pcm_audio_level,
+    pcm_audio_waveform,
 )
 from transcriber.platforms.windows.delivery import (
     KEYEVENTF_KEYUP,
@@ -36,6 +37,17 @@ class WindowsBackendTests(unittest.TestCase):
         self.assertGreater(quiet_level, 0.0)
         self.assertGreater(loud_level, quiet_level)
         self.assertLessEqual(loud_level, 1.0)
+
+    def test_pcm_audio_waveform_preserves_captured_sample_shape(self) -> None:
+        samples = [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000]
+        pcm = b"".join(sample.to_bytes(2, "little", signed=True) for sample in samples)
+        waveform = pcm_audio_waveform(pcm, buckets=4)
+
+        self.assertEqual(len(waveform), 8)
+        self.assertAlmostEqual(waveform[0], 0.0)
+        self.assertAlmostEqual(waveform[1], 1000 / 32768)
+        self.assertAlmostEqual(waveform[-1], 7000 / 32768)
+        self.assertEqual(pcm_audio_waveform(bytes(8), buckets=0), ())
 
     def test_shared_audio_factory_selects_windows_recorder(self) -> None:
         with patch("transcriber.audio.os.name", "nt"):
@@ -133,6 +145,8 @@ class WindowsBackendTests(unittest.TestCase):
         try:
             self.assertGreater(level, 0.0)
             self.assertLessEqual(level, 1.0)
+            self.assertEqual(len(recorder.audio_waveform), 24)
+            self.assertGreater(max(recorder.audio_waveform), 0.0)
         finally:
             wav_path.unlink(missing_ok=True)
 

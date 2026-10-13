@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Wicx</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h2l2-5 4 10 4-14 3 9h3" /></svg></span><span>Wicx</span></div>
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="nav-item active" data-page="home"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-6v-7h-4v7H4a1 1 0 0 1-1-1z" /></svg>Home</button>
+          <button class="nav-item" data-page="history"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2M4 4v4h4" /></svg>History</button>
+          <button class="nav-item" data-page="dictionary"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h13a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2zM5 4v14a2 2 0 0 0 2 2M9 8h7M9 12h7" /></svg>Dictionary</button>
+        </nav>
+        <div class="sidebar-spacer"></div>
+        <div class="sidebar-footer">
+          <button class="nav-item" data-page="settings"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.7 3- .2-.1a1.7 1.7 0 0 0-1.8.3l-.1.1h-3.5l-.1-.2a1.7 1.7 0 0 0-1.5-1l-.2.1-3.1-1.8.1-.2a1.7 1.7 0 0 0-.3-1.8L7.3 15v-3.5l.2-.1a1.7 1.7 0 0 0 1-1.5l-.1-.2 1.8-3.1.2.1a1.7 1.7 0 0 0 1.8-.3l.1-.1h3.5l.1.2a1.7 1.7 0 0 0 1.5 1l.2-.1 3.1 1.8-.1.2a1.7 1.7 0 0 0 .3 1.8l.1.1V15z" /></svg>Settings</button>
+          <button class="account-card" id="account-shortcut"><span class="avatar">W</span><span><strong>Account &amp; cloud</strong><small>Sign-in and subscription</small></span><span class="account-arrow">›</span></button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar"><div><p class="eyebrow">VOICE WORKSPACE</p><h1 id="page-title">Home</h1></div><div class="topbar-actions"><span class="service-state" id="service-state"><i></i>Connecting</span><button class="icon-button" id="open-tray-panel" type="button" title="Open compact panel" aria-label="Open compact panel"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg></button></div></header>
+        <section class="page active" id="page-home" aria-labelledby="home-heading">
+          <div class="hero"><div><p class="eyebrow">YOUR VOICE, IN FLOW</p><h2 id="home-heading">Speak, don't type.</h2><p>Choose how you want Wicx to help, then focus on what you have to say.</p></div><div class="hero-art" aria-hidden="true"><span>W</span><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
+          <div class="section-title"><div><h2>Choose a mode</h2><p>Start with a quick dictation or capture a longer session.</p></div></div>
+          <div class="mode-grid">
+            <article class="mode-card dictation-card"><div class="mode-icon blue">♩</div><span class="mode-tag">EVERYDAY WRITING</span><h3>Dictation</h3><p>Speak naturally and send your words into the app you’re working in.</p><button class="primary-button" id="start-dictation">Start dictation <span>↗</span></button><small class="mode-hint">Shortcut: <kbd>Ctrl</kbd> + <kbd>Space</kbd></small></article>
+            <article class="mode-card"><div class="mode-icon violet">▥</div><span class="mode-tag">LEARN &amp; REVIEW</span><h3>Lecture</h3><p>Record a class and keep its transcript and audio together on this device.</p><button class="secondary-button" data-session-mode="lecture">Start a lecture <span>→</span></button><small class="mode-hint">You’ll confirm consent before recording.</small></article>
+            <article class="mode-card"><div class="mode-icon green">◉</div><span class="mode-tag">DISCUSS &amp; DECIDE</span><h3>Meeting</h3><p>Capture a conversation and keep a transcript you can review later.</p><button class="secondary-button" data-session-mode="meeting">Start a meeting <span>→</span></button><small class="mode-hint">You’ll confirm consent before recording.</small></article>
+          </div>
+          <div class="home-bottom"><div class="privacy-note"><span>◇</span><div><strong>Your audio stays on this device</strong><small>Local transcription is available without an account. Cloud features require sign-in and a subscription.</small></div></div><button class="text-button" data-page="settings">Configure Wicx <span>→</span></button></div>
+        </section>
+
+        <section class="page" id="page-history" aria-labelledby="history-heading" hidden>
+          <div class="page-intro"><div><h2 id="history-heading">Your recordings</h2><p>Review local dictations, lectures, and meetings. Your recordings stay on this device.</p></div><label class="search-box"><span>⌕</span><input id="history-search" type="search" placeholder="Search your recordings" /></label></div>
+          <div class="filter-row"><button class="filter-chip selected" data-history-filter="all">All</button><button class="filter-chip" data-history-filter="dictation">Dictation</button><button class="filter-chip" data-history-filter="lecture">Lecture</button><button class="filter-chip" data-history-filter="meeting">Meeting</button></div>
+          <div class="history-layout"><div class="session-list" id="session-list" aria-live="polite"><div class="empty-state">Loading your recordings…</div></div><article class="session-detail" id="session-detail"><div class="detail-placeholder"><span>◷</span><h3>Select a recording</h3><p>Choose an item to see its transcript and session details.</p></div></article></div>
+        </section>
+
+        <section class="page" id="page-dictionary" aria-labelledby="dictionary-heading" hidden>
+          <div class="page-intro"><div><h2 id="dictionary-heading">Your dictionary</h2><p>Teach Wicx names, jargon, and specialist terms you use often.</p></div></div>
+          <form class="add-term" id="add-term-form"><label for="new-term">Add a word or phrase</label><div><input id="new-term" maxlength="120" placeholder="e.g. TypeScript, Twi, project names" required /><button class="primary-button" type="submit">Add term</button></div><small>Terms are saved locally and help guide speech recognition.</small></form>
+          <div class="dictionary-heading"><h3>Saved terms</h3><span id="term-count">0 terms</span></div><div class="term-list" id="term-list" aria-live="polite"><div class="empty-state">Loading your dictionary…</div></div>
+        </section>
+
+        <section class="page" id="page-settings" aria-labelledby="settings-heading" hidden>
+          <div class="page-intro"><div><h2 id="settings-heading">Settings</h2><p>Make Wicx work the way you want.</p></div></div>
+          <div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="selected" data-settings-section="general">General</button><button data-settings-section="dictation">Dictation</button><button data-settings-section="account">Account &amp; plan</button></nav>
+            <div class="settings-content">
+              <section class="settings-group" data-settings-panel="general"><h3>General</h3><p>Control the Wicx desktop experience.</p><label class="setting-row"><span><strong>Hide recording pill</strong><small>Hide the compact status pill while recording and processing.</small></span><input id="setting-hide-pill" type="checkbox" /></label><button class="settings-action" id="show-key-settings" type="button">Open account, providers &amp; cloud settings <span>↗</span></button></section>
+              <section class="settings-group" data-settings-panel="dictation" hidden><h3>Dictation</h3><p>Choose how your spoken words are inserted.</p><label class="setting-row"><span><strong>Rewrite before inserting</strong><small>Polish wording and remove verbal filler. Off by default; requires cloud access.</small></span><input id="setting-rewrite" type="checkbox" /></label><div class="setting-info">If cloud rewriting is unavailable, Wicx inserts the local transcript instead.</div></section>
+              <section class="settings-group" data-settings-panel="account" hidden><h3>Account &amp; plan</h3><p>Sign in to manage your plan and unlock subscription features.</p><div class="account-promo"><span class="account-promo-icon">✦</span><div><strong>Use Wicx with or without an account</strong><small>Local dictation is free. Cloud transcription, rewrite, and session insights require a subscription.</small></div></div><button class="primary-button" id="account-settings-button" type="button">Sign in or manage account <span>→</span></button></section>
+            </div>
+          </div>
+        </section>
+        <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
+      </main>
+    </div>
+
+    <dialog class="consent-dialog" id="consent-dialog"><form method="dialog" id="consent-form"><button class="dialog-close" value="cancel" aria-label="Cancel">×</button><span class="dialog-icon">◉</span><p class="eyebrow">BEFORE YOU BEGIN</p><h2 id="consent-title">Start a meeting</h2><p id="consent-copy">Please let everyone know that the conversation will be recorded.</p><label class="consent-check"><input id="consent-confirm" type="checkbox" /><span>I have informed the people who may be recorded.</span></label><div class="dialog-actions"><button class="secondary-button" value="cancel">Not now</button><button class="primary-button" id="confirm-session" value="start" disabled>Start recording</button></div></form></dialog>
+    <script type="module" src="/src/home.js"></script>
+  </body>
+</html>

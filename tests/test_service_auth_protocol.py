@@ -7,7 +7,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from whisper_service.auth import AuthenticationConfigError, TokenAuthenticator, add_user_token, revoke_user_tokens
+from whisper_service.accounts import AccountStore
+from whisper_service.auth import AuthenticationConfigError, CombinedAuthenticator, TokenAuthenticator, add_user_token, revoke_user_tokens
 from whisper_service.protocol import parse_control, parse_session_start
 from whisper_service.sessions import ServiceError
 
@@ -37,6 +38,18 @@ class TokenAuthenticatorTests(unittest.TestCase):
             auth = TokenAuthenticator.from_file(path)
             self.assertIsNone(auth.authenticate(f"Bearer {first}"))
             self.assertEqual(auth.authenticate(f"Bearer {other}"), "friend-2")
+
+    def test_combined_authenticator_accepts_operator_tokens_and_oauth_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            token = add_user_token(root / "tokens.json", "operator-user")
+            accounts = AccountStore(root / "accounts.sqlite3")
+            account = accounts.resolve_verified_identity(provider="google", subject="subject")
+            session = accounts.issue_session(account.account_id)
+            auth = CombinedAuthenticator(TokenAuthenticator.from_file(root / "tokens.json"), accounts)
+            self.assertEqual(auth.authenticate(f"Bearer {token}"), "operator-user")
+            self.assertEqual(auth.authenticate(f"Bearer {session}"), account.account_id)
+            self.assertIsNone(auth.authenticate("Bearer unknown-token"))
 
     @unittest.skipIf(os.name == "nt", "Unix permission bits are not available on Windows")
     def test_refuses_group_or_world_readable_token_file(self) -> None:

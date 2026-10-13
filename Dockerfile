@@ -1,10 +1,12 @@
 FROM python:3.11-slim
 
 ARG WHISPER_CUDA=0
+ARG WHISPER_DIARIZATION=0
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/data/huggingface \
-    WHISPER_TOKENS_FILE=/data/tokens.json
+    WHISPER_TOKENS_FILE=/data/tokens.json \
+    WHISPER_ENTITLEMENTS_FILE=/data/entitlements.json
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
@@ -12,6 +14,9 @@ COPY transcriber ./transcriber
 COPY whisper_service ./whisper_service
 
 RUN python -m pip install --no-cache-dir '.[server]' \
+    && if [ "$WHISPER_DIARIZATION" = "1" ]; then \
+         python -m pip install --no-cache-dir '.[diarization]'; \
+       fi \
     && if [ "$WHISPER_CUDA" = "1" ]; then \
          python -m pip install --no-cache-dir 'nvidia-cublas-cu12' 'nvidia-cudnn-cu12==9.*'; \
        fi \
@@ -24,7 +29,7 @@ RUN chmod 0555 /usr/local/bin/whisper-entrypoint
 
 USER 10001:10001
 VOLUME ["/data"]
-EXPOSE 8765
+EXPOSE 8765 8766
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15m --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/healthz', timeout=2)" || exit 1
 

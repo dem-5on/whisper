@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ "${1:-}" != "--yes" ]]; then
-    echo "This removes the Whisper app, GNOME extension, and user service."
+    echo "This removes the Wicx app, GNOME extension, and user service."
     echo "Your settings, API keys, recordings, and transcripts will be kept."
     read -r -p "Continue? [y/N] " answer
     [[ "$answer" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
@@ -17,10 +17,11 @@ rm -f "$CONFIG_HOME/systemd/user/transcriber.service"
 systemctl --user daemon-reload 2>/dev/null || true
 rm -rf "$DATA_HOME/whisper"
 rm -rf "$USER_HOME/.local/share/gnome-shell/extensions/transcriber@local"
-rm -f "$USER_HOME/.local/bin/whisper" "$USER_HOME/.local/bin/whisper-daemon" \
+rm -f "$USER_HOME/.local/bin/wicx" "$USER_HOME/.local/bin/wicx-daemon" \
+    "$USER_HOME/.local/bin/whisper" "$USER_HOME/.local/bin/whisper-daemon" \
     "$USER_HOME/.local/bin/transcriber" "$USER_HOME/.local/bin/transcriber-daemon"
 
-echo "Whisper app removed. Settings and personal transcription data were kept."
+echo "Wicx app removed. Settings and personal transcription data were kept."
 echo "To erase those too, manually remove:"
 echo "  $CONFIG_HOME/transcriber"
 echo "  ${XDG_DATA_HOME:-$USER_HOME/.local/share}/transcriber"

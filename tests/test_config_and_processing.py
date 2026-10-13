@@ -19,7 +19,10 @@ from transcriber.config import (
     write_key,
 )
 from transcriber.processing import process_transcript
-from transcriber.transcription import FasterWhisperBackend, OpenAICompatibleBackend, WhisperCppBackend, make_backend
+from transcriber.transcription import (
+    FasterWhisperBackend, OpenAICompatibleBackend, WhisperCppBackend, make_backend,
+    transcribe_long_audio, transcribe_long_audio_with_segments,
+)
 
 
 class ConfigAndProcessingTests(unittest.TestCase):
@@ -48,6 +51,63 @@ class ConfigAndProcessingTests(unittest.TestCase):
         self.assertIsInstance(make_backend(TranscriptionConfig(backend="local", local_engine="whisper.cpp")), WhisperCppBackend)
         self.assertIsInstance(make_backend(TranscriptionConfig(backend="groq")), OpenAICompatibleBackend)
         self.assertIsInstance(make_backend(TranscriptionConfig(backend="openrouter")), OpenAICompatibleBackend)
+
+    def test_long_audio_uses_bounded_sample_chunks_when_backend_supports_them(self) -> None:
+        import wave
+
+        class ChunkBackend:
+            def __init__(self) -> None:
+                self.chunk_lengths: list[int] = []
+
+            def transcribe_samples(self, samples) -> str:
+                self.chunk_lengths.append(len(samples))
+                return f"chunk {len(self.chunk_lengths)}"
+
+            def transcribe(self, _audio: Path) -> str:
+                raise AssertionError("long recording should use the bounded sample path")
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "long.wav"
+            with wave.open(str(audio), "wb") as target:
+                target.setnchannels(1)
+                target.setsampwidth(2)
+                target.setframerate(16_000)
+                target.writeframes(b"\0\0" * 40_000)
+            backend = ChunkBackend()
+            result = transcribe_long_audio(backend, audio, chunk_seconds=1)
+
+        self.assertEqual(backend.chunk_lengths, [16_000, 16_000, 8_000])
+        self.assertEqual(result, "chunk 1 chunk 2 chunk 3")
+
+    def test_long_audio_offsets_timestamped_segments_across_chunks(self) -> None:
+        import wave
+
+        class TimestampBackend:
+            def __init__(self) -> None:
+                self.offsets: list[float] = []
+
+            def transcribe_samples_with_timestamps(self, samples, *, offset_seconds: float):
+                self.offsets.append(offset_seconds)
+                return [{
+                    "start_seconds": offset_seconds + 0.1,
+                    "end_seconds": offset_seconds + 0.5,
+                    "text": f"chunk {len(self.offsets)}",
+                }]
+
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "long.wav"
+            with wave.open(str(audio), "wb") as target:
+                target.setnchannels(1)
+                target.setsampwidth(2)
+                target.setframerate(16_000)
+                target.writeframes(b"\0\0" * 40_000)
+            backend = TimestampBackend()
+            transcript, segments = transcribe_long_audio_with_segments(backend, audio, chunk_seconds=1)
+
+        self.assertEqual(backend.offsets, [0.0, 1.0, 2.0])
+        self.assertEqual(transcript, "chunk 1 chunk 2 chunk 3")
+        self.assertEqual([segment["start_seconds"] for segment in segments], [0.1, 1.1, 2.1])
+        self.assertEqual([segment["speaker_id"] for segment in segments], [None, None, None])
 
 
 class ConfigPersistenceTests(unittest.TestCase):

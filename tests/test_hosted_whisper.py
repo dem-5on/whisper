@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from pathlib import Path
+import tempfile
 import threading
 import unittest
 
@@ -12,6 +14,7 @@ except ImportError:  # pragma: no cover - server extra is optional
 
 from transcriber.hosted_whisper import HostedWhisperEngine
 from whisper_service.auth import TokenAuthenticator
+from whisper_service.entitlements import EntitlementStore, grant_feature
 from whisper_service.server import make_handler, make_process_request
 from whisper_service.sessions import ModelProfile, SessionManager
 
@@ -49,11 +52,16 @@ class HostedWhisperClientTests(unittest.IsolatedAsyncioTestCase):
         self.token = "test-hosted-whisper-token"
         digest = hashlib.sha256(self.token.encode()).hexdigest()
         self.auth = TokenAuthenticator({digest: "desktop-test"})
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.entitlement_path = Path(self.tempdir.name) / "entitlements.json"
+        grant_feature(self.entitlement_path, "desktop-test", "cloud_transcription")
+        self.entitlements = EntitlementStore(self.entitlement_path)
         self.worker = FakeWorker()
         manager = SessionManager(self.worker, (ModelProfile("default", "base"),), device="cpu")
         self.server = await serve(
-            make_handler(self.auth, manager), "127.0.0.1", 0,
-            process_request=make_process_request(self.auth),
+            make_handler(self.auth, manager, self.entitlements), "127.0.0.1", 0,
+            process_request=make_process_request(self.auth, self.entitlements),
             max_size=64 * 1024,
             max_queue=8,
             compression=None,

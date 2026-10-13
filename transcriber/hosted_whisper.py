@@ -1,4 +1,4 @@
-"""Authenticated WebSocket client for the Whisper hosted-service protocol."""
+"""Authenticated WebSocket client for the hosted-transcription protocol."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _CLOSE = object()
 
 
 class HostedWhisperEngine:
-    """Stream PCM16/16 kHz frames to a user-owned Whisper server."""
+    """Stream PCM16/16 kHz frames to a user-owned transcription server."""
 
     def __init__(self, url: str, token: str, profile: str, language: str | None,
                  publish_partial: Callable[[str, str, int], None],
@@ -38,7 +38,7 @@ class HostedWhisperEngine:
         try:
             self._audio.put(bytes(pcm_16k), timeout=0.1)
         except queue.Full as exc:
-            raise RuntimeError("Hosted Whisper audio queue is behind; stopping to avoid silent audio loss") from exc
+            raise RuntimeError("Hosted transcription audio queue is behind; stopping to avoid silent audio loss") from exc
 
     def commit_turn(self) -> None:
         # The service finalizes the complete recording at session.finish;
@@ -52,7 +52,7 @@ class HostedWhisperEngine:
         try:
             from websockets.sync.client import connect
         except ImportError:
-            self._report_metrics(0.0, 0.0, "Install universal-transcriber[realtime] for hosted Whisper")
+            self._report_metrics(0.0, 0.0, "Install Wicx realtime support for hosted transcription")
             return
 
         started = time.monotonic()
@@ -92,7 +92,7 @@ class HostedWhisperEngine:
                         raw = websocket.recv(timeout=0.2)
                     except TimeoutError:
                         if finish_deadline is not None and time.monotonic() >= finish_deadline:
-                            raise TimeoutError("Hosted Whisper final transcript timed out")
+                            raise TimeoutError("Hosted transcription final transcript timed out")
                         if self._sender_error:
                             raise RuntimeError(self._sender_error)
                         continue
@@ -111,12 +111,14 @@ class HostedWhisperEngine:
                         received_final = True
                         self._publish_final(session_id, str(event.get("text", "")), generation)
                     elif kind == "session.error":
-                        message = str(event.get("message", "Hosted Whisper session failed"))
-                        self._report_metrics(0.0, 0.0, message[:160])
+                        message = str(event.get("message", "Hosted transcription session failed"))
+                        code = str(event.get("code", ""))
+                        detail = f"{code}: {message}" if code else message
+                        self._report_metrics(0.0, 0.0, detail[:160])
                         return
                     elif kind == "session.closed":
                         if not received_final:
-                            self._report_metrics(0.0, 0.0, "Hosted Whisper closed without a final transcript")
+                            self._report_metrics(0.0, 0.0, "Hosted transcription closed without a final transcript")
                         return
         except Exception as exc:
             self._report_metrics(0.0, 0.0, _safe_error(exc))
@@ -149,7 +151,7 @@ class HostedWhisperEngine:
             try:
                 raw = websocket.recv(timeout=max(0.1, deadline - time.monotonic()))  # type: ignore[attr-defined]
             except TimeoutError as exc:
-                raise TimeoutError("Hosted Whisper session setup timed out") from exc
+                raise TimeoutError("Hosted transcription session setup timed out") from exc
             if not isinstance(raw, str):
                 continue
             try:
@@ -159,8 +161,11 @@ class HostedWhisperEngine:
             if event.get("type") == "session.ready":
                 return True
             if event.get("type") == "session.error":
-                raise RuntimeError(str(event.get("message", "Hosted Whisper rejected the session")))
-        raise TimeoutError("Hosted Whisper session setup timed out")
+                message = str(event.get("message", "Hosted transcription rejected the session"))
+                code = str(event.get("code", ""))
+                detail = f"{code}: {message}" if code else message
+                raise RuntimeError(detail)
+        raise TimeoutError("Hosted transcription session setup timed out")
 
 
 def hosted_dependency_available() -> bool:
@@ -174,5 +179,5 @@ def hosted_dependency_available() -> bool:
 def _safe_error(exc: Exception) -> str:
     message = str(exc).replace("\n", " ")
     if "Bearer " in message:
-        return "Hosted Whisper connection failed"
-    return message[:160] or "Hosted Whisper connection failed"
+        return "Hosted transcription connection failed"
+    return message[:160] or "Hosted transcription connection failed"

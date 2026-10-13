@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import math
 
 from whisper_service.sessions import ModelProfile, ServiceError, SessionLimits, SessionManager
 
@@ -116,6 +117,53 @@ class SessionManagerTests(unittest.IsolatedAsyncioTestCase):
         now[0] += 60
         after_window = await manager.start("user-a", "default")
         await after_window.cancel()
+
+    async def test_subscription_usage_caps_a_session_and_records_used_audio(self) -> None:
+        recorded: list[tuple[str, str, int]] = []
+        remaining = [1]
+
+        async def usage_budget(_user_id):
+            return {
+                "plan_id": "pro", "period_end": "2030-01-01T00:00:00+00:00",
+                "limit_milliseconds": 60_000, "used_milliseconds": 59_000,
+                "remaining_milliseconds": remaining[0] * 1000,
+            }
+
+        async def record_usage(_user_id, plan_id, period_end, seconds):
+            recorded.append((plan_id, period_end, seconds))
+            remaining[0] = max(0, remaining[0] - math.ceil(seconds / 1000))
+
+        manager = SessionManager(
+            self.worker, (self.profile,), device="cpu",
+            limits=SessionLimits(max_audio_seconds=10, max_audio_bytes=320_000),
+            usage_budget=usage_budget, record_usage=record_usage,
+        )
+        session = await manager.start("user-a", "default")
+        await session.submit_audio(b"\x00\x00" * 1600)  # 100 ms of audio
+        await session.finish()
+        self.assertEqual(recorded[0][2], 100)
+        with self.assertRaisesRegex(ServiceError, "allowance is used") as raised:
+            await manager.start("user-a", "default")
+        self.assertEqual(raised.exception.code, "usage_limit")
+
+    async def test_quota_shrinks_session_audio_bound(self) -> None:
+        async def usage_budget(_user_id):
+            return {
+                "plan_id": "pro", "period_end": "2030-01-01T00:00:00+00:00",
+                "limit_milliseconds": 5000, "used_milliseconds": 3000,
+                "remaining_milliseconds": 2000,
+            }
+
+        manager = SessionManager(
+            self.worker, (self.profile,), device="cpu",
+            limits=SessionLimits(max_audio_seconds=10, max_audio_bytes=320_000, max_chunk_bytes=320_000),
+            usage_budget=usage_budget,
+        )
+        session = await manager.start("user-a", "default")
+        await session.submit_audio(b"\x00\x00" * 32_000)
+        with self.assertRaisesRegex(ServiceError, "exceeded the session duration"):
+            await session.submit_audio(b"\x00\x00")
+        self.assertTrue(self.worker.opened[0].cancelled)
 
     async def test_cpu_friendly_defaults(self) -> None:
         limits = SessionLimits()

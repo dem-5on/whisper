@@ -1,7 +1,7 @@
 {
   "uuid": "transcriber@local",
-  "name": "Transcriber",
-  "description": "Push-to-talk voice input: record, transcribe, and insert text into the focused app. Daemon owns the work; this panel shows state and sends commands.",
+  "name": "Wicx",
+  "description": "Voice typing and transcription across your desktop apps.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
   "version": 2,
   "url": "https://github.com/dem-5on/whisper"

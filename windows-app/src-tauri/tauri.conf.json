@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Whisper",
+  "productName": "Wicx",
   "version": "2026.10.10",
   "identifier": "tech.intejers.whisper",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Whisper",
+        "title": "Wicx",
         "width": 420,
         "height": 560,
         "minWidth": 400,
@@ -30,7 +30,7 @@
       },
       {
         "label": "keys",
-        "title": "Whisper · Provider keys",
+        "title": "Wicx · Provider keys",
         "url": "keys.html",
         "width": 480,
         "height": 680,
@@ -44,9 +44,50 @@
         "focus": true,
         "focusable": true,
         "shadow": true
+      },
+      {
+        "label": "pill",
+        "title": "Wicx recording status",
+        "url": "pill.html",
+        "width": 200,
+        "height": 62,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "focusable": false,
+        "shadow": false
+      },
+      {
+        "label": "home",
+        "title": "Wicx",
+        "url": "home.html",
+        "width": 1120,
+        "height": 760,
+        "minWidth": 860,
+        "minHeight": 620,
+        "visible": false,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "resizable": true,
+        "focus": true,
+        "focusable": true,
+        "shadow": true
       }
     ],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost ws://127.0.0.1:47651" }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["wicx"]
+      }
+    }
   },
   "bundle": {
     "active": true,
@@ -60,7 +101,7 @@
       },
       "nsis": {
         "installMode": "currentUser",
-        "startMenuFolder": "Whisper",
+        "startMenuFolder": "Wicx",
         "installerHooks": "windows/installer-hooks.nsh"
       },
       "signCommand": {

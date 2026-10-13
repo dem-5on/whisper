@@ -54,7 +54,7 @@ try {
     Move-Item -LiteralPath $BuiltSidecar -Destination $TargetSidecar -Force
     $Sidecar = Get-Item -LiteralPath $TargetSidecar
     if ($Sidecar.Length -lt 10MB) {
-        throw "The packaged Whisper daemon sidecar is unexpectedly small ($($Sidecar.Length) bytes)."
+        throw "The packaged Wicx daemon sidecar is unexpectedly small ($($Sidecar.Length) bytes)."
     }
     Write-Host "Built $($Sidecar.Name) ($($Sidecar.Length) bytes)."
 }

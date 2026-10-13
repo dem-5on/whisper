@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
 from whisper_service.hardware import HardwareSelection
 from whisper_service.sessions import ModelProfile
 from whisper_service.worker import FasterWhisperWorker, WorkerStartupError, prepare_worker
+from whisper_service.diarization import DiarizationError, PyannoteDiarizationWorker
 
 
 class FakeModel:
@@ -93,6 +96,58 @@ class FasterWhisperWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(worker, cpu_worker)
         failed_gpu_worker.prepare.assert_awaited_once_with(profile)
         cpu_worker.prepare.assert_awaited_once_with(profile)
+
+
+class FakeAnnotation:
+    def __init__(self, turns):
+        self.turns = turns
+
+    def itertracks(self, *, yield_label):
+        assert yield_label
+        return iter((SimpleNamespace(start=start, end=end), index, label)
+                    for index, (start, end, label) in enumerate(self.turns))
+
+
+class PyannoteDiarizationWorkerTests(unittest.TestCase):
+    def test_returns_exclusive_turns_with_stable_first_seen_speaker_ids(self) -> None:
+        output = SimpleNamespace(
+            exclusive_speaker_diarization=FakeAnnotation([
+                (2.0, 3.0, "SPEAKER_01"), (0.2, 1.0, "SPEAKER_00"),
+                (4.0, 5.0, "SPEAKER_01"),
+            ]),
+            speaker_diarization=FakeAnnotation([(0.0, 5.0, "ignored")]),
+        )
+        pipeline = lambda _path: output
+        worker = PyannoteDiarizationWorker(device="cpu", pipeline=pipeline)
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "meeting.wav"
+            audio.write_bytes(b"placeholder")
+            turns = worker.diarize(audio)
+
+        self.assertEqual(turns, [
+            {"start_seconds": 0.2, "end_seconds": 1.0, "speaker_id": "speaker_1"},
+            {"start_seconds": 2.0, "end_seconds": 3.0, "speaker_id": "speaker_2"},
+            {"start_seconds": 4.0, "end_seconds": 5.0, "speaker_id": "speaker_2"},
+        ])
+
+    def test_falls_back_to_regular_diarization_view(self) -> None:
+        output = SimpleNamespace(speaker_diarization=FakeAnnotation([(0.0, 1.0, "SPEAKER_00")]))
+        worker = PyannoteDiarizationWorker(pipeline=lambda _path: output)
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "meeting.wav"
+            audio.write_bytes(b"placeholder")
+            self.assertEqual(worker.diarize(audio)[0]["speaker_id"], "speaker_1")
+
+    def test_rejects_missing_audio_and_unsafe_model_failures(self) -> None:
+        worker = PyannoteDiarizationWorker(pipeline=lambda _path: (_ for _ in ()).throw(RuntimeError("secret")))
+        with self.assertRaisesRegex(DiarizationError, "unavailable"):
+            worker.diarize("missing.wav")
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "meeting.wav"
+            audio.write_bytes(b"placeholder")
+            with self.assertRaisesRegex(DiarizationError, "Speaker analysis failed") as error:
+                worker.diarize(audio)
+            self.assertNotIn("secret", str(error.exception))
 
 
 if __name__ == "__main__":

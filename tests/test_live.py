@@ -214,6 +214,22 @@ class StreamingRecorderTests(unittest.TestCase):
         command = process.send_signal.call_args  # SIGINT gracefully drains raw stdout
         self.assertIsNotNone(command)
 
+    def test_streaming_recorder_exposes_real_pcm_meter_and_waveform(self) -> None:
+        process = MagicMock()
+        process.stdout.read.side_effect = [loud_frame(), b""]
+        with patch("transcriber.audio.subprocess.Popen", return_value=process):
+            recorder = StreamingRecorder(AudioConfig(), frame_ms=50)
+            reserved = recorder.start()
+            try:
+                self.assertEqual(recorder.read_frame(timeout=2), loud_frame())
+                self.assertGreater(recorder.audio_level, 0.0)
+                self.assertEqual(len(recorder.audio_waveform), 24)
+                self.assertGreater(max(recorder.audio_waveform), 0.0)
+                recorder.stop().unlink(missing_ok=True)
+            finally:
+                recorder.cancel()
+                reserved.unlink(missing_ok=True)
+
     def test_bounded_queue_drops_oldest(self) -> None:
         process = MagicMock()
         process.stdout.read.side_effect = [loud_frame()] * 40 + [b""]
@@ -276,7 +292,9 @@ class FakeStreamingRecorder:
         self._audio = audio
         self.cancelled = False
 
-    def start(self) -> Path:
+    def start(self, destination: Path | None = None) -> Path:
+        if destination is not None:
+            self._audio = destination
         return self._audio
 
     def read_frame(self, timeout: float | None = None) -> bytes | None:
@@ -354,6 +372,79 @@ class DaemonLiveTests(unittest.TestCase):
                 self.assertGreater(live["live_revision"], 0)
             finally:
                 self.daemon.command("cancel")
+
+    def test_lecture_uses_local_live_engine_even_when_remote_is_configured(self) -> None:
+        import dataclasses
+
+        streaming = dataclasses.replace(
+            self.daemon.config.streaming,
+            engine="hosted-whisper",
+            model="default",
+            server_url="wss://host.example.test/v1/live",
+        )
+        transcription = dataclasses.replace(
+            self.daemon.config.transcription,
+            backend="openrouter",
+            model="openai/whisper-large-v3",
+        )
+        self.daemon.config = dataclasses.replace(
+            self.daemon.config, streaming=streaming, transcription=transcription,
+        )
+        self.daemon.recorder = FakeStreamingRecorder([], self.audio)  # type: ignore[assignment]
+        fake_engine = type("FakeEngine", (), {"run": lambda *_args: None})()
+        with patch("transcriber.daemon.make_live_engine", return_value=fake_engine) as make_engine:
+            status = self.daemon.command("start_session", {
+                "mode": "lecture", "consent_acknowledged": True,
+            })
+            try:
+                self.assertEqual(status["state"], "RECORDING")
+                self.assertEqual(status["session_mode"], "lecture")
+                self.assertEqual(status["effective_backend"], "local")
+                self.assertFalse(self.daemon._hosted_live_session)
+                self.assertEqual(make_engine.call_args.args[0].backend, "local")
+                self.assertEqual(make_engine.call_args.args[1].engine, "local")
+            finally:
+                self.daemon.command("cancel")
+
+    def test_retry_session_retranscribes_retained_audio_locally_without_inserting_text(self) -> None:
+        import wave
+
+        stored = self.daemon._session_store.create("lecture")
+        with wave.open(str(stored.audio_path), "wb") as target:
+            target.setnchannels(1)
+            target.setsampwidth(2)
+            target.setframerate(16_000)
+            target.writeframes(b"\x00\x00" * 16_000)
+        self.daemon._session_store.update(
+            stored.id, state="error", source_transcript="previous transcript", error="interrupted", finished=True,
+        )
+
+        with patch("transcriber.daemon.make_backend", return_value=FakeBackend("recovered lecture")) as make_backend, patch(
+            "transcriber.daemon.make_delivery"
+        ) as make_delivery:
+            response = self.daemon.command("retry_session", {"session_id": stored.id})
+            self.assertEqual(response["state"], "PROCESSING")
+            self.wait_for(State.IDLE)
+
+        retried = self.daemon._session_store.get(stored.id)
+        self.assertEqual(retried.state, "ready")
+        self.assertEqual(retried.source_transcript, "recovered lecture")
+        self.assertTrue(retried.audio_path.is_file())
+        make_backend.assert_called_once()
+        self.assertEqual(make_backend.call_args.args[0].backend, "local")
+        make_delivery.assert_not_called()
+
+    def test_retry_session_rejects_dictation_and_missing_recordings(self) -> None:
+        dictation = self.daemon._session_store.create("dictation")
+        missing_audio = self.daemon._session_store.create("meeting")
+        self.daemon._session_store.update(dictation.id, state="error")
+        self.daemon._session_store.update(missing_audio.id, state="error")
+
+        wrong_mode = self.daemon.command("retry_session", {"session_id": dictation.id})
+        no_audio = self.daemon.command("retry_session", {"session_id": missing_audio.id})
+
+        self.assertEqual(wrong_mode["ok"], "false")
+        self.assertEqual(no_audio["ok"], "false")
 
     def test_groq_provider_is_batch_only_even_if_local_live_engine_is_configured(self) -> None:
         import dataclasses
@@ -435,14 +526,14 @@ class DaemonStreamingSwitchTests(unittest.TestCase):
             self.tmp.cleanup()
 
     def test_set_streaming_disables_and_rebuilds_recorder(self) -> None:
-        from transcriber.audio import SoxRecorder, StreamingRecorder
+        from transcriber.audio import StreamingRecorder
         from transcriber.config import load_config
 
         self.assertIsInstance(self.daemon.recorder, StreamingRecorder)
         response = self.daemon.command("set_streaming", {"enabled": False})
         self.assertEqual(response["ok"], "true")
         self.assertFalse(response["streaming"])
-        self.assertIsInstance(self.daemon.recorder, SoxRecorder)
+        self.assertIsInstance(self.daemon.recorder, StreamingRecorder)
         self.assertFalse(load_config(self.config_path).streaming.enabled)
         response = self.daemon.command("set_streaming", {"enabled": "true"})
         self.assertTrue(response["streaming"])

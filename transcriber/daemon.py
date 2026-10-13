@@ -32,6 +32,7 @@ import socketserver
 import stat
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.request
 from typing import Any
@@ -44,8 +45,16 @@ from .delivery import make_delivery
 from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallbacks, RemoteLiveCallbacks, make_live_engine
 from .processing import process_transcript
 from .state import State
-from .streaming import LiveSession
-from .transcription import TranscriptionError, make_backend, preload_local_model
+from .session_store import SessionStore, SessionStoreError
+from .session_export import export_session_audio, export_session_markdown
+from .vocabulary import VocabularyError, VocabularyStore
+from .streaming import LiveEvent, LiveSession
+from .transcription import (
+    TranscriptionError,
+    make_backend,
+    preload_local_model,
+    transcribe_long_audio_with_segments,
+)
 from .vad import SpeechEndpoint, create_vad
 
 LOG = logging.getLogger("transcriber")
@@ -98,7 +107,10 @@ class TranscriberDaemon:
         self.config = config
         self.recorder = make_recorder(
             config.audio,
-            streaming_enabled=config.streaming.enabled,
+            # On Linux, capture PCM even when live transcription is disabled:
+            # the UI's microphone meter and pill need real samples regardless
+            # of whether the selected batch provider supports streaming.
+            streaming_enabled=config.streaming.enabled or os.name != "nt",
             frame_ms=config.streaming.frame_ms,
             max_queue_seconds=config.streaming.max_queue_seconds,
             rolling_seconds=config.streaming.window_seconds,
@@ -117,8 +129,21 @@ class TranscriberDaemon:
         self._processing_started: float | None = None
         self._last_transcript = ""
         self._last_backend: str | None = None
+        self._last_notice = ""
         self._last_duration: float | None = None
         self._data_dir = data_dir or default_data_dir()
+        self._session_store = SessionStore(self._data_dir)
+        self._vocabulary = VocabularyStore(self._data_dir)
+        try:
+            recovered = self._session_store.recover_interrupted()
+            if recovered:
+                LOG.warning("Marked %d unfinished long-form session(s) as interrupted", recovered)
+        except SessionStoreError:
+            # Keep the daemon usable even if recovery metadata cannot be
+            # updated; the underlying session files remain untouched.
+            LOG.error("Could not mark interrupted local sessions for recovery")
+        self._stored_session_id: str | None = None
+        self._active_mode = "dictation"
         self._config_path = config_path
         # Live session: partial/committed/final events with session ID +
         # revision. Partials are panel-only; delivery uses final text only.
@@ -130,6 +155,8 @@ class TranscriberDaemon:
         self._hosted_final_text: str | None = None
         self._hosted_live_error: str | None = None
         self._hosted_final_event = threading.Event()
+        self._rewrite_waiter: tuple[str, threading.Event, dict[str, str]] | None = None
+        self._rewrite_state = ""
         self._vad_endpoint = SpeechEndpoint(config.streaming.silence_timeout_seconds)
         self._live_decode_ms = 0.0
         self._live_decode_lag_ms = 0.0
@@ -153,12 +180,56 @@ class TranscriberDaemon:
             return self._ok()
         if command == "toggle":
             return self._toggle()
+        if command == "start_session":
+            return self._start_session(params)
+        if command == "stop_session":
+            with self._lock:
+                if self._active_mode == "dictation":
+                    return {**self._status_locked(), "ok": "false", "error": "No Lecture or Meeting session is active"}
+                if self._state != State.RECORDING:
+                    return {**self._status_locked(), "ok": "false", "error": "No active session to finish"}
+                return self._stop_locked()
         if command == "cancel":
             return self._cancel()
         if command in {"retry", "retranscribe"}:
             return self._retry()
         if command == "last":
             return self._get_last()
+        if command == "history":
+            return self._get_history(params.get("limit", 50))
+        if command == "sessions":
+            return self._get_sessions(
+                params.get("limit", 50), params.get("offset", 0),
+                params.get("mode"), params.get("search"),
+            )
+        if command == "get_session":
+            return self._get_session(str(params.get("session_id", "")))
+        if command == "delete_session":
+            return self._delete_session(str(params.get("session_id", "")))
+        if command == "rename_speaker":
+            return self._rename_speaker(
+                str(params.get("session_id", "")),
+                str(params.get("speaker_id", "")),
+                params.get("name"),
+            )
+        if command == "assign_segment_speaker":
+            return self._assign_segment_speaker(
+                str(params.get("session_id", "")), params.get("segment_index"),
+                params.get("speaker_id"),
+            )
+        if command == "merge_speakers":
+            return self._merge_speakers(
+                str(params.get("session_id", "")), str(params.get("source_id", "")),
+                str(params.get("target_id", "")),
+            )
+        if command == "export_session":
+            return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
+        if command == "export_session_audio":
+            return self._export_session_audio(str(params.get("session_id", "")), str(params.get("output", "")))
+        if command == "dictionary":
+            return self._dictionary_command(str(params.get("action", "list")), params.get("term"))
+        if command == "retry_session":
+            return self._retry_session(str(params.get("session_id", "")))
         if command == "mics":
             return self._get_mics()
         if command == "models":
@@ -178,6 +249,16 @@ class TranscriberDaemon:
             return self._set_mic(None if value is None else str(value))
         if command == "set_streaming":
             return self._set_streaming(params.get("enabled", None))
+        if command == "set_rewrite":
+            return self._set_rewrite(params.get("enabled", None))
+        if command == "set_recording_pill_hidden":
+            return self._set_recording_pill_hidden(params.get("hidden", None))
+        if command == "rewrite_result":
+            return self._complete_rewrite(
+                str(params.get("request_id", "")),
+                str(params.get("text", "")),
+                str(params.get("error", "")),
+            )
         if command == "events":
             since = params.get("since", 0)
             try:
@@ -230,25 +311,7 @@ class TranscriberDaemon:
     def _toggle(self) -> dict[str, Any]:
         with self._lock:
             if self._state in (State.IDLE, State.ERROR):
-                try:
-                    self.recorder.start()
-                except Exception:
-                    LOG.error("Audio capture could not start")
-                    return self._fail_locked("Could not start recording; is rec installed?")
-                self._generation += 1
-                generation = self._generation
-                self._timer = threading.Timer(
-                    self.config.audio.max_duration_seconds, self._auto_stop, args=(generation,)
-                )
-                self._timer.daemon = True
-                self._timer.start()
-                self._error = None
-                self._recording_started = time.monotonic()
-                self._processing_started = None
-                self._set_state(State.RECORDING)
-                self._start_live_session_locked(generation)
-                LOG.info("Recording started")
-                return self._ok_locked()
+                return self._start_recording_locked("dictation")
             if self._state == State.RECORDING:
                 return self._stop_locked()
             return {
@@ -256,6 +319,53 @@ class TranscriberDaemon:
                 "ok": "false",
                 "error": "A recording is already being processed",
             }
+
+    def _start_session(self, params: dict[str, Any]) -> dict[str, Any]:
+        mode = str(params.get("mode", "")).strip().lower()
+        if mode not in {"lecture", "meeting"}:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session mode must be lecture or meeting"}
+        if params.get("consent_acknowledged") is not True:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Confirm that people being recorded have been informed"}
+        with self._lock:
+            if self._state not in {State.IDLE, State.ERROR}:
+                return {**self._status_locked(), "ok": "false", "error": "A recording or transcription is already in progress"}
+            return self._start_recording_locked(mode)
+
+    def _start_recording_locked(self, mode: str) -> dict[str, Any]:
+        try:
+            stored_session = self._session_store.create(mode)
+        except SessionStoreError:
+            return self._fail_locked("Could not prepare local session storage")
+        try:
+            destination = stored_session.audio_path if mode in {"lecture", "meeting"} else None
+            self.recorder.start(destination)
+        except Exception:
+            try:
+                self._session_store.delete(stored_session.id)
+            except (SessionStoreError, KeyError):
+                LOG.error("Could not remove session after capture failed")
+            LOG.error("Audio capture could not start")
+            return self._fail_locked("Could not start recording; check microphone access and recorder setup")
+        self._stored_session_id = stored_session.id
+        self._active_mode = mode
+        self._generation += 1
+        generation = self._generation
+        if mode == "dictation":
+            self._timer = threading.Timer(
+                self.config.audio.max_duration_seconds, self._auto_stop, args=(generation,)
+            )
+            self._timer.daemon = True
+            self._timer.start()
+        self._error = None
+        self._last_notice = ""
+        self._recording_started = time.monotonic()
+        self._processing_started = None
+        self._set_state(State.RECORDING)
+        self._start_live_session_locked(generation)
+        LOG.info("%s recording started", mode.title())
+        return self._ok_locked()
 
     def _auto_stop(self, generation: int) -> None:
         with self._lock:
@@ -273,6 +383,13 @@ class TranscriberDaemon:
         # Let queued PCM reach the live engine before enqueueing its final
         # commit and shutdown marker.
         self._stop_live_threads()
+        if self._stored_session_id:
+            try:
+                self._session_store.update(
+                    self._stored_session_id, state="transcribing", finished=True,
+                )
+            except (SessionStoreError, KeyError):
+                LOG.error("Could not update local session state")
         self._error = None
         self._recording_started = None
         self._processing_started = time.monotonic()
@@ -283,7 +400,11 @@ class TranscriberDaemon:
             self.config.transcription.model,
         )
         worker = threading.Thread(
-            target=self._process_and_deliver, args=(audio,), name="transcriber-worker", daemon=True
+            target=self._process_and_deliver,
+            args=(audio,),
+            kwargs={"session_id": self._stored_session_id, "mode": self._active_mode},
+            name="transcriber-worker",
+            daemon=True,
         )
         worker.start()
         return self._ok_locked()
@@ -297,6 +418,12 @@ class TranscriberDaemon:
                     self.recorder.cancel()
                 except Exception:
                     LOG.error("Audio capture could not be cancelled")
+                if self._stored_session_id:
+                    try:
+                        self._session_store.delete(self._stored_session_id)
+                    except (SessionStoreError, KeyError):
+                        LOG.error("Could not remove cancelled local session")
+                    self._stored_session_id = None
                 self._generation += 1
                 self._recording_started = None
                 self._processing_started = None
@@ -346,6 +473,305 @@ class TranscriberDaemon:
                 "last_backend": self._last_backend or "",
                 "last_duration": self._last_duration or 0,
             }
+
+    def _get_history(self, raw_limit: Any) -> dict[str, Any]:
+        try:
+            limit = int(raw_limit)
+            if isinstance(raw_limit, bool):
+                raise ValueError
+            sessions = self._session_store.list(limit=limit, mode="dictation")
+        except (TypeError, ValueError):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "History limit must be between 1 and 1000"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read transcript history"}
+        with self._lock:
+            status = self._status_locked()
+        return {
+            **status,
+            "ok": "true",
+            "history": [
+                {
+                    "id": item.id,
+                    "mode": item.mode,
+                    "state": item.state,
+                    "created_at": item.created_at,
+                    "transcript": item.source_transcript,
+                }
+                for item in sessions
+            ],
+        }
+
+    def _get_sessions(
+        self, raw_limit: Any, raw_offset: Any = 0,
+        mode: Any = None, search: Any = None,
+    ) -> dict[str, Any]:
+        try:
+            limit = int(raw_limit)
+            offset = int(raw_offset)
+            if isinstance(raw_limit, bool) or isinstance(raw_offset, bool):
+                raise ValueError
+            sessions, has_more = self._session_store.list_page(
+                limit=limit, offset=offset, mode=mode, search=search,
+            )
+        except (TypeError, ValueError):
+            with self._lock:
+                return {
+                    **self._status_locked(), "ok": "false",
+                    "error": "Session page requires a limit between 1 and 1000 and a non-negative offset",
+                }
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local sessions"}
+        with self._lock:
+            status = self._status_locked()
+        return {
+            **status,
+            "ok": "true",
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
+            "mode": mode,
+            "search": search.strip() if isinstance(search, str) else "",
+            "sessions": [
+                {
+                    "id": item.id,
+                    "mode": item.mode,
+                    "state": item.state,
+                    "created_at": item.created_at,
+                    "finished_at": item.finished_at,
+                    "source_transcript": item.source_transcript,
+                    "english_translation": item.english_translation,
+                    "outputs": item.outputs,
+                    "speaker_names": item.outputs.get("speaker_names", {}),
+                    "audio_available": item.audio_path.is_file(),
+                    "error": item.error,
+                }
+                for item in sessions
+            ],
+        }
+
+    def _get_session(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            item = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        with self._lock:
+            status = self._status_locked()
+        return {
+            **status, "ok": "true", "session": {
+                "id": item.id, "mode": item.mode, "state": item.state,
+                "created_at": item.created_at, "updated_at": item.updated_at,
+                "finished_at": item.finished_at,
+                "source_transcript": item.source_transcript,
+                "english_translation": item.english_translation,
+                "segments": item.segments, "outputs": item.outputs,
+                "speaker_names": item.outputs.get("speaker_names", {}),
+                "audio_available": item.audio_path.is_file(), "error": item.error,
+            },
+        }
+
+    def _delete_session(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        with self._lock:
+            if session_id == self._stored_session_id:
+                return {**self._status_locked(), "ok": "false", "error": "Cannot delete the active session"}
+        try:
+            self._session_store.delete(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not delete local session data"}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "deleted_session_id": session_id}
+
+    def _rename_speaker(self, session_id: str, speaker_id: str, name: Any) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            session = self._session_store.rename_speaker(session_id, speaker_id, name)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except ValueError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not update the Meeting speaker name"}
+        with self._lock:
+            return {
+                **self._status_locked(), "ok": "true", "session_id": session.id,
+                "speaker_id": speaker_id, "name": session.outputs["speaker_names"][speaker_id],
+            }
+
+    def _assign_segment_speaker(self, session_id: str, segment_index: Any, speaker_id: Any) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        if not isinstance(segment_index, int) or isinstance(segment_index, bool):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "segment_index must be an integer"}
+        try:
+            session = self._session_store.assign_segment_speaker(session_id, segment_index, speaker_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except ValueError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not update the speaker assignment"}
+        with self._lock:
+            return {
+                **self._status_locked(), "ok": "true", "session_id": session.id,
+                "segment_index": segment_index, "speaker_id": session.segments[segment_index]["speaker_id"],
+            }
+
+    def _merge_speakers(self, session_id: str, source_id: str, target_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            session = self._session_store.merge_speakers(session_id, source_id, target_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except ValueError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not merge the Meeting speakers"}
+        with self._lock:
+            return {
+                **self._status_locked(), "ok": "true", "session_id": session.id,
+                "source_id": source_id, "target_id": target_id,
+            }
+
+    def _export_session(self, session_id: str, output: str) -> dict[str, Any]:
+        if not session_id or not output:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier and output path are required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        try:
+            exported = export_session_markdown(stored, output)
+        except FileExistsError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The export file already exists; choose another path"}
+        except OSError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not write the session export; check the path and permissions"}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
+
+    def _export_session_audio(self, session_id: str, output: str) -> dict[str, Any]:
+        if not session_id or not output:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier and output path are required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        try:
+            exported = export_session_audio(stored, output)
+        except FileExistsError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The export file already exists; choose another path"}
+        except FileNotFoundError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The session recording is not available for export"}
+        except OSError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not export the session recording; check the path and permissions"}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
+
+    def _dictionary_command(self, action: str, raw_term: Any) -> dict[str, Any]:
+        try:
+            if action == "list":
+                terms = self._vocabulary.list()
+                changed = False
+            elif action == "add":
+                terms, changed = self._vocabulary.add(raw_term)
+            elif action == "remove":
+                terms, changed = self._vocabulary.remove(raw_term)
+            else:
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": "Dictionary action must be list, add, or remove"}
+        except VocabularyError as exc:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": str(exc)}
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "terms": terms, "changed": changed}
+
+    def _retry_session(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        if stored.mode not in {"lecture", "meeting"}:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Only Lecture and Meeting sessions can be retried"}
+        if stored.state != "error":
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Only an interrupted or failed session can be retried"}
+        try:
+            has_audio = stored.audio_path.is_file() and stored.audio_path.stat().st_size > 44
+        except OSError:
+            has_audio = False
+        if not has_audio:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The saved session recording is missing or empty"}
+        with self._lock:
+            if self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}:
+                return {**self._status_locked(), "ok": "false", "error": "Another recording or transcription is in progress"}
+            self._stored_session_id = session_id
+            self._active_mode = stored.mode
+            self._error = None
+            self._processing_started = time.monotonic()
+            self._set_state(State.PROCESSING)
+            worker = threading.Thread(
+                target=self._process_and_deliver,
+                args=(stored.audio_path,),
+                kwargs={"is_preserved": True, "session_id": session_id, "mode": stored.mode, "publish_live": False},
+                name="wicx-session-retry",
+                daemon=True,
+            )
+            worker.start()
+            return self._ok_locked()
 
     def _get_mics(self) -> dict[str, Any]:
         with self._lock:
@@ -424,7 +850,7 @@ class TranscriberDaemon:
                 if recreate_recorder:
                     self.recorder = make_recorder(
                         self.config.audio,
-                        streaming_enabled=streaming.enabled,
+                        streaming_enabled=streaming.enabled or os.name != "nt",
                         frame_ms=streaming.frame_ms,
                         max_queue_seconds=streaming.max_queue_seconds,
                         rolling_seconds=streaming.window_seconds,
@@ -526,7 +952,7 @@ class TranscriberDaemon:
                 # streaming PCM frames vs. direct-to-WAV.
                 self.recorder = make_recorder(
                     self.config.audio,
-                    streaming_enabled=target,
+                    streaming_enabled=target or os.name != "nt",
                     frame_ms=self.config.streaming.frame_ms,
                     max_queue_seconds=self.config.streaming.max_queue_seconds,
                     rolling_seconds=self.config.streaming.window_seconds,
@@ -534,6 +960,72 @@ class TranscriberDaemon:
                 self._persist_config_locked()
                 LOG.info("Streaming %s", "enabled" if target else "disabled")
             return self._ok_locked()
+
+    def _set_rewrite(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, bool):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "enabled must be true or false"}
+        with self._lock:
+            if self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING):
+                return {**self._status_locked(), "ok": "false", "error": "Finish the current recording before changing rewrite settings"}
+            self.config = dataclasses.replace(
+                self.config, ui=dataclasses.replace(self.config.ui, rewrite_enabled=raw),
+            )
+            self._persist_config_locked()
+            return self._ok_locked()
+
+    def _set_recording_pill_hidden(self, raw: Any) -> dict[str, Any]:
+        if not isinstance(raw, bool):
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "hidden must be true or false"}
+        with self._lock:
+            self.config = dataclasses.replace(
+                self.config, ui=dataclasses.replace(self.config.ui, hide_recording_pill=raw),
+            )
+            self._persist_config_locked()
+            return self._ok_locked()
+
+    def _complete_rewrite(self, request_id: str, text: str, error: str) -> dict[str, Any]:
+        with self._lock:
+            waiter = self._rewrite_waiter
+            if waiter is None or request_id != waiter[0]:
+                return {**self._status_locked(), "ok": "false", "error": "Rewrite request is no longer active"}
+            _, ready, result = waiter
+            if error:
+                result["error"] = error[:300]
+            elif text.strip() and len(text) <= 20_000:
+                result["text"] = text.strip()
+            else:
+                result["error"] = "Rewrite returned empty or oversized text"
+            ready.set()
+            return self._ok_locked()
+
+    def _rewrite_transcript(self, text: str) -> str:
+        request_id = uuid.uuid4().hex
+        ready = threading.Event()
+        result: dict[str, str] = {}
+        with self._lock:
+            self._rewrite_waiter = (request_id, ready, result)
+            self._rewrite_state = "rewriting"
+            if self._session is not None:
+                self._session.revision += 1
+                self._session.events.append(LiveEvent(
+                    type="rewrite_request", session_id=self._session.session_id,
+                    revision=self._session.revision, text=text, request_id=request_id,
+                ))
+                self._event_condition.notify_all()
+        try:
+            if not ready.wait(timeout=35.0):
+                result["error"] = "Rewrite timed out"
+            return result.get("text", "")
+        finally:
+            with self._lock:
+                if self._rewrite_waiter is not None and self._rewrite_waiter[0] == request_id:
+                    self._rewrite_waiter = None
+                self._rewrite_state = ""
+                reason = " ".join(result.get("error", "").split())[:160]
+                self._last_notice = f"Cloud rewrite unavailable ({reason}); original transcript inserted." if reason else ""
+                self._event_condition.notify_all()
 
     def _set_live_engine(self, engine: str, server_url: Any = None) -> dict[str, Any]:
         engine = engine.strip().lower()
@@ -574,7 +1066,7 @@ class TranscriberDaemon:
             if allowed is not None and model not in allowed:
                 return {**self._status_locked(), "ok": "false", "error": f"Model must be one of: {', '.join(allowed)}"}
             if engine == "hosted-whisper" and (not model or len(model) > 120 or any(ch.isspace() for ch in model)):
-                return {**self._status_locked(), "ok": "false", "error": "Hosted Whisper profile must be a non-empty profile ID without spaces"}
+                return {**self._status_locked(), "ok": "false", "error": "Hosted transcription profile must be a non-empty profile ID without spaces"}
             if self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING):
                 return {**self._status_locked(), "ok": "false", "error": "Cannot switch live model mid-run"}
             changed = model != self.config.streaming.model
@@ -617,27 +1109,28 @@ class TranscriberDaemon:
     def _recorder_is_streaming(self) -> bool:
         return self.config.streaming.enabled and hasattr(self.recorder, "read_frame")
 
-    def _live_capability_locked(self) -> tuple[bool, str]:
+    def _live_capability_locked(self, *, force_local: bool = False) -> tuple[bool, str]:
         """Whether this configuration can emit rolling partial hypotheses."""
         if not self.config.streaming.enabled:
             return False, "Live transcription is disabled"
         if not hasattr(self.recorder, "read_frame"):
             return False, "The selected recorder does not support streaming audio"
-        if self.config.streaming.engine == "hosted-whisper":
+        engine = "local" if force_local else self.config.streaming.engine
+        if engine == "hosted-whisper":
             if not self.config.streaming.server_url:
-                return False, "Hosted Whisper URL is not configured"
+                return False, "Hosted transcription URL is not configured"
             if not os.environ.get("WHISPER_SERVICE_TOKEN"):
                 return False, "WHISPER_SERVICE_TOKEN is not configured"
             from .hosted_whisper import hosted_dependency_available
             if not hosted_dependency_available():
-                return False, "Install universal-transcriber[realtime] for hosted Whisper"
-        elif self.config.transcription.backend in {"groq", "openrouter"}:
+                return False, "Install Wicx's optional realtime support for a hosted transcription service"
+        elif not force_local and self.config.transcription.backend in {"groq", "openrouter"}:
             provider = "Groq" if self.config.transcription.backend == "groq" else "OpenRouter"
             return False, f"{provider} supports batch transcription only. Select Local or OpenAI for live transcription."
-        elif self.config.streaming.engine == "local":
+        elif engine == "local":
             if self.config.transcription.local_engine != "faster-whisper":
                 return False, "Live partials require the faster-whisper engine"
-        elif self.config.streaming.engine == "openai-realtime":
+        elif engine == "openai-realtime":
             if not os.environ.get("OPENAI_API_KEY"):
                 return False, "OPENAI_API_KEY is not configured"
             from .openai_realtime import realtime_dependency_available
@@ -662,17 +1155,27 @@ class TranscriberDaemon:
         self._hosted_final_event.clear()
         if not self._recorder_is_streaming():
             return
-        capable, reason = self._live_capability_locked()
+        force_local = self._active_mode in {"lecture", "meeting"}
+        capable, reason = self._live_capability_locked(force_local=force_local)
         if not capable:
             LOG.info("Live partials unavailable: %s", reason)
             return
+        live_streaming = self.config.streaming
+        live_transcription = self.config.transcription
+        if force_local:
+            local_model = live_streaming.model if live_streaming.engine == "local" else "base"
+            live_streaming = dataclasses.replace(live_streaming, engine="local", model=local_model)
+            local_final_model = live_transcription.model if live_transcription.backend == "local" else "base"
+            live_transcription = dataclasses.replace(
+                live_transcription, backend="local", model=local_final_model,
+            )
         session_id = self._session.session_id
         callbacks = LocalEngineCallbacks(
             is_active=self._live_session_active,
             has_speech=lambda: self._live_has_speech(session_id),
             window_bytes=self._live_window_bytes,
-            create_backend=lambda: make_backend(dataclasses.replace(
-                self.config.transcription, backend="local", model=self.config.streaming.model,
+            create_backend=lambda: self._make_backend(dataclasses.replace(
+                live_transcription, backend="local", model=live_streaming.model,
             )),
             decode=self._decode_live_samples,
             publish_partial=self._publish_live_partial,
@@ -684,11 +1187,11 @@ class TranscriberDaemon:
             report_metrics=self._report_live_metrics,
         )
         try:
-            self._live_engine = make_live_engine(self.config.transcription, self.config.streaming, callbacks, remote_callbacks)
+            self._live_engine = make_live_engine(live_transcription, live_streaming, callbacks, remote_callbacks)
         except LiveEngineUnavailable as exc:
             LOG.info("Live partials unavailable: %s", exc)
             return
-        self._hosted_live_session = self.config.streaming.engine == "hosted-whisper"
+        self._hosted_live_session = not force_local and self.config.streaming.engine == "hosted-whisper"
         vad_thread = threading.Thread(
             target=self._live_vad_loop, args=(generation, session_id),
             name="transcriber-vad", daemon=True,
@@ -833,6 +1336,13 @@ class TranscriberDaemon:
         with self._inference_lock:
             return backend.transcribe_samples(samples)
 
+    def _make_backend(self, config: Any) -> Any:
+        backend = make_backend(config)
+        set_prompt = getattr(backend, "set_initial_prompt", None)
+        if config.backend == "local" and callable(set_prompt):
+            set_prompt(self._vocabulary.initial_prompt())
+        return backend
+
     def _publish_live_partial(self, session_id: str, text: str, generation: int) -> None:
         self._push_live_event(session_id, "partial", text, generation)
 
@@ -891,7 +1401,10 @@ class TranscriberDaemon:
         if session_id and session_id != self._session.session_id:
             return [], self._session.revision
         out = [
-            {"type": e.type, "session_id": e.session_id, "revision": e.revision, "text": e.text, "at": e.at}
+            {
+                "type": e.type, "session_id": e.session_id, "revision": e.revision,
+                "text": e.text, "request_id": e.request_id, "at": e.at,
+            }
             for e in self._session.events
             if e.revision > since
         ]
@@ -899,33 +1412,75 @@ class TranscriberDaemon:
 
     # -- pipeline ----------------------------------------------------------
 
-    def _process_and_deliver(self, audio: Path, is_preserved: bool = False) -> None:
+    def _process_and_deliver(
+        self, audio: Path, is_preserved: bool = False, session_id: str | None = None,
+        mode: str = "dictation", publish_live: bool = True,
+    ) -> None:
         started = time.monotonic()
+        transcript_segments: list[dict[str, Any]] = []
         backend_name = self.config.transcription.backend
+        if mode in {"lecture", "meeting"}:
+            backend_name = "local"
         try:
-            if not is_preserved:
+            if not is_preserved and mode == "dictation":
                 self._preserve_audio(audio)
             try:
                 with self._lock:
                     use_hosted_final = self._hosted_live_session and not is_preserved
                 if use_hosted_final:
                     if not self._hosted_final_event.wait(timeout=180.0):
-                        raise TranscriptionError("Hosted Whisper did not return a final transcript in time")
-                    with self._lock:
-                        transcript = self._hosted_final_text
-                        hosted_error = self._hosted_live_error
+                        hosted_error = "Hosted transcription service did not return a final transcript in time"
+                        transcript = None
+                    else:
+                        with self._lock:
+                            transcript = self._hosted_final_text
+                            hosted_error = self._hosted_live_error
                     if transcript is None:
-                        raise TranscriptionError(hosted_error or "Hosted Whisper did not return a final transcript")
-                    backend_name = "hosted-whisper"
+                        fallback_config = dataclasses.replace(
+                            self.config.transcription, backend="local",
+                        )
+                        LOG.warning("Hosted transcription unavailable; falling back to local: %s", _safe_error(
+                            TranscriptionError(hosted_error or "No final transcript")
+                        ))
+                        with self._inference_lock:
+                            backend = self._make_backend(fallback_config)
+                            transcript = backend.transcribe(audio)
+                        backend_name = "local-fallback"
+                        reason = (hosted_error or "").lower()
+                        if "usage_limit" in reason or "allowance" in reason or "quota" in reason:
+                            self._last_notice = "Cloud transcription allowance reached. This recording was transcribed locally."
+                        else:
+                            self._last_notice = "Cloud transcription was unavailable. This recording was transcribed locally."
+                    else:
+                        backend_name = "hosted-whisper"
                 else:
+                    transcription_config = self.config.transcription
+                    if mode in {"lecture", "meeting"} and transcription_config.backend != "local":
+                        # Long sessions are captured and transcribed locally;
+                        # paid cloud analysis is a later post-session stage.
+                        transcription_config = dataclasses.replace(
+                            transcription_config, backend="local", model="base",
+                        )
                     with self._inference_lock:
-                        transcript = make_backend(self.config.transcription).transcribe(audio)
+                        backend = self._make_backend(transcription_config)
+                        if mode in {"lecture", "meeting"}:
+                            transcript, transcript_segments = transcribe_long_audio_with_segments(backend, audio)
+                        else:
+                            transcript = backend.transcribe(audio)
             except Exception as exc:
                 LOG.error("Transcription failed: %s", _safe_error(exc))
-                self._fail(f"Transcription failed ({_short_reason(exc)})")
+                message = f"Transcription failed ({_short_reason(exc)})"
+                if use_hosted_final:
+                    message = f"Cloud transcription failed and local fallback was unavailable ({_short_reason(exc)})"
+                self._fail(message)
                 return
             try:
                 text = process_transcript(transcript, self.config.processing)
+                if transcript_segments:
+                    transcript_segments = [
+                        {**segment, "text": process_transcript(segment["text"], self.config.processing)}
+                        for segment in transcript_segments
+                    ]
             except Exception:
                 LOG.error("Text processing failed")
                 self._fail("Text processing failed")
@@ -935,33 +1490,57 @@ class TranscriberDaemon:
                 self._fail("No speech detected", soft=True)
                 return
             duration = time.monotonic() - started
-            with self._lock:
-                self._last_transcript = text
-                self._last_backend = backend_name
-                self._last_duration = duration
-                self._persist_last_locked()
-                self._set_state(State.DELIVERING)
+            rewrite_enabled = mode == "dictation" and self.config.ui.rewrite_enabled
+            if rewrite_enabled:
+                rewritten = self._rewrite_transcript(text)
+                if rewritten:
+                    text = rewritten
+            if session_id:
+                try:
+                    self._session_store.update(
+                        session_id,
+                        state="ready",
+                        source_transcript=text,
+                        segments=transcript_segments,
+                        error="",
+                        finished=True,
+                    )
+                except (SessionStoreError, KeyError):
+                    LOG.error("Could not save transcript to local history")
+            if mode == "dictation":
+                with self._lock:
+                    self._last_transcript = text
+                    self._last_backend = backend_name
+                    self._last_duration = duration
+                    self._persist_last_locked()
+                    self._set_state(State.DELIVERING)
             # The live session reconciles to the final transcript; only this
             # finalized text is delivered to the focused app.
-            if not use_hosted_final:
+            if (not use_hosted_final or rewrite_enabled) and publish_live:
                 self._finalize_live(text)
-            try:
-                delivery = make_delivery(self.config.delivery)
-                delivery.insert(text)
-                if self.config.delivery.submit_after_insert:
-                    delivery.submit()
-                LOG.info("Transcript delivered via backend=%s in %.1fs", backend_name, duration)
-            except Exception as exc:
-                LOG.error("Delivery failed: %s", _safe_error(exc))
-                self._fail(f"Delivery failed ({_short_reason(exc)}); transcript kept for copy")
-                return
+            if mode == "dictation":
+                try:
+                    delivery = make_delivery(self.config.delivery)
+                    delivery.insert(text)
+                    if self.config.delivery.submit_after_insert:
+                        delivery.submit()
+                    LOG.info("Transcript delivered via backend=%s in %.1fs", backend_name, duration)
+                except Exception as exc:
+                    LOG.error("Delivery failed: %s", _safe_error(exc))
+                    self._fail(f"Delivery failed ({_short_reason(exc)}); transcript kept for copy")
+                    return
+            else:
+                LOG.info("%s transcript saved locally in %.1fs", mode.title(), duration)
         except Exception:
             LOG.error("Unexpected pipeline failure")
             self._fail("Unexpected failure")
         finally:
-            if not is_preserved:
+            if not is_preserved and mode == "dictation":
                 audio.unlink(missing_ok=True)
             with self._lock:
+                if session_id and self._stored_session_id == session_id:
+                    self._stored_session_id = None
+                    self._active_mode = "dictation"
                 if self._state != State.ERROR:
                     self._processing_started = None
                     self._set_state(State.IDLE)
@@ -980,6 +1559,16 @@ class TranscriberDaemon:
             return self._fail_locked(reason, soft)
 
     def _fail_locked(self, reason: str, soft: bool = False) -> dict[str, Any]:
+        if self._stored_session_id:
+            try:
+                self._session_store.update(
+                    self._stored_session_id,
+                    state="error",
+                    error=reason,
+                    finished=True,
+                )
+            except (SessionStoreError, KeyError):
+                LOG.error("Could not save local session failure state")
         self._error = reason
         self._soft_error = soft
         self._recording_started = None
@@ -1001,8 +1590,17 @@ class TranscriberDaemon:
         if self.config.ui.show_last_transcript and self._last_transcript:
             preview = self._last_transcript[: self.config.ui.preview_chars]
         session = self._session
-        live_available, live_unavailable_reason = self._live_capability_locked()
+        force_local_live = self._active_mode in {"lecture", "meeting"}
+        live_available, live_unavailable_reason = self._live_capability_locked(force_local=force_local_live)
         live_active = self._state in (State.RECORDING, State.PROCESSING, State.DELIVERING) and session is not None
+        retained_session_active = live_active and self._active_mode in {"lecture", "meeting"}
+        effective_model = self.config.transcription.model
+        effective_live_model = self.config.streaming.model
+        if retained_session_active:
+            if self.config.transcription.backend != "local":
+                effective_model = "base"
+            if self.config.streaming.engine != "local":
+                effective_live_model = "base"
         show_partials = self.config.streaming.show_partials
         committed = session.committed_text if live_active and session else ""
         provisional = session.provisional_text if live_active and session else ""
@@ -1011,13 +1609,18 @@ class TranscriberDaemon:
             provisional = ""
             live_text = committed
         audio_level = 0.0
+        audio_waveform: tuple[float, ...] = (0.0,) * 24
         if self._state == State.RECORDING:
             audio_level = min(1.0, max(0.0, float(getattr(self.recorder, "audio_level", 0.0))))
+            audio_waveform = tuple(getattr(self.recorder, "audio_waveform", audio_waveform))
         return {
             "state": self._state.value,
             "error": self._error or "",
             "soft_error": self._soft_error,
             "backend": self.config.transcription.backend,
+            "session_mode": self._active_mode if live_active else "",
+            "effective_backend": "local" if retained_session_active else self.config.transcription.backend,
+            "effective_model": effective_model,
             "local_engine": self.config.transcription.local_engine,
             "model": self.config.transcription.model,
             "mic": self.config.audio.input_device or "default",
@@ -1025,9 +1628,14 @@ class TranscriberDaemon:
             # This is only a normalized amplitude level; captured audio stays
             # on the existing transcription pipeline and is never sent to UI.
             "audio_level": round(audio_level, 3),
+            "audio_waveform": [round(max(-1.0, min(1.0, float(sample))), 4) for sample in audio_waveform],
             "processing_elapsed": round(processing_elapsed, 1),
             "last_audio": bool(self.last_audio_path.exists()),
             "last_backend": self._last_backend or "",
+            "last_notice": self._last_notice,
+            "rewrite_enabled": self.config.ui.rewrite_enabled,
+            "hide_recording_pill": self.config.ui.hide_recording_pill,
+            "rewrite_state": self._rewrite_state,
             "last_duration": round(self._last_duration, 1) if self._last_duration is not None else 0,
             "last_preview": preview,
             "has_groq_key": bool(os.environ.get("GROQ_API_KEY")),
@@ -1043,6 +1651,8 @@ class TranscriberDaemon:
             "speech_active": bool(session.speech_active) if live_active and session else False,
             "streaming": self.config.streaming.enabled,
             "live_engine": self.config.streaming.engine,
+            "effective_live_engine": "local" if force_local_live else self.config.streaming.engine,
+            "effective_live_model": effective_live_model,
             "live_model": self.config.streaming.model,
             # Endpoint configuration isn't secret; expose it so desktop
             # settings UIs can edit a hosted service without reading YAML.
@@ -1310,9 +1920,9 @@ def run_server(
                 probe.sendall(b'{"command":"status"}\n')
                 response = json.loads(probe.makefile("rb").readline(8192))
             except (OSError, ValueError) as exc:
-                raise RuntimeError(f"IPC endpoint is in use but did not return Whisper status: {socket_path}") from exc
+                raise RuntimeError(f"IPC endpoint is in use but did not return Wicx status: {socket_path}") from exc
             if not _is_daemon_status_response(response):
-                raise RuntimeError(f"IPC endpoint is in use but did not return Whisper status: {socket_path}")
+                raise RuntimeError(f"IPC endpoint is in use but did not return Wicx status: {socket_path}")
             message = f"Daemon already appears to be running at {socket_path}"
             if _existing_daemon_exit_code(os.name, ui_token) == 75:
                 # Tauri may have restarted while its daemon child survived. The
@@ -1353,8 +1963,8 @@ def _run_windows_server(config: Config, config_path: Path | None, ui_token: str 
         response = None
     if response is not None:
         if not _is_daemon_status_response(response):
-            raise RuntimeError("Windows IPC endpoint is in use but did not return Whisper status")
-        message = "Whisper daemon already appears to be running"
+            raise RuntimeError("Windows IPC endpoint is in use but did not return Wicx status")
+        message = "Wicx transcription service already appears to be running"
         if _existing_daemon_exit_code(os.name, ui_token) == 75:
             raise DaemonAlreadyRunning(message)
         raise RuntimeError(message)
@@ -1381,7 +1991,7 @@ def _run_windows_server(config: Config, config_path: Path | None, ui_token: str 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Whisper transcription daemon")
+    parser = argparse.ArgumentParser(description="Run the Wicx transcription service")
     parser.add_argument("--config")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
     parser.add_argument("--ui-token", help=argparse.SUPPRESS)

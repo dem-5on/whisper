@@ -4,24 +4,67 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#202127" />
-    <title>Whisper settings</title>
+    <title>Wicx settings</title>
   </head>
   <body>
     <main class="key-settings">
       <header class="key-heading">
         <div class="key-brand" aria-hidden="true">W</div>
         <div class="key-heading-copy">
-          <h1>Whisper settings</h1>
-          <p>Close this window to keep Whisper running in the tray.</p>
+          <h1>Wicx settings</h1>
+          <p>Close this window to keep Wicx running in the tray.</p>
         </div>
       </header>
+
+      <section class="account-settings" aria-labelledby="account-title">
+        <h2 id="account-title">Wicx account</h2>
+        <p class="account-intro">Sign in to use your subscription features. Local dictation stays available without an account.</p>
+        <label class="key-label" for="auth-api-url">Wicx service URL</label>
+        <div class="account-url-row">
+          <input id="auth-api-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="https://api.example.com" />
+          <button id="save-auth-api-url" class="key-save" type="button">Save</button>
+        </div>
+        <p class="account-help">Use the HTTPS address of the Wicx service you host. This is a regular setting, not a secret.</p>
+        <p id="account-state" class="key-state" aria-live="polite">Checking account…</p>
+        <div class="account-actions">
+          <button class="key-save" type="button" data-oauth-provider="google">Continue with Google</button>
+          <button class="key-remove" type="button" data-oauth-provider="apple">Continue with Apple</button>
+          <button id="sign-out" class="key-remove" type="button" hidden>Sign out</button>
+        </div>
+        <section class="plans-section" aria-labelledby="plans-title">
+          <div class="subscription-heading">
+            <h3 id="plans-title">Plans</h3>
+            <button id="load-plans" class="key-remove" type="button">View plans</button>
+          </div>
+          <p id="plans-state" class="account-help" aria-live="polite">See plans and pricing from your Wicx service.</p>
+          <div id="billing-plans" class="billing-plans"></div>
+          <form id="checkout-form" class="checkout-form" hidden>
+            <label class="key-label" for="checkout-email">Billing email</label>
+            <input id="checkout-email" type="email" autocomplete="email" maxlength="254" placeholder="you@example.com" required />
+            <p class="account-help">Sent to Wicx to initialize Paystack checkout; it is not saved in this app.</p>
+            <div class="account-actions">
+              <button id="start-checkout" class="key-save" type="submit">Continue to secure checkout</button>
+              <button id="cancel-checkout" class="key-remove" type="button">Cancel</button>
+            </div>
+          </form>
+        </section>
+        <section class="subscription-summary" aria-labelledby="subscription-title">
+          <div class="subscription-heading">
+            <h3 id="subscription-title">Subscription access</h3>
+            <button id="refresh-billing" class="key-remove" type="button">Refresh</button>
+          </div>
+          <p id="billing-state" class="account-help" aria-live="polite">Sign in to check your subscription.</p>
+          <ul id="billing-features" class="billing-features"></ul>
+          <div id="billing-plan" class="account-subscriptions"></div>
+        </section>
+      </section>
 
       <label class="key-label" for="key-provider">Provider</label>
       <select id="key-provider">
         <option value="openai">OpenAI</option>
         <option value="groq">Groq</option>
         <option value="openrouter">OpenRouter</option>
-        <option value="hosted-whisper">Hosted Whisper service</option>
+        <option value="hosted-whisper">Hosted transcription service</option>
       </select>
 
       <p id="key-state" class="key-state" aria-live="polite">Checking saved key…</p>
@@ -49,16 +92,29 @@
         <select id="live-engine">
           <option value="local">Local on this computer</option>
           <option value="openai-realtime">OpenAI Realtime</option>
-          <option value="hosted-whisper">Hosted Whisper server</option>
+          <option value="hosted-whisper">Hosted transcription server</option>
         </select>
         <div id="live-url-row" hidden>
           <label class="key-label" for="live-server-url">WebSocket server URL</label>
-          <input id="live-server-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="wss://whisper.example.com/v1/live" />
+          <input id="live-server-url" type="url" inputmode="url" autocomplete="url" spellcheck="false" placeholder="wss://transcription.example.com/v1/live" />
         </div>
         <label class="key-label" for="live-model">Live model or profile</label>
         <input id="live-model" type="text" maxlength="120" autocomplete="off" spellcheck="false" />
-        <p class="key-help">Local and OpenAI engines use their supported model IDs. For Hosted Whisper, enter the profile configured on your server.</p>
+        <p class="key-help">Local and OpenAI engines use their supported model IDs. For a hosted transcription server, enter the profile configured on that server.</p>
         <button id="save-live-settings" class="key-save live-save" type="button">Save live settings</button>
+      </section>
+
+      <section class="live-settings rewrite-settings" aria-labelledby="rewrite-title">
+        <h2 id="rewrite-title">Dictation rewrite</h2>
+        <label class="rewrite-toggle-row" for="rewrite-enabled">
+          <span><strong>Rewrite before inserting</strong><small>Clarify wording and remove verbal filler using your subscription.</small></span>
+          <input id="rewrite-enabled" type="checkbox" />
+        </label>
+        <p class="key-help">Off by default. If cloud rewriting is unavailable, Wicx inserts the original local transcript instead.</p>
+        <label class="rewrite-toggle-row" for="hide-recording-pill">
+          <span><strong>Hide the recording status pill</strong><small>When off, the compact pill appears while recording, transcribing, or rewriting.</small></span>
+          <input id="hide-recording-pill" type="checkbox" />
+        </label>
       </section>
 
       <p class="key-privacy">API keys and service tokens stay in your Windows user profile. The server URL and model profile are regular app settings.</p>

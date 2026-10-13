@@ -1,4 +1,4 @@
-"""Small Windows notification-area controller for the Whisper daemon."""
+"""Small Windows notification-area controller for the Wicx service."""
 
 from __future__ import annotations
 
@@ -25,11 +25,11 @@ def _icon_image() -> Any:
 
 def main() -> None:
     if os.name != "nt":
-        raise SystemExit("The Whisper tray controller is available on Windows only.")
+        raise SystemExit("The Wicx tray controller is available on Windows only.")
     try:
         import pystray
     except ImportError as exc:
-        raise SystemExit("Install Whisper with the Windows extra to use its tray controller.") from exc
+        raise SystemExit("Install Wicx with the Windows extra to use its tray controller.") from exc
 
     try:
         start_daemon()
@@ -44,10 +44,10 @@ def main() -> None:
             response = request(command)
             if icon is not None:
                 state = response.get("state", "unknown").replace("_", " ").title()
-                icon.notify(f"Whisper: {state}", "Whisper")
+                icon.notify(f"Wicx: {state}", "Wicx")
         except (OSError, EOFError, ValueError):
             if icon is not None:
-                icon.notify("The Whisper daemon is unavailable.", "Whisper")
+                icon.notify("The Wicx transcription service is unavailable.", "Wicx")
 
     def toggle(_icon: Any, _item: Any) -> None:
         run_command("toggle")
@@ -69,9 +69,9 @@ def main() -> None:
         pystray.MenuItem("Cancel recording", cancel),
         pystray.MenuItem("Shortcut: Ctrl+Space", None, enabled=False),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Quit Whisper tray", quit_tray),
+        pystray.MenuItem("Quit Wicx tray", quit_tray),
     )
-    icon = pystray.Icon("Whisper", _icon_image(), "Whisper", menu)
+    icon = pystray.Icon("Wicx", _icon_image(), "Wicx", menu)
 
     hotkey_thread_id = [0]
 
@@ -85,7 +85,7 @@ def main() -> None:
         registered = user32.RegisterHotKey(None, 1, 0x0002, 0x20)  # MOD_CONTROL | VK_SPACE
         if not registered:
             if icon is not None:
-                icon.notify("Ctrl+Space is already in use by another app.", "Whisper")
+                icon.notify("Ctrl+Space is already in use by another app.", "Wicx")
             return
         message = wintypes.MSG()
         while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
@@ -97,9 +97,9 @@ def main() -> None:
         while not stopped.is_set():
             try:
                 status = request("status", timeout=1.0)
-                icon.title = f"Whisper — {status.get('state', 'unknown').replace('_', ' ').title()}"
+                icon.title = f"Wicx — {status.get('state', 'unknown').replace('_', ' ').title()}"
             except (OSError, EOFError, ValueError):
-                icon.title = "Whisper — daemon unavailable"
+                icon.title = "Wicx — transcription service unavailable"
             time.sleep(2)
 
     threading.Thread(target=update_tooltip, name="whisper-tray-status", daemon=True).start()

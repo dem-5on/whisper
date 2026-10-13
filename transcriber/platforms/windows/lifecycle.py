@@ -1,4 +1,4 @@
-"""Per-user process lifecycle for the Windows Whisper daemon."""
+"""Per-user process lifecycle for the Windows Wicx service."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def start_daemon(timeout: float = 15.0) -> None:
         if is_running():
             return
         time.sleep(0.25)
-    raise RuntimeError("Whisper daemon did not start. Check the installation and Python environment.")
+    raise RuntimeError("Wicx transcription service did not start. Check the installation and Python environment.")
 
 
 def stop_daemon(timeout: float = 10.0) -> None:
@@ -46,13 +46,13 @@ def stop_daemon(timeout: float = 10.0) -> None:
     try:
         request("shutdown")
     except (OSError, EOFError, ValueError) as exc:
-        raise RuntimeError("Could not ask the Whisper daemon to stop") from exc
+        raise RuntimeError("Could not ask the Wicx service to stop") from exc
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if not is_running():
             return
         time.sleep(0.1)
-    raise RuntimeError("Whisper daemon did not stop in time")
+    raise RuntimeError("Wicx transcription service did not stop in time")
 
 
 def restart_daemon() -> None:

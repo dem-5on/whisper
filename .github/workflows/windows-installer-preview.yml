@@ -120,7 +120,7 @@ jobs:
         if: inputs.sign_installer || inputs.publish_release
         shell: pwsh
         run: ./windows-app/scripts/sign-windows.ps1 ./windows-app/src-tauri/binaries/whisper-daemon-x86_64-pc-windows-msvc.exe
-      - name: Build the signed Whisper installer
+      - name: Build the signed Wicx installer
         if: inputs.sign_installer || inputs.publish_release
         working-directory: windows-app
         run: |
@@ -180,10 +180,10 @@ jobs:
           $Installer = Get-ChildItem windows-app/src-tauri/target/release/bundle/nsis -Filter '*.exe' -File | Select-Object -First 1
           if (-not $Installer) { throw 'The NSIS installer could not be found.' }
           $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Whisper\Whisper.lnk'
+          $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Wicx\Wicx.lnk'
           $UninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
-          Write-Host 'Starting silent Whisper setup.'
+          Write-Host 'Starting silent Wicx setup.'
           $Setup = Start-Process -FilePath $Installer.FullName -ArgumentList '/S' -PassThru
           if (-not $Setup.WaitForExit(300000)) {
             Stop-Process -Id $Setup.Id -Force -ErrorAction SilentlyContinue
@@ -191,16 +191,16 @@ jobs:
           }
           if ($Setup.ExitCode -ne 0) { throw "Silent setup failed with exit code $($Setup.ExitCode)." }
           Write-Host 'Silent setup completed; verifying registration and app launch.'
-          $AutoStart = (Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper
+          $AutoStart = (Get-ItemProperty -Path $RunKey -Name Wicx -ErrorAction SilentlyContinue).Wicx
           if (-not $AutoStart -or $AutoStart -notlike '*whisper-windows-ui.exe*') {
-            throw 'Setup did not register Whisper to start at sign-in.'
+            throw 'Setup did not register Wicx to start at sign-in.'
           }
           $AppPath = [regex]::Match($AutoStart, '^"([^"]+)"').Groups[1].Value
           if (-not $AppPath -or -not $AppPath.StartsWith($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Setup did not install Whisper per-user under LOCALAPPDATA: $AutoStart"
+            throw "Setup did not install Wicx per-user under LOCALAPPDATA: $AutoStart"
           }
           if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {
-            throw "The registered Whisper app executable is missing: $AppPath"
+            throw "The registered Wicx app executable is missing: $AppPath"
           }
           if (-not (Test-Path -LiteralPath $ShortcutPath -PathType Leaf)) {
             throw "Setup did not create the Start menu shortcut: $ShortcutPath"
@@ -282,14 +282,14 @@ jobs:
               } else {
                 Write-Host "No UI sidecar log at $SidecarLog"
               }
-              throw 'The installed Whisper daemon sidecar did not launch.'
+              throw 'The installed Wicx daemon sidecar did not launch.'
             }
             Start-Sleep -Milliseconds 500
           }
 
           # Ask the resident app to exit gracefully so its daemon sidecar is
           # stopped before NSIS removes files that may still be open.
-          Write-Host 'Asking the resident Whisper app to exit gracefully.'
+          Write-Host 'Asking the resident Wicx app to exit gracefully.'
           $Bye = Start-Process -FilePath $AppPath -ArgumentList '--whisper-uninstall' -PassThru
           if (-not $Bye.WaitForExit(60000)) {
             Stop-Process -Id $Bye.Id -Force -ErrorAction SilentlyContinue
@@ -317,7 +317,7 @@ jobs:
               } else {
                 Write-Host "No UI sidecar log at $SidecarLog (shutdown handler never ran)"
               }
-              throw 'Whisper daemon sidecar did not stop with the app.'
+              throw 'Wicx daemon sidecar did not stop with the app.'
             }
             Start-Sleep -Milliseconds 250
           }
@@ -330,14 +330,14 @@ jobs:
 
           $UninstallEntry = Get-ChildItem -Path $UninstallRoot -ErrorAction SilentlyContinue |
             ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-            Where-Object { $_.DisplayName -eq 'Whisper' } |
+            Where-Object { $_.DisplayName -eq 'Wicx' } |
             Select-Object -First 1
-          if (-not $UninstallEntry) { throw 'Setup did not register Whisper for uninstall.' }
+          if (-not $UninstallEntry) { throw 'Setup did not register Wicx for uninstall.' }
           $Uninstaller = [regex]::Match($UninstallEntry.UninstallString, '^"([^"]+)"').Groups[1].Value
           if (-not $Uninstaller -or -not (Test-Path -LiteralPath $Uninstaller -PathType Leaf)) {
             throw 'The registered Whisper uninstaller could not be located.'
           }
-          Write-Host 'Starting silent Whisper uninstall.'
+          Write-Host 'Starting silent Wicx uninstall.'
           $Removal = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -PassThru
           if (-not $Removal.WaitForExit(300000)) {
             Stop-Process -Id $Removal.Id -Force -ErrorAction SilentlyContinue
@@ -357,8 +357,8 @@ jobs:
             Get-Process -Name 'whisper-windows-ui' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host " lingering UI pid $($_.Id)" }
             throw 'Uninstall left the Whisper app executable behind.'
           }
-          if ((Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
-            throw 'Uninstall left Whisper in the Windows sign-in startup registry.'
+          if ((Get-ItemProperty -Path $RunKey -Name Wicx -ErrorAction SilentlyContinue).Wicx -or (Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
+            throw 'Uninstall left Wicx or a legacy Whisper value in the Windows sign-in startup registry.'
           }
           Write-Host 'Per-user install, UI and daemon startup/shutdown, sign-in registration, Start menu shortcut, and uninstall passed.'
       - name: Upload the Windows installer preview

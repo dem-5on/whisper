@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from pathlib import Path
+import tempfile
+import unittest
+
+from transcriber.session_export import export_session_audio, export_session_markdown, render_session_markdown
+from transcriber.session_store import SessionStore
+
+
+class SessionExportTests(unittest.TestCase):
+    def test_markdown_contains_transcript_translation_and_structured_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("lecture")
+            session = store.update(
+                session.id,
+                state="ready",
+                source_transcript="Kia ora, welcome.",
+                english_translation="Hello, welcome.",
+                outputs={
+                    "notes": ["Topic one", "Topic two"], "questions": ["Why?"],
+                    "speaker_names": {"speaker_1": "Dr. Mensah"},
+                },
+            )
+
+            markdown = render_session_markdown(session)
+            exported = export_session_markdown(session, Path(directory) / "lecture.md")
+
+            self.assertIn("# Lecture", markdown)
+            self.assertIn("Kia ora, welcome.", markdown)
+            self.assertIn("## English translation", markdown)
+            self.assertIn("- Topic one", markdown)
+            self.assertIn("- Why?", markdown)
+            self.assertIn("## Speakers", markdown)
+            self.assertIn("Speaker 1: Dr. Mensah", markdown)
+            self.assertEqual(exported.read_text(encoding="utf-8"), markdown)
+
+    def test_export_never_overwrites_an_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("meeting")
+            target = Path(directory) / "meeting.md"
+            target.write_text("keep this", encoding="utf-8")
+
+            with self.assertRaises(FileExistsError):
+                export_session_markdown(session, target)
+            self.assertEqual(target.read_text(encoding="utf-8"), "keep this")
+
+    def test_markdown_renders_timestamped_speaker_segments_with_user_name(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(directory)
+            meeting = store.create("meeting")
+            meeting = store.update(
+                meeting.id,
+                source_transcript="Hello there.",
+                segments=[{
+                    "start_seconds": 2.125, "end_seconds": 3.0,
+                    "text": "Hello there.", "speaker_id": "speaker_1",
+                }],
+                outputs={"speaker_names": {"speaker_1": "Ama"}},
+            )
+
+            markdown = render_session_markdown(meeting)
+
+            self.assertIn("`00:00:02.125` **Ama:** Hello there.", markdown)
+
+    def test_audio_export_copies_retained_recording_and_refuses_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("meeting")
+            recording = b"RIFF" + b"\x00" * 40 + b"audio-data"
+            session.audio_path.write_bytes(recording)
+            target = Path(directory) / "meeting.wav"
+
+            exported = export_session_audio(session, target)
+
+            self.assertEqual(exported.read_bytes(), recording)
+            self.assertEqual(session.audio_path.read_bytes(), recording)
+            with self.assertRaises(FileExistsError):
+                export_session_audio(session, target)
+            self.assertEqual(target.read_bytes(), recording)
+
+    def test_audio_export_rejects_dictation_without_retained_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("dictation")
+
+            with self.assertRaises(FileNotFoundError):
+                export_session_audio(session, Path(directory) / "dictation.wav")
+
+
+if __name__ == "__main__":
+    unittest.main()

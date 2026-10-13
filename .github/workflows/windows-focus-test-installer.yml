@@ -67,10 +67,10 @@ jobs:
           $Installer = Get-ChildItem windows-app/src-tauri/target/release/bundle/nsis -Filter '*.exe' -File | Select-Object -First 1
           if (-not $Installer) { throw 'The focus-test installer could not be found.' }
           $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-          $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Whisper\Whisper.lnk'
+          $ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Wicx\Wicx.lnk'
           $UninstallRoot = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
-          Write-Host 'Starting silent Whisper setup.'
+          Write-Host 'Starting silent Wicx setup.'
           $Setup = Start-Process -FilePath $Installer.FullName -ArgumentList '/S' -PassThru
           if (-not $Setup.WaitForExit(90000)) {
             Stop-Process -Id $Setup.Id -Force -ErrorAction SilentlyContinue
@@ -78,16 +78,16 @@ jobs:
           }
           if ($Setup.ExitCode -ne 0) { throw "Silent setup failed with exit code $($Setup.ExitCode)." }
           Write-Host 'Silent setup completed; verifying registration and app launch.'
-          $AutoStart = (Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper
+          $AutoStart = (Get-ItemProperty -Path $RunKey -Name Wicx -ErrorAction SilentlyContinue).Wicx
           if (-not $AutoStart -or $AutoStart -notlike '*whisper-windows-ui.exe*') {
-            throw 'Setup did not register Whisper to start at sign-in.'
+            throw 'Setup did not register Wicx to start at sign-in.'
           }
           $AppPath = [regex]::Match($AutoStart, '^"([^"]+)"').Groups[1].Value
           if (-not $AppPath -or -not $AppPath.StartsWith($env:LOCALAPPDATA, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Setup did not install Whisper per-user under LOCALAPPDATA: $AutoStart"
+            throw "Setup did not install Wicx per-user under LOCALAPPDATA: $AutoStart"
           }
           if (-not (Test-Path -LiteralPath $AppPath -PathType Leaf)) {
-            throw "The installed Whisper executable is missing: $AppPath"
+            throw "The installed Wicx executable is missing: $AppPath"
           }
           if (-not (Test-Path -LiteralPath $ShortcutPath -PathType Leaf)) {
             throw "Setup did not create the Start menu shortcut: $ShortcutPath"
@@ -117,14 +117,14 @@ jobs:
 
           $UninstallEntry = Get-ChildItem -Path $UninstallRoot -ErrorAction SilentlyContinue |
             ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-            Where-Object { $_.DisplayName -eq 'Whisper' } |
+            Where-Object { $_.DisplayName -eq 'Wicx' } |
             Select-Object -First 1
-          if (-not $UninstallEntry) { throw 'Setup did not register Whisper for uninstall.' }
+          if (-not $UninstallEntry) { throw 'Setup did not register Wicx for uninstall.' }
           $Uninstaller = [regex]::Match($UninstallEntry.UninstallString, '^"([^"]+)"').Groups[1].Value
           if (-not $Uninstaller -or -not (Test-Path -LiteralPath $Uninstaller -PathType Leaf)) {
             throw 'The registered Whisper uninstaller could not be located.'
           }
-          Write-Host 'Starting silent Whisper uninstall.'
+          Write-Host 'Starting silent Wicx uninstall.'
           $Removal = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -PassThru
           if (-not $Removal.WaitForExit(90000)) {
             Stop-Process -Id $Removal.Id -Force -ErrorAction SilentlyContinue
@@ -144,7 +144,7 @@ jobs:
             Get-Process -Name 'whisper-windows-ui' -ErrorAction SilentlyContinue | ForEach-Object { Write-Host " lingering UI pid $($_.Id)" }
             throw 'Uninstall left the Whisper app executable behind.'
           }
-          if ((Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
+          if ((Get-ItemProperty -Path $RunKey -Name Wicx -ErrorAction SilentlyContinue).Wicx -or (Get-ItemProperty -Path $RunKey -Name Whisper -ErrorAction SilentlyContinue).Whisper) {
             throw 'Uninstall left Whisper in the Windows sign-in startup registry.'
           }
           Write-Host 'Focus-test per-user install, app launch, no-daemon safeguard, and uninstall passed.'

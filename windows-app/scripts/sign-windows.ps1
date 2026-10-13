@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
-    throw 'Tauri asked Whisper to sign a file that does not exist.'
+    throw 'Tauri asked Wicx to sign a file that does not exist.'
 }
 if (-not $env:WHISPER_SIGNING_THUMBPRINT) {
     throw 'Windows signing was requested, but no signing certificate was imported.'

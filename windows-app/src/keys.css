@@ -31,6 +31,47 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .key-heading-copy { min-width: 0; }
 .key-heading h1 { margin: 0; font-size: 19px; font-weight: 650; }
 .key-heading p { margin: 4px 0 0; color: #a5a6ae; font-size: 12px; }
+.account-settings { margin: 0 0 15px; padding: 13px; border: 1px solid #41424a; border-radius: 14px; background: #282930; }
+.rewrite-settings { margin-top: 12px; }
+.rewrite-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 8px; cursor: pointer; }
+.rewrite-toggle-row strong, .rewrite-toggle-row small { display: block; }
+.rewrite-toggle-row strong { font-size: 12px; }
+.rewrite-toggle-row small { margin-top: 3px; color: #a5a6ae; font-size: 11px; line-height: 1.4; }
+.rewrite-toggle-row input { flex: 0 0 auto; width: 18px; min-height: 18px; accent-color: #2878f0; }
+.account-settings h2 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+.account-intro, .account-help { margin: 0; color: #a5a6ae; font-size: 12px; line-height: 1.45; }
+.account-help[data-error="true"] { color: #ff8c8c; }
+.account-help { margin-top: 5px; font-size: 11px; }
+.account-url-row { display: flex; gap: 8px; }
+.account-url-row input { min-width: 0; }
+.account-url-row button { flex: 0 0 auto; min-height: 40px; padding: 0 13px; border-radius: 11px; font-weight: 600; cursor: pointer; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.account-actions button { min-height: 38px; padding: 0 11px; border-radius: 11px; font-weight: 600; cursor: pointer; }
+.account-actions [hidden] { display: none; }
+.subscription-summary { margin-top: 12px; padding-top: 10px; border-top: 1px solid #41424a; }
+.subscription-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.subscription-heading h3 { margin: 0; font-size: 13px; font-weight: 650; }
+.subscription-heading button { min-height: 29px; padding: 0 9px; border-radius: 9px; font-size: 11px; cursor: pointer; }
+.billing-features { display: flex; flex-wrap: wrap; gap: 6px; margin: 7px 0 0; padding: 0; list-style: none; }
+.billing-features:empty { display: none; }
+.billing-features li { padding: 4px 7px; border: 1px solid #41424a; border-radius: 8px; color: #a5a6ae; background: #303139; font-size: 11px; }
+.billing-features li[data-enabled="true"] { border-color: #2878f066; color: #a9c8ff; }
+.account-subscriptions { display: grid; gap: 7px; margin-top: 7px; }
+.account-subscriptions:empty { display: none; }
+.subscription-row { display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 8px; border: 1px solid #41424a; border-radius: 10px; background: #303139; }
+.subscription-row p { margin: 0; color: #c3c4cb; font-size: 11px; line-height: 1.4; }
+.subscription-row button { flex: 0 0 auto; min-height: 30px; padding: 0 9px; border-radius: 9px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.plans-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid #41424a; }
+.billing-plans { display: grid; gap: 7px; margin-top: 8px; }
+.billing-plans:empty { display: none; }
+.plan-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid #41424a; border-radius: 11px; background: #303139; }
+.plan-card-copy { min-width: 0; }
+.plan-card-name { margin: 0; color: #f4f4f6; font-size: 12px; font-weight: 650; }
+.plan-card-price { margin: 3px 0 0; color: #c3c4cb; font-size: 11px; }
+.plan-card-features { margin: 3px 0 0; color: #9697a0; font-size: 10px; }
+.plan-card button { flex: 0 0 auto; min-height: 31px; padding: 0 9px; border-radius: 9px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.checkout-form { margin-top: 10px; padding-top: 9px; border-top: 1px solid #41424a; }
+.checkout-form[hidden] { display: none; }
 .key-label { display: block; margin: 10px 0 4px; color: #d5d5db; font-size: 13px; font-weight: 600; }
 select, input {
   width: 100%;
