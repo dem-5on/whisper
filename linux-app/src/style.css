@@ -275,3 +275,21 @@ h1,h2,h3,p { margin-top:0; }
   .right-rail { grid-template-rows:auto auto; }
   .update-footer { grid-column:auto; }
 }
+
+/* First-run shortcut setup */
+.setup-steps { display:grid; gap:14px; margin-bottom:18px; }
+.setup-step { padding:16px 18px; border:1px solid #eaecf0; border-radius:15px; background:#fff; box-shadow:0 4px 16px #14204105; }
+.setup-step-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.setup-step-number { display:grid; width:28px; height:28px; flex:none; place-items:center; border-radius:50%; color:#fff; background:linear-gradient(145deg,#4c78f0,#2859df); font-size:13px; font-weight:700; }
+.setup-step-head h2 { margin:0; font-size:16px; }
+.setup-step-head p { margin:2px 0 0; color:#878d97; font-size:12px; }
+.capture-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.capture-display { min-width:140px; padding:8px 12px; border:1px solid #e5e7eb; border-radius:8px; color:#333943; background:#f8f9fb; font:600 13px ui-monospace,monospace; }
+.capture-display.capture-empty { color:#a5a9b0; font-weight:400; }
+.capture-display.capturing { border-color:#4c78f0; color:#2859df; background:#eef3ff; animation:capture-pulse 1s infinite; }
+@keyframes capture-pulse { 50% { box-shadow:0 0 0 4px #3261e722; } }
+.capture-hint { margin:8px 0 0; color:#9298a1; font-size:11px; }
+.capture-error { margin:8px 0 0; color:#b3261e; font-size:11px; font-weight:600; }
+.setup-consent { display:flex; gap:10px; align-items:flex-start; margin:4px 0 16px; padding:12px 14px; border:1px solid #e5e7eb; border-radius:10px; background:#f8f9fb; font-size:12px; color:#596170; }
+.setup-actions { display:flex; align-items:center; gap:14px; margin-top:4px; }
+.setting-row .secondary-button { flex:none; }

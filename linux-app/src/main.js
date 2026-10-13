@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import appInfo from "../package.json";
 import "./style.css";
@@ -27,6 +28,8 @@ const ui = {
   updateTitle: document.querySelector("#update-title"),
   updateMessage: document.querySelector("#update-message"),
   updateReleaseLink: document.querySelector("#update-release-link"),
+  setupSave: document.querySelector("#setup-save"),
+  setupConsent: document.querySelector("#setup-consent"),
 };
 
 const currentVersion = String(appInfo.version);
@@ -539,7 +542,267 @@ ui.rewrite.addEventListener("change", async () => {
 void refreshMicrophones().catch((error) => { if (!preview) notify(error.message, true); });
 ui.updateButton.addEventListener("click", () => void checkForUpdates());
 void loadActivityStats();
+
+// ---- Global shortcut setup (first-run page, order: Dictation, Meeting, Lecture)
+
+const SHORTCUT_ACTIONS = ["dictation", "meeting", "lecture"];
+const SHORTCUT_DEFAULTS = {
+  dictation: { display: "Alt + Space", accelerator: "Alt+Space" },
+  meeting: { display: "", accelerator: null },
+  lecture: { display: "", accelerator: null },
+};
+let mockShortcuts = {
+  bindings: {
+    dictation: { display: "Right Alt", accelerator: "Alt", register_error: null },
+    meeting: { display: "", accelerator: null, register_error: null },
+    lecture: { display: "", accelerator: null, register_error: null },
+  },
+  long_consent: false,
+  setup_completed: false,
+};
+let shortcutDraft = JSON.parse(JSON.stringify(SHORTCUT_DEFAULTS));
+let capturingAction = null;
+let pressedCodes = new Set();
+
+async function shortcutInvoke(command, params = {}) {
+  if (!preview) return invoke(command, params);
+  await new Promise((resolve) => window.setTimeout(resolve, 60));
+  if (command === "get_shortcuts") return JSON.parse(JSON.stringify(mockShortcuts));
+  if (command === "set_shortcut") {
+    const { action, display, accelerator } = params;
+    mockShortcuts.bindings[action] = {
+      display: accelerator ? display : "",
+      accelerator: accelerator || null,
+      register_error: null,
+    };
+    return JSON.parse(JSON.stringify(mockShortcuts));
+  }
+  if (command === "set_long_consent") {
+    mockShortcuts.long_consent = params.consented === true;
+    return { long_consent: mockShortcuts.long_consent };
+  }
+  if (command === "complete_setup") {
+    mockShortcuts.setup_completed = true;
+    return { setup_completed: true };
+  }
+  throw new Error("Unsupported shortcut action.");
+}
+
+function codeToKeyName(code) {
+  if (code === "Space") return { display: "Space", code: "Space" };
+  if (/^Key[A-Z]$/.test(code)) return { display: code.slice(3), code };
+  if (/^Digit[0-9]$/.test(code)) return { display: code.slice(5), code };
+  if (/^F\d{1,2}$/.test(code)) return { display: code, code };
+  const map = {
+    Tab: "Tab", CapsLock: "CapsLock", Backquote: "`", Minus: "-", Equal: "=",
+    BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";",
+    Quote: "'", Comma: ",", Period: ".", Slash: "/", Insert: "Insert",
+    Delete: "Delete", Home: "Home", End: "End", PageUp: "PageUp",
+    PageDown: "PageDown", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left",
+    ArrowRight: "Right", PrintScreen: "PrintScreen", ScrollLock: "ScrollLock", Pause: "Pause",
+  };
+  return map[code] ? { display: map[code], code } : null;
+}
+
+function describeCapture() {
+  const mods = [];
+  let rightAlt = false;
+  let leftAlt = false;
+  for (const code of pressedCodes) {
+    if (code === "AltRight") rightAlt = true;
+    else if (code === "AltLeft") leftAlt = true;
+    else if (code === "ControlLeft" || code === "ControlRight") mods.push({ display: "Ctrl", code: "Control" });
+    else if (code === "ShiftLeft" || code === "ShiftRight") mods.push({ display: "Shift", code: "Shift" });
+    else if (code === "MetaLeft" || code === "MetaRight") mods.push({ display: "Super", code: "Super" });
+  }
+  const mains = [...pressedCodes].map(codeToKeyName).filter(Boolean);
+  return { mods, rightAlt, leftAlt, mains };
+}
+
+function renderCapture(action, interim) {
+  const display = document.querySelector(`#capture-${action}`);
+  const error = document.querySelector(`#error-${action}`);
+  if (!display) return;
+  if (interim) {
+    display.textContent = interim;
+    display.classList.add("capturing");
+    if (error) error.hidden = true;
+    return;
+  }
+  display.classList.remove("capturing");
+  const draft = shortcutDraft[action];
+  display.textContent = draft.display || "Not set";
+  display.classList.toggle("capture-empty", !draft.display);
+  if (error) error.hidden = true;
+}
+
+function captureError(action, message) {
+  const error = document.querySelector(`#error-${action}`);
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = false;
+}
+
+function tryCommitCapture() {
+  if (!capturingAction) return;
+  const action = capturingAction;
+  const { mods, rightAlt, leftAlt, mains } = describeCapture();
+  const main = mains[0];
+  if (!main) {
+    if (rightAlt && !leftAlt && mods.length === 0) {
+      captureError(action, "Right Alt alone cannot be grabbed by apps. Press Alt+Space or a combo, or bind Right Alt in desktop settings (link below).");
+      renderCapture(action, "Right Alt + …");
+      return;
+    }
+    const parts = [];
+    if (leftAlt) parts.push("Left Alt");
+    if (rightAlt) parts.push("Right Alt");
+    for (const mod of mods) parts.push(mod.display);
+    if (parts.length > 0) {
+      renderCapture(action, `${parts.join(" + ")} + …`);
+      if (leftAlt && !rightAlt && mods.length === 0) {
+        captureError(action, "Left Alt alone breaks app menus. Add another key, or press Right Alt instead.");
+      }
+    }
+    return;
+  }
+  const displays = [];
+  const codes = [];
+  if (rightAlt || leftAlt) {
+    displays.push("Alt");
+    codes.push("Alt");
+  }
+  for (const mod of mods) {
+    displays.push(mod.display);
+    codes.push(mod.code);
+  }
+  displays.push(main.display);
+  codes.push(main.code);
+  shortcutDraft[action] = { display: displays.join(" + "), accelerator: codes.join("+") };
+  capturingAction = null;
+  pressedCodes.clear();
+  renderCapture(action, null);
+}
+
+function startCapture(action) {
+  capturingAction = action;
+  pressedCodes.clear();
+  renderCapture(action, "Press keys… (Esc cancels)");
+}
+
+document.addEventListener("keydown", (event) => {
+  if (!capturingAction) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.code === "Escape") {
+    const action = capturingAction;
+    capturingAction = null;
+    pressedCodes.clear();
+    renderCapture(action, null);
+    return;
+  }
+  if (event.repeat) return;
+  if ((event.code === "Backspace" || event.code === "Delete") && pressedCodes.size === 0) {
+    shortcutDraft[capturingAction] = { display: "", accelerator: null };
+    const action = capturingAction;
+    capturingAction = null;
+    renderCapture(action, null);
+    return;
+  }
+  pressedCodes.add(event.code);
+  tryCommitCapture();
+}, true);
+
+document.addEventListener("keyup", (event) => {
+  if (capturingAction) pressedCodes.delete(event.code);
+}, true);
+
+document.querySelectorAll("[data-capture]").forEach((button) => {
+  button.addEventListener("click", () => startCapture(button.dataset.capture));
+});
+document.querySelectorAll("[data-clear]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.clear;
+    shortcutDraft[action] = { display: "", accelerator: null };
+    renderCapture(action, null);
+  });
+});
+
+function renderShortcutState(state) {
+  for (const action of SHORTCUT_ACTIONS) {
+    const entry = state.bindings?.[action];
+    if (entry && (entry.display || entry.accelerator)) {
+      shortcutDraft[action] = { display: entry.display || "", accelerator: entry.accelerator || null };
+    }
+    renderCapture(action, null);
+    const error = document.querySelector(`#error-${action}`);
+    const registerError = entry?.register_error;
+    if (error && registerError) {
+      error.textContent = registerError;
+      error.hidden = false;
+    }
+  }
+  if (ui.setupConsent) ui.setupConsent.checked = state.long_consent === true;
+}
+
+async function saveShortcuts() {
+  const usesLongMode = ["meeting", "lecture"].some((action) => shortcutDraft[action].accelerator);
+  if (usesLongMode && !(ui.setupConsent && ui.setupConsent.checked)) {
+    notify("Check the recording-consent box to enable Meeting or Lecture shortcuts.", true);
+    return;
+  }
+  const seen = new Map();
+  for (const action of SHORTCUT_ACTIONS) {
+    const accelerator = shortcutDraft[action].accelerator;
+    if (!accelerator) continue;
+    const key = accelerator.toUpperCase();
+    if (seen.has(key)) {
+      captureError(action, `Same shortcut as ${seen.get(key)}. Press a different combination.`);
+      notify("Two modes share one shortcut. Give each its own.", true);
+      return;
+    }
+    seen.set(key, action);
+  }
+  try {
+    let state = null;
+    for (const action of SHORTCUT_ACTIONS) {
+      state = await shortcutInvoke("set_shortcut", {
+        action,
+        display: shortcutDraft[action].display || "",
+        accelerator: shortcutDraft[action].accelerator,
+      });
+    }
+    if (usesLongMode) await shortcutInvoke("set_long_consent", { consented: true });
+    renderShortcutState(state);
+    const refused = SHORTCUT_ACTIONS.filter((action) => state.bindings?.[action]?.register_error);
+    if (refused.length > 0) {
+      notify(`Saved, but the system refused: ${refused.join(", ")}. Use the desktop-settings fallback for those.`, true);
+      return;
+    }
+    await shortcutInvoke("complete_setup", {});
+    notify("Shortcuts saved. Press them anywhere to record.");
+    openPage("home");
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
+}
+
+if (ui.setupSave) ui.setupSave.addEventListener("click", () => void saveShortcuts());
+
+async function bootShortcuts() {
+  try {
+    const state = await shortcutInvoke("get_shortcuts", {});
+    renderShortcutState(state);
+    if (state.setup_completed !== true) openPage("setup");
+  } catch (error) {
+    if (!preview) notify("Could not load keyboard shortcuts.", true);
+  }
+}
+
 if (!preview) {
-  window.clearTimeout(statusTimer);
-  void pollStatus();
-} else void refreshStatus();
+  listen("shortcut-needs-consent", (event) => {
+    const mode = String(event.payload || "");
+    if (mode === "lecture" || mode === "meeting") beginSession(mode);
+  }).catch(() => {});
+}
+void bootShortcuts();

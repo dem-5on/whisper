@@ -15,7 +15,7 @@ The first row records hands-on validation on 2026-10-13: real microphone recordi
 
 ## Current implementation notes
 
-- Linux shortcut setup currently asks the user to register `wicx toggle` with their desktop's custom keyboard-shortcut settings. Do not assume one global-shortcut API works across all compositors.
+- Linux shortcut setup is a first-run page (Dictation, then Meeting, then Lecture) with a press-to-capture box, same-key start/stop, and a recording-consent gate for long modes. Global registration goes through the system shortcut API with a per-step fallback to desktop custom-shortcut commands (`wicx toggle`, `wicx start-session --mode lecture|meeting --consent`, `wicx stop-session`). A bare modifier alone cannot be grabbed by apps, so the working default is Alt+Space; Right Alt alone stays available through desktop settings. Do not assume one global-shortcut API works across all compositors.
 - The app tries XWayland when a Wayland session also exposes `DISPLAY`, unless the user explicitly sets `GDK_BACKEND`. Without XWayland, the compositor may ignore absolute coordinates requested for the pill; placement must be verified per compositor.
 - PipeWire device enumeration is not the same as recording permission or successful capture. Test the actual selected input and waveform with the user's consent before marking audio capture verified.
 - The pill-position arithmetic has unit coverage for centering, negative monitor origins, and display scaling. Those tests do not prove that a compositor honors the requested position.

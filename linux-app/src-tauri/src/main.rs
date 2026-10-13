@@ -9,6 +9,9 @@ use std::{
 
 use serde_json::{json, Map, Value};
 use tauri::{Emitter, Manager, PhysicalPosition};
+use tauri_plugin_global_shortcut::ShortcutState;
+
+mod shortcuts;
 
 fn daemon_socket() -> PathBuf {
     if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
@@ -61,11 +64,17 @@ fn daemon_request(command: String, params: Option<Value>) -> Result<Value, Strin
         return Err("That Wicx action is not supported.".to_string());
     }
 
+    let params = match params {
+        Some(Value::Object(values)) => values,
+        _ => Map::new(),
+    };
+    send_daemon(&command, params)
+}
+
+pub fn send_daemon(command: &str, params: Map<String, Value>) -> Result<Value, String> {
     let mut payload = Map::new();
     payload.insert("command".into(), json!(command));
-    if let Some(Value::Object(values)) = params {
-        payload.extend(values.into_iter().filter(|(key, _)| key != "command"));
-    }
+    payload.extend(params.into_iter().filter(|(key, _)| key != "command"));
 
     let socket = daemon_socket();
     let mut stream = UnixStream::connect(&socket).map_err(|_| {
@@ -154,9 +163,27 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .manage(shortcuts::ShortcutState_::new())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() == ShortcutState::Pressed {
+                        shortcuts::handle_press(app, shortcut);
+                    }
+                })
+                .build(),
+        )
+        .setup(|app| {
+            shortcuts::init(&app.handle())?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             daemon_request,
-            update_recording_pill
+            update_recording_pill,
+            shortcuts::get_shortcuts,
+            shortcuts::set_shortcut,
+            shortcuts::set_long_consent,
+            shortcuts::complete_setup
         ])
         .run(tauri::generate_context!())
         .expect("error while running Wicx Linux desktop app");
