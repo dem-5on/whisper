@@ -84,11 +84,15 @@ Validate microphone capture, desktop shortcut setup, non-activating pill placeme
 
 **Acceptance:** A published compatibility matrix records tested combinations and known limitations. Recording, cancel/finish, audio-derived waveform, processing states, and text insertion pass on every combination advertised as supported.
 
+**Current evidence (2026-10-13):** The `linux` branch now has `linux-app/COMPATIBILITY.md`. On Kali GNOME 50.4 / Wayland with XWayland and PipeWire 1.6.9, the frontend build, Rust check/format, and three pure pill-position tests pass; a read-only check found the default audio source. No microphone recording, overlay interaction, global shortcut, or focused-app insertion test was performed, so this is partial validation only. X11-only and KDE/Xfce/Cinnamon combinations remain untested.
+
 ### P1.2 Windows native flow and installer `[~]`
 
 Complete Windows global shortcut/tray behavior, preserve target-app focus while using the overlay, ensure the transcription sidecar is present and starts reliably, and verify install/uninstall/update behavior.
 
 **Acceptance:** A clean Windows machine can install, launch, dictate into another app, cancel/finish, upgrade, and uninstall using the supported installer. No missing-sidecar or focus-stealing failure remains.
+
+**Current evidence (2026-10-13):** The Windows-specific Python test set passes on `windows` (three skips). Clean Windows install, focus, sidecar, and uninstall checks still need to be run on Windows hardware.
 
 ### P1.3 Dictation rewrite end to end `[~]`
 
