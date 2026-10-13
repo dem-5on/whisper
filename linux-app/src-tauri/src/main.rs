@@ -183,6 +183,8 @@ fn main() {
             shortcuts::get_shortcuts,
             shortcuts::set_shortcut,
             shortcuts::set_long_consent,
+            shortcuts::set_role,
+            shortcuts::set_shortcut_test,
             shortcuts::complete_setup
         ])
         .run(tauri::generate_context!())

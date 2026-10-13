@@ -306,3 +306,33 @@ h1,h2,h3,p { margin-top:0; }
 .summary-row code { padding:5px 9px; border-radius:6px; color:#333943; background:#f8f9fb; font-size:12px; }
 .setup-fallback { margin-top:10px; }
 #setup-mics { margin-bottom:6px; }
+
+/* Walkthrough: breadcrumb, test keys, mic test, roles, exercise */
+.setup-crumb { display:flex; gap:10px; align-items:center; margin-bottom:14px; color:#9298a1; font-size:12px; font-weight:600; }
+.setup-crumb .selected { color:#242831; }
+.test-key-visual { display:flex; justify-content:center; margin:6px 0 10px; }
+.test-keycap { min-width:120px; padding:14px 22px; text-align:center; border:2px solid #dfe3e8; border-radius:12px; background:#fff; font-size:17px; font-weight:700; transition:border-color .15s, background .15s; }
+.test-keycap.lit { border-color:#2859df; background:#e4ecff; }
+.mic-test-bars { display:flex; height:44px; align-items:center; justify-content:center; gap:3px; margin:10px 0 14px; padding:8px; border:1px solid #eaecf0; border-radius:12px; background:#fff; }
+.mic-test-bars span { width:5px; height:3px; border-radius:4px; background:#c9ced6; }
+.mic-test-bars span.hot { background:#2859df; }
+.role-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:6px; }
+.role-chip { padding:12px 8px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:13px; font-weight:600; cursor:pointer; }
+.role-chip.selected { border-color:#2859df; background:#eef3ff; color:#2859df; }
+.privacy-points { display:grid; gap:12px; margin:6px 0 18px; }
+.privacy-point { display:flex; gap:12px; padding:14px; border:1px solid #eaecf0; border-radius:12px; background:#fff; }
+.privacy-point strong { display:block; font-size:14px; }
+.privacy-point small { color:#737a85; font-size:12px; }
+.setup-center { display:grid; justify-items:center; gap:14px; padding:30px 0; text-align:center; }
+.setup-big { margin:0; font-size:40px; font-weight:500; color:#6f7782; }
+.setup-big strong { color:#17181b; font-weight:800; }
+.exercise-card { padding:16px 18px; border:1px solid #eaecf0; border-radius:15px; background:#fff; }
+.exercise-instruction { margin:0 0 12px; color:#424851; font-size:13px; }
+.exercise-sample { margin:0 0 12px; padding-left:12px; border-left:3px solid #e5e7eb; font-size:15px; font-style:italic; }
+.exercise-box { width:100%; box-sizing:border-box; padding:12px; border:1px solid #e5e7eb; border-radius:10px; font:400 14px inherit; resize:vertical; }
+.exercise-note { color:#1a7f37; font-size:12px; font-weight:600; }
+.summary-cards { display:grid; gap:10px; width:min(420px, 100%); }
+.summary-card { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-radius:14px; background:linear-gradient(180deg,#e8efff,#f7f9ff); font-size:16px; }
+.summary-card code { padding:6px 12px; border:1px solid #d5dbea; border-radius:8px; background:#fff; font-size:13px; }
+.kbd-chip { padding:4px 10px; border:1px solid #d5dbea; border-radius:8px; background:#f4f6fb; font-size:13px; }
+.setup-backrow { width:100%; text-align:left; }

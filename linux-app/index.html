@@ -30,16 +30,49 @@
       </aside>
 
       <main class="workspace">
-        <section class="page" id="page-setup" hidden><div class="page-intro"><div><p class="eyebrow">FIRST-RUN SETUP</p><h1 id="setup-title">Choose your shortcuts</h1><p id="setup-subtitle">Press a key or combination for each mode, in order. The same key starts and stops recording.</p></div><ol class="setup-progress"><li class="selected" data-setup-progress="1">Shortcuts</li><li data-setup-progress="2">Microphone</li><li data-setup-progress="3">Done</li></ol></div>
-        <div class="setup-step-page" data-setup-page="1">
-        <div class="setup-steps">
-          <article class="setup-step" data-shortcut-step="dictation"><div class="setup-step-head"><span class="setup-step-number">1</span><div><h2>Dictation</h2><p>Speak into whatever app you're using.</p></div></div><div class="capture-row"><code class="capture-display" id="capture-dictation">Right Alt</code><button class="secondary-button" data-capture="dictation" type="button">Press keys…</button><button class="quiet-link" data-clear="dictation" type="button">Clear</button></div><p class="capture-hint">Default: Right Alt — press it alone. Like Typeless, it works anywhere on Linux.</p><p class="capture-error" id="error-dictation" hidden></p></article>
-          <article class="setup-step" data-shortcut-step="meeting"><div class="setup-step-head"><span class="setup-step-number">2</span><div><h2>Meeting</h2><p>Capture a discussion with speaker labels and outcomes.</p></div></div><div class="capture-row"><code class="capture-display capture-empty" id="capture-meeting">Not set</code><button class="secondary-button" data-capture="meeting" type="button">Press keys…</button><button class="quiet-link" data-clear="meeting" type="button">Clear</button></div><p class="capture-hint">Optional. For example Alt+M. Skipping leaves the Record button in the app.</p><p class="capture-error" id="error-meeting" hidden></p></article>
-          <article class="setup-step" data-shortcut-step="lecture"><div class="setup-step-head"><span class="setup-step-number">3</span><div><h2>Lecture</h2><p>Capture a class with audio and transcript together.</p></div></div><div class="capture-row"><code class="capture-display capture-empty" id="capture-lecture">Not set</code><button class="secondary-button" data-capture="lecture" type="button">Press keys…</button><button class="quiet-link" data-clear="lecture" type="button">Clear</button></div><p class="capture-hint">Optional. For example Alt+L. Skipping leaves the Record button in the app.</p><p class="capture-error" id="error-lecture" hidden></p></article>
-        </div><label class="consent-check setup-consent"><input id="setup-consent" type="checkbox" /><span>For lectures and meetings: I understand I must inform everyone who may be recorded. Shortcut starts need this checked.</span></label><div class="dialog-actions setup-actions"><span></span><button class="primary-button" id="setup-next-1" type="button">Continue →</button></div><p class="shortcut-footnote">If your desktop refuses a global shortcut, that step reports it and the desktop-settings fallback still works.</p>
+        <section class="page" id="page-setup" hidden><div class="setup-crumb"><span data-phase="welcome">Welcome</span><span>›</span><span data-phase="setup">Set up</span><span>›</span><span data-phase="experience">Experience it</span></div><div class="page-intro"><div><p class="eyebrow" id="setup-eyebrow">FIRST-RUN SETUP</p><h1 id="setup-title">Choose your shortcuts</h1><p id="setup-subtitle">Press a key or combination for each mode, in order. The same key starts and stops recording.</p></div><ol class="setup-progress" id="setup-progress" hidden></ol></div>
+        <div class="setup-step-page" data-setup-page="welcome">
+          <h2 class="setup-h2">Thanks for trusting us, we value your privacy</h2>
+          <div class="privacy-points">
+            <div class="privacy-point"><span>◉</span><div><strong>Your voice stays on this device</strong><small>Local dictation is transcribed on your computer. Audio is never stored by us.</small></div></div>
+            <div class="privacy-point"><span>◉</span><div><strong>Cloud features are opt-in</strong><small>Rewriting and long-form analysis run only with a subscription, and only on what you send.</small></div></div>
+            <div class="privacy-point"><span>◉</span><div><strong>Your history is yours</strong><small>Recordings and transcripts live on this device until you delete or export them.</small></div></div>
+          </div>
+          <div class="dialog-actions setup-actions"><span></span><button class="primary-button" data-setup-go="shortcuts" type="button">Continue</button></div>
         </div>
-        <div class="setup-step-page" data-setup-page="2" hidden><h2 class="setup-h2">Choose your microphone</h2><p class="setup-lead">Wicx listens to this input for every mode. You can change it later in the side panel.</p><div class="mic-options" id="setup-mics"><div class="empty-state">Loading microphones…</div></div><div class="dialog-actions setup-actions"><button class="secondary-button" id="setup-back-2" type="button">← Back</button><button class="primary-button" id="setup-next-2" type="button">Continue →</button></div></div>
-        <div class="setup-step-page" data-setup-page="3" hidden><h2 class="setup-h2">You're ready</h2><div class="setup-summary" id="setup-summary"></div><div class="dialog-actions setup-actions"><button class="secondary-button" id="setup-back-3" type="button">← Back</button><button class="primary-button" id="setup-save" type="button">Start using Wicx</button></div><div class="setup-fallback"><button class="quiet-link" data-shortcut-help type="button">Prefer desktop settings? Use the manual fallback →</button></div></div>
+        <div class="setup-step-page" data-setup-page="shortcuts" hidden>
+          <div id="shortcut-tests"></div>
+          <label class="consent-check setup-consent"><input id="setup-consent" type="checkbox" /><span>For lectures and meetings: I understand I must inform everyone who may be recorded. Shortcut starts need this checked.</span></label>
+          <div class="dialog-actions setup-actions"><button class="secondary-button" data-setup-go="welcome" type="button">← Back</button><button class="primary-button" id="setup-shortcuts-next" type="button" disabled>Continue →</button></div>
+          <p class="shortcut-footnote">If your desktop refuses a global shortcut, that step reports it and the desktop-settings fallback still works. <button class="quiet-link" data-shortcut-help type="button">Manual fallback →</button></p>
+        </div>
+        <div class="setup-step-page" data-setup-page="mic" hidden>
+          <h2 class="setup-h2">Speak to test your microphone</h2>
+          <p class="setup-lead">Your selected input should respond while you speak. Do you see the blue bars moving?</p>
+          <div class="mic-test-bars" id="mic-test-bars" aria-hidden="true"></div>
+          <div class="mic-options" id="setup-mics"><div class="empty-state">Loading microphones…</div></div>
+          <p class="capture-error" id="mic-test-error" hidden></p>
+          <div class="dialog-actions setup-actions"><button class="secondary-button" data-setup-go="shortcuts" type="button">← Back</button><button class="secondary-button" id="mic-test-btn" type="button">Test microphone</button><button class="primary-button" id="mic-test-yes" type="button" disabled>Yes, continue</button></div>
+        </div>
+        <div class="setup-step-page" data-setup-page="role" hidden>
+          <h2 class="setup-h2">Which option best describes your role?</h2>
+          <p class="setup-lead">We add a small starter vocabulary for your field. You can edit it anytime in Dictionary.</p>
+          <div class="role-grid" id="role-grid"></div>
+          <div class="dialog-actions setup-actions"><button class="secondary-button" data-setup-go="mic" type="button">← Back</button><button class="primary-button" id="role-continue" type="button" disabled>Continue</button></div>
+        </div>
+        <div class="setup-step-page" data-setup-page="intro" hidden>
+          <div class="setup-center"><h1 class="setup-big">Now, <strong>Dictate</strong></h1><p class="setup-lead">You will read one brief sample into the box.</p><button class="primary-button" data-setup-go="exercise" type="button">Continue</button></div>
+        </div>
+        <div class="setup-step-page" data-setup-page="exercise" hidden>
+          <h2 class="setup-h2">Dictate <code class="kbd-chip">Right Alt</code></h2>
+          <p class="setup-lead">Dictate the message into the textbox.</p>
+          <div class="exercise-card"><p class="exercise-instruction">Click in the box, press Right Alt once, read the message below, and press Right Alt again to insert your words.</p><p class="exercise-sample">Um, hey, can we, like, move the standup to 9? Uh, actually no, 9 doesn't really work for me, so, yeah, let's just do 9:30.</p><textarea class="exercise-box" id="exercise-box" rows="4" placeholder="Click here, then press Right Alt and start speaking…"></textarea></div>
+          <p class="exercise-note" id="exercise-note" hidden>Your words landed exactly as spoken. Rewriting can polish them later when you enable it.</p>
+          <div class="dialog-actions setup-actions"><button class="secondary-button" data-setup-go="intro" type="button">← Back</button><button class="primary-button" id="exercise-continue" type="button" disabled>Continue</button></div>
+        </div>
+        <div class="setup-step-page" data-setup-page="summary" hidden>
+          <div class="setup-center"><h1 class="setup-big">Speak, <strong>don't type</strong></h1><div class="summary-cards" id="setup-summary-cards"></div><button class="primary-button" id="setup-finish" type="button">Let's go</button></div>
+        </div>
         </section>
         <section class="page active" id="page-home">
           <div class="home-heading"><div><h1>Speak, don't type.</h1><p class="lead">Turn your thoughts into clear words, notes, and ideas.</p></div><div class="greeting-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div>

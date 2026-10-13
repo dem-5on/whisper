@@ -35,6 +35,7 @@ pub struct ShortcutState_ {
     errors: Mutex<HashMap<String, String>>,
     monitored: Mutex<HashSet<PathBuf>>,
     monitor_error: Mutex<Option<String>>,
+    test_mode: Mutex<bool>,
 }
 
 impl ShortcutState_ {
@@ -43,6 +44,7 @@ impl ShortcutState_ {
             errors: Mutex::new(HashMap::new()),
             monitored: Mutex::new(HashSet::new()),
             monitor_error: Mutex::new(None),
+            test_mode: Mutex::new(false),
         }
     }
 
@@ -85,6 +87,7 @@ fn default_store() -> Value {
         "version": 1,
         "setup_completed": false,
         "long_consent": false,
+        "role": "",
         "bindings": {
             "dictation": {"display": "Right Alt", "accelerator": "RightAlt"},
             "meeting": {"display": "", "accelerator": null},
@@ -117,6 +120,9 @@ fn load_store() -> Value {
         }
         if let Some(done) = parsed.get("setup_completed").and_then(Value::as_bool) {
             map.insert("setup_completed".into(), json!(done));
+        }
+        if let Some(role) = parsed.get("role").and_then(Value::as_str) {
+            map.insert("role".into(), json!(role));
         }
     }
     store
@@ -231,7 +237,18 @@ fn register_all(app: &AppHandle) {
     }
 }
 
+fn test_mode_on(app: &AppHandle) -> bool {
+    app.try_state::<ShortcutState_>()
+        .and_then(|s| s.test_mode.lock().ok().map(|flag| *flag))
+        .unwrap_or(false)
+}
+
 fn fire_action(app: &AppHandle, action: &str) {
+    if test_mode_on(app) {
+        // Setup key test: light the UI key without recording anything.
+        let _ = app.emit("shortcut-test-press", action);
+        return;
+    }
     let result = match action {
         "dictation" => send_daemon("toggle", Map::new()),
         "meeting" | "lecture" => toggle_long_session(app, action),
@@ -449,6 +466,7 @@ pub fn get_shortcuts(app: AppHandle) -> Result<Value, String> {
         "bindings": bindings,
         "long_consent": store.get("long_consent").and_then(Value::as_bool).unwrap_or(false),
         "setup_completed": store.get("setup_completed").and_then(Value::as_bool).unwrap_or(false),
+        "role": store.get("role").and_then(Value::as_str).unwrap_or(""),
     }))
 }
 
@@ -493,6 +511,55 @@ pub fn set_long_consent(consented: bool) -> Result<Value, String> {
     }
     save_store(&store)?;
     Ok(json!({"long_consent": consented}))
+}
+
+fn starter_pack(role: &str) -> &'static [&'static str] {
+    match role {
+        "student" => &["syllabus", "midterm", "thesis", "campus", "GPA"],
+        "engineering" => &["API", "GitHub", "TypeScript", "deploy", "dataset"],
+        "writer" => &["manuscript", "chapter", "editor", "deadline", "draft"],
+        "healthcare" => &["diagnosis", "prescription", "dosage", "referral", "symptoms"],
+        "legal" => &["contract", "clause", "plaintiff", "settlement", "affidavit"],
+        "finance" => &["invoice", "ledger", "dividend", "forecast", "amortization"],
+        "educator" => &["curriculum", "assignment", "rubric", "enrollment", "classroom"],
+        "marketing" => &["campaign", "SEO", "conversion", "brand", "analytics"],
+        "sales" => &["pipeline", "quota", "prospect", "CRM", "discount"],
+        "creator" => &["thumbnail", "upload", "subscribers", "episode", "sponsor"],
+        _ => &[],
+    }
+}
+
+#[tauri::command]
+pub fn set_role(role: String) -> Result<Value, String> {
+    let role = role.trim().to_lowercase();
+    if role.is_empty() || role.len() > 40 {
+        return Err("Pick a role to continue.".to_string());
+    }
+    let mut store = load_store();
+    if let Some(map) = store.as_object_mut() {
+        map.insert("role".into(), json!(role));
+    }
+    save_store(&store)?;
+    let mut seeded = 0;
+    for term in starter_pack(&role) {
+        let mut params = Map::new();
+        params.insert("action".into(), json!("add"));
+        params.insert("term".into(), json!(term));
+        if send_daemon("dictionary", params).is_ok() {
+            seeded += 1;
+        }
+    }
+    Ok(json!({"role": role, "seeded": seeded}))
+}
+
+#[tauri::command]
+pub fn set_shortcut_test(app: AppHandle, active: bool) -> Result<Value, String> {
+    if let Some(state) = app.try_state::<ShortcutState_>() {
+        if let Ok(mut flag) = state.test_mode.lock() {
+            *flag = active;
+        }
+    }
+    Ok(json!({"shortcut_test": active}))
 }
 
 #[tauri::command]
