@@ -6,12 +6,12 @@ Wicx is built with Linux desktop environments in mind, but “Linux” does not 
 
 | Distribution / session | Audio stack | Frontend build | Rust/Tauri checks | Audio and overlay runtime | Focused-app insertion | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Kali Linux x86_64, GNOME 50.4, Wayland with XWayland available | PipeWire 1.6.9; default built-in analog source visible | Pass (`npm run build --ignore-scripts`) | Pass (`cargo check`; `cargo fmt --check`; three pill-position unit tests) | Device enumeration confirmed read-only; no recording or interactive overlay test performed | Not tested | **Partial validation only** |
+| Kali Linux x86_64, GNOME 50.4, Wayland with XWayland available | PipeWire 1.6.9; Built-in Audio Analog Stereo capture verified | Pass (`npm run build --ignore-scripts`) | Pass (`cargo check`; `cargo fmt --check`; three pill-position unit tests) | Daemon 2026.10.10 reinstalled; recording → cloud transcription → focused-app delivery verified; pill waveform live at ~8.6Hz after PipeWire latency fix; pill cancel/finish mechanics verified | Verified via `ydotool` keyboard backend on this box | **Partial validation only** |
 | GNOME on X11 | Not tested | — | — | Not tested | Not tested | Untested |
 | KDE Plasma on Wayland / X11 | Not tested | — | — | Not tested | Not tested | Untested |
 | Xfce, Cinnamon, and other desktops | Not tested | — | — | Not tested | Not tested | Untested |
 
-The first row records the environment available during the initial engineering check; it does **not** certify the full end-to-end experience. The app was already running during process inspection. We did not trigger recording, capture microphone audio, move the visible pill, or test text insertion.
+The first row records hands-on validation on 2026-10-13: real microphone recording, cloud transcription and delivery into the focused app, pill waveform/cancel/finish behavior, and insertion all exercised. Still open on this combination: pill Thinking/hide transition across a full record→process→idle cycle, desktop-global-shortcut binding, and restart/microphone-switch survival. It does **not** certify other environments.
 
 ## Current implementation notes
 
