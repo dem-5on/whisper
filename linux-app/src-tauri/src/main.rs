@@ -174,7 +174,9 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            eprintln!("wicx: setup begin");
             shortcuts::init(&app.handle())?;
+            eprintln!("wicx: setup shortcuts ready");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

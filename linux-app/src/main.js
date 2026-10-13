@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import appInfo from "../package.json";
 import "./style.css";
+console.timeStamp("wicx: frontend module start");
 
 const preview = !window.__TAURI_INTERNALS__;
 const ui = {
@@ -1253,5 +1254,6 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) setupBgRunning = false;
   else void setupBgControl();
 });
+console.timeStamp("wicx: frontend boot calls issued");
 void bootShortcuts();
 
