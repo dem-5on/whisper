@@ -358,3 +358,6 @@ body.in-setup .window-chrome { left:0; }
 .privacy-card { grid-template-columns:repeat(3, minmax(0, 1fr)); align-items:stretch; }
 .privacy-card .privacy-point { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; aspect-ratio:1/1; padding:20px 16px; text-align:center; }
 @media (max-width:680px) { .privacy-card { grid-template-columns:1fr; } .privacy-card .privacy-point { aspect-ratio:auto; } }
+
+/* Walkthrough content is centered on both axes */
+body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
