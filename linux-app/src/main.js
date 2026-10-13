@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { emitTo } from "@tauri-apps/api/event";
+import { currentMonitor, getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import "./style.css";
 
 const preview = !window.__TAURI_INTERNALS__;
@@ -38,6 +40,8 @@ let historyTimer;
 let pendingMode = "";
 let availableMics = [];
 let statusTimer;
+let pillVisible = false;
+let pillSyncing = false;
 
 for (let index = 0; index < 12; index += 1) {
   const bar = document.createElement("span");
@@ -106,7 +110,7 @@ function updateStatus(status) {
   const busy = ["RECORDING", "PROCESSING", "DELIVERING"].includes(status.state);
   const processing = ["PROCESSING", "DELIVERING"].includes(status.state);
   const activeMode = status.session_mode || mockStatus.session_mode || "dictation";
-  ui.activeBanner.hidden = !busy || status.hide_recording_pill === true;
+  ui.activeBanner.hidden = !busy || status.hide_recording_pill === true || (!preview && pillVisible);
   const recording = status.state === "RECORDING";
   ui.recordingWaveform.dataset.recording = String(recording);
   const waveform = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
@@ -127,6 +131,7 @@ function updateStatus(status) {
   } else {
     mockStatus.session_mode = "";
   }
+  void syncRecordingPill(status, busy, activeMode, recording);
   ui.hidePill.checked = status.hide_recording_pill === true;
   ui.rewrite.checked = status.rewrite_enabled === true;
   document.querySelector("#model-name").textContent = `${status.backend === "local" ? "Local" : status.backend || "Local"} · ${status.effective_model || status.model || "base"}`;
@@ -135,6 +140,47 @@ function updateStatus(status) {
   ui.micButton.disabled = busy;
   document.querySelectorAll("[data-session-mode], #start-dictation, #mode-dictation").forEach((button) => { button.disabled = busy || (!ready && !preview); });
   if (status.state === "ERROR" && status.error) notify(status.error, true);
+}
+
+async function syncRecordingPill(status, busy, activeMode, recording) {
+  if (preview || pillSyncing) return;
+  pillSyncing = true;
+  try {
+    const shouldShow = busy && status.hide_recording_pill !== true;
+    const pill = await WebviewWindow.getByLabel("recording-pill");
+    if (!pill) return;
+    const rewriting = status.rewrite_state === "rewriting";
+    await emitTo("recording-pill", "recording-status", {
+      state: status.state,
+      mode: activeMode,
+      recording,
+      title: recording ? "Recording" : rewriting ? "Rewriting" : "Thinking",
+      audio_waveform: status.audio_waveform,
+      audio_level: status.audio_level,
+    });
+    if (shouldShow && !pillVisible) {
+      try {
+        const monitor = await currentMonitor();
+        if (monitor) {
+          const scale = monitor.scaleFactor;
+          const x = monitor.position.x + Math.round((monitor.size.width - 286 * scale) / 2);
+          const y = monitor.position.y + monitor.size.height - Math.round(72 * scale) - Math.round(36 * scale);
+          await pill.setPosition(new PhysicalPosition(x, y));
+        }
+      } catch { /* Some Wayland compositors do not allow clients to position windows. */ }
+      await pill.show();
+      pillVisible = true;
+      ui.activeBanner.hidden = true;
+    } else if (!shouldShow && pillVisible) {
+      await pill.hide();
+      pillVisible = false;
+      ui.activeBanner.hidden = !busy || status.hide_recording_pill === true;
+    }
+  } catch (error) {
+    console.warn("Floating recording pill is unavailable; retaining the in-app status banner.", error);
+  } finally {
+    pillSyncing = false;
+  }
 }
 
 async function refreshStatus() {

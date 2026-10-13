@@ -22,6 +22,21 @@
         "resizable": true,
         "decorations": false,
         "visible": true
+      },
+      {
+        "label": "recording-pill",
+        "title": "Wicx recording status",
+        "url": "pill.html",
+        "width": 286,
+        "height": 72,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false
       }
     ],
     "security": {

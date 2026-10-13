@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Wicx recording</title>
+  </head>
+  <body>
+    <main class="pill" aria-live="polite">
+      <button class="pill-action cancel" id="pill-cancel" type="button" aria-label="Cancel recording" title="Cancel recording">×</button>
+      <div class="pill-center">
+        <div class="pill-waveform" id="pill-waveform" role="img" aria-label="Live microphone waveform"></div>
+        <span class="pill-status" id="pill-status" hidden>Thinking</span>
+      </div>
+      <button class="pill-action finish" id="pill-finish" type="button" aria-label="Finish recording" title="Finish recording">✓</button>
+    </main>
+    <script type="module" src="/src/pill.js"></script>
+  </body>
+</html>
