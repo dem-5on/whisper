@@ -107,6 +107,8 @@ class TranscriberDaemon:
         self.config = config
         self.recorder = make_recorder(
             config.audio,
+            # Keep Linux PCM capture active for the microphone meter even
+            # when live transcription is disabled for batch providers.
             # On Linux, capture PCM even when live transcription is disabled:
             # the UI's microphone meter and pill need real samples regardless
             # of whether the selected batch provider supports streaming.

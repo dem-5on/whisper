@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f8f9fb" />
+    <title>Wicx — Speak, don't type</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#home" aria-label="Wicx home">
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h2l2-5 4 10 4-14 3 9h3"/></svg></span>
+          <span>Wicx</span><span class="plan-tag">LOCAL</span>
+        </a>
+        <nav class="primary-nav" aria-label="Main navigation">
+          <button class="nav-item selected" data-page="home"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-6v-7h-4v7H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+          <button class="nav-item" data-page="history"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2M4 4v4h4"/></svg>History</button>
+          <button class="nav-item" data-page="dictionary"><svg viewBox="0 0 24 24"><path d="M5 4h13a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2zM5 4v14a2 2 0 0 0 2 2M9 8h7M9 12h7"/></svg>Dictionary</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="sidebar-utility" aria-label="Account and support">
+            <button class="utility-button" data-account-open type="button" aria-label="Profile and account" title="Profile and account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0M3 12a9 9 0 1 0 18 0 9 9 0 0 0-18 0z"/></svg></button>
+            <button class="utility-button" data-page="settings" type="button" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1-1.7 3-.2-.1a2 2 0 0 0-2.1.3l-.1.1h-3.5l-.1-.2a2 2 0 0 0-1.5-1l-.2.1-3.1-1.8.1-.2a2 2 0 0 0-.3-1.8l-.1-.1V10l.2-.1a2 2 0 0 0 1-1.5l-.1-.2 1.8-3.1.2.1a2 2 0 0 0 1.8-.3l.1-.1h3.5l.1.2a2 2 0 0 0 1.5 1l.2-.1 3.1 1.8-.1.2a2 2 0 0 0 .3 1.8l.1.1V13z"/></svg></button>
+            <button class="utility-button" id="open-help" type="button" aria-label="Help" title="Help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.4 1.6c-1.1 1.1-2 1.3-2 3M12 17.5v.1"/></svg></button>
+          </div>
+          <div class="sidebar-footnote"><span class="privacy-dot"></span>Private by design</div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <section class="page active" id="page-home">
+          <div class="home-heading"><div><h1>Speak, don't type.</h1><p class="lead">Turn your thoughts into clear words, notes, and ideas.</p></div><div class="greeting-mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></div>
+
+          <div class="home-grid">
+            <div class="main-column">
+              <section class="shortcut-card shortcut-list" aria-label="Voice shortcuts">
+                <div class="shortcut-row"><div class="shortcut-copy"><strong>Dictate</strong><p>Speak naturally — your words go straight into the app you're using.</p></div><div class="shortcut-binding"><small>DESKTOP COMMAND</small><code>wicx toggle</code></div><button class="shortcut-action setup-shortcut" data-shortcut-help type="button">Set up</button></div>
+                <div class="shortcut-row upcoming"><div class="shortcut-copy"><strong>Translate</strong><p>Speak in one language and write in another.</p></div><span class="coming-soon">Coming soon</span></div>
+                <div class="shortcut-row upcoming"><div class="shortcut-copy"><strong>Ask anything</strong><p>Speak a prompt or ask for help with selected text.</p></div><span class="coming-soon">Coming soon</span></div>
+              </section>
+
+              <div class="section-heading"><div><h2>Choose your mode</h2><p>From a quick thought to a full day of learning.</p></div><span class="section-note">3 ways to capture</span></div>
+              <div class="mode-grid">
+                <article class="mode-card dictation-mode"><div class="mode-top"><span class="mode-icon icon-blue"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></svg></span><span class="mode-label">EVERYDAY</span></div><h3>Dictation</h3><p>Write messages, prompts, and anything else without breaking your flow.</p><button class="mode-link" data-shortcut-help type="button">Set up your shortcut <span>↗</span></button></article>
+                <article class="mode-card lecture-mode"><div class="mode-top"><span class="mode-icon icon-purple"><svg viewBox="0 0 24 24"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5zM4 4.5v17M8 6h8M8 10h8M8 14h5"/></svg></span><span class="mode-label">LEARN &amp; REVIEW</span></div><h3>Lecture</h3><p>Capture a class with its audio and transcript together for later.</p><button class="mode-link" data-session-mode="lecture" type="button">Record a lecture <span>→</span></button></article>
+                <article class="mode-card meeting-mode"><div class="mode-top"><span class="mode-icon icon-green"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM20 8v6m3-3h-6"/></svg></span><span class="mode-label">DISCUSS &amp; DECIDE</span></div><h3>Meeting</h3><p>Keep the conversation, decisions, and next steps easy to revisit.</p><button class="mode-link" data-session-mode="meeting" type="button">Record a meeting <span>→</span></button></article>
+              </div>
+
+              <div class="home-footer-card"><div class="privacy-icon"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11z"/><path d="m9 12 2 2 4-4"/></svg></div><div><strong>Your voice stays yours</strong><p>Local dictation is processed on your device. You choose when to use cloud features.</p></div><button class="quiet-link" data-page="settings" type="button">Privacy settings <span>→</span></button></div>
+            </div>
+
+            <aside class="right-rail">
+              <section class="rail-card stats-card"><div class="rail-title"><div><h2>Your activity</h2><p>From saved recordings on this device</p></div><span class="connection-state" id="service-status"><i></i><span>Connecting</span></span></div><div class="stats-grid"><div class="stat-item"><span class="stat-icon">◷</span><div><strong id="stat-today-minutes">0 min</strong><small>Minutes talked today</small></div></div><div class="stat-item"><span class="stat-icon">⌁</span><div><strong id="stat-total-words">0</strong><small>Words transcribed</small></div></div><div class="stat-item"><span class="stat-icon">ϟ</span><div><strong id="stat-average-wpm">—</strong><small>Average words / min</small></div></div><div class="stat-item"><span class="stat-icon">◴</span><div><strong id="stat-total-minutes">0 min</strong><small>Total recorded</small></div></div></div><div class="setup-mini"><div><small>Transcription</small><strong id="model-name">Local · Base</strong></div><button id="choose-microphone" type="button" aria-haspopup="dialog" aria-label="Choose microphone"><span id="mic-name">System default</span> <span>›</span></button></div><button class="rail-link" data-page="settings" type="button">Open settings <span>→</span></button></section>
+              <footer class="update-footer"><span id="app-version">Version</span><button id="check-updates" type="button">Check for updates</button></footer>
+            </aside>
+          </div>
+        </section>
+
+        <section class="page" id="page-history" hidden><div class="page-intro"><div><p class="eyebrow">YOUR LIBRARY</p><h1>History</h1><p>Recordings, transcripts, and ideas saved on this device.</p></div><label class="search-box"><span>⌕</span><input id="history-search" type="search" placeholder="Search recordings" /></label></div><div class="filter-row"><button class="filter-chip selected" data-history-filter="all">All</button><button class="filter-chip" data-history-filter="dictation">Dictation</button><button class="filter-chip" data-history-filter="lecture">Lecture</button><button class="filter-chip" data-history-filter="meeting">Meeting</button></div><div class="history-layout"><div class="session-list" id="session-list"><div class="empty-state">Loading recordings…</div></div><article class="session-detail" id="session-detail"><div class="detail-placeholder"><span>◷</span><h3>Choose a recording</h3><p>Select a session to read its transcript and details.</p></div></article></div></section>
+
+        <section class="page" id="page-dictionary" hidden><div class="page-intro"><div><p class="eyebrow">MAKE IT YOURS</p><h1>Dictionary</h1><p>Help Wicx recognize names, jargon, and the words you use every day.</p></div></div><form class="add-term" id="add-term-form"><label for="new-term">Add a word or phrase</label><div><input id="new-term" maxlength="120" placeholder="e.g. TypeScript, Twi, project names" required /><button class="primary-button" type="submit">Add to dictionary <span>+</span></button></div><small>Saved locally and used to guide speech recognition.</small></form><div class="dictionary-heading"><h2>Your words</h2><span id="term-count">0 terms</span></div><div class="term-list" id="term-list"><div class="empty-state">Loading your dictionary…</div></div></section>
+
+        <section class="page" id="page-settings" hidden><div class="page-intro"><div><p class="eyebrow">PREFERENCES</p><h1>Settings</h1><p>A quieter, more personal way to work with your voice.</p></div></div><div class="settings-layout"><nav class="settings-nav" aria-label="Settings sections"><button class="selected" data-settings-section="general">General</button><button data-settings-section="dictation">Dictation</button><button data-settings-section="account">Account &amp; plan</button></nav><div class="settings-content"><section class="settings-group" data-settings-panel="general"><h2>Desktop experience</h2><p>Control what Wicx shows while you work.</p><label class="setting-row"><span><strong>Hide recording pill</strong><small>Hide the compact recording status while you speak or while it processes.</small></span><input id="setting-hide-pill" type="checkbox" /></label><button class="settings-action" type="button" data-page="home">Back to your workspace <span>→</span></button></section><section class="settings-group" data-settings-panel="dictation" hidden><h2>Dictation</h2><p>Choose how your voice becomes text.</p><label class="setting-row"><span><strong>Rewrite before inserting</strong><small>Polish wording and remove filler. Off by default; requires cloud access.</small></span><input id="setting-rewrite" type="checkbox" /></label><div class="setting-info">If a rewrite can't run, Wicx keeps your original transcript.</div></section><section class="settings-group" data-settings-panel="account" hidden><h2>Account &amp; plan</h2><p>Local dictation is free. Subscription features are optional.</p><div class="account-card"><span class="account-symbol">✦</span><div><strong>Bring your account to Wicx</strong><small>Sign-in and paid cloud features will be configured when the account service is connected.</small></div></div></section></div></div></section>
+        <p class="feedback" id="feedback" role="status" aria-live="polite"></p>
+      </main>
+      <div class="window-chrome" aria-label="Window controls">
+        <div class="window-drag-region" data-tauri-drag-region></div>
+        <div class="window-controls">
+          <button class="window-control" id="window-minimize" type="button" aria-label="Minimize window" title="Minimize">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10"/></svg>
+          </button>
+          <button class="window-control" id="window-maximize" type="button" aria-label="Maximize or restore window" title="Maximize or restore">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1"/></svg>
+          </button>
+          <button class="window-control close-window" id="window-close" type="button" aria-label="Close window" title="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <dialog class="consent-dialog" id="consent-dialog"><form method="dialog" id="consent-form"><button class="dialog-close" value="cancel" aria-label="Cancel">×</button><span class="dialog-icon">◉</span><h2 id="consent-title">Start a lecture</h2><p id="consent-copy">Please let everyone in the room know that the lecture will be recorded.</p><label class="consent-check"><input id="consent-confirm" type="checkbox" /><span>I have informed everyone who may be recorded.</span></label><div class="dialog-actions"><button class="secondary-button" value="cancel">Not now</button><button class="primary-button" id="confirm-session" value="start" disabled>Start recording</button></div></form></dialog>
+    <dialog class="consent-dialog mic-dialog" id="mic-dialog"><form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><h2>Choose a microphone</h2><p>Select the input Wicx should listen to for recording.</p><div class="mic-options" id="microphone-options"><div class="empty-state">Loading microphones…</div></div><div class="dialog-actions"><button class="secondary-button" value="cancel">Close</button></div></form></dialog>
+    <dialog class="shortcut-dialog" id="shortcut-dialog"><form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><span class="dialog-icon shortcut-dialog-icon">⌨</span><p class="eyebrow">LINUX DESKTOP SETUP</p><h2>Set up dictation</h2><p>Linux desktops handle global shortcuts differently, so Wicx does not silently claim a shortcut that may conflict with your system. Add this command in your desktop's Keyboard Shortcuts settings:</p><div class="command-copy"><code>wicx toggle</code><button class="small-button" id="copy-shortcut-command" type="button">Copy command</button></div><ol><li>Open your desktop's Keyboard Shortcuts settings.</li><li>Add a custom shortcut and choose a key combination you like.</li><li>Use <code>wicx toggle</code> as its command.</li></ol><p class="shortcut-footnote">This works with GNOME, KDE Plasma, Xfce, Cinnamon, and other desktops that support custom commands.</p><div class="dialog-actions"><button class="primary-button" value="cancel">Done</button></div></form></dialog>
+    <dialog class="shortcut-dialog" id="help-dialog"><form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><span class="dialog-icon">?</span><p class="eyebrow">WICX HELP</p><h2>Here when you need us</h2><p>Use the desktop shortcut you configured to start or finish dictation. The compact pill shows when Wicx is listening, then changes to Thinking while it transcribes.</p><div class="help-note"><strong>Microphone not responding?</strong><span>Check your Linux privacy settings and confirm the selected input device in Settings.</span></div><div class="help-note"><strong>Your recordings stay on this device</strong><span>Review, export, or delete transcripts from History.</span></div><div class="dialog-actions"><button class="primary-button" value="cancel">Got it</button></div></form></dialog>
+    <dialog class="update-dialog" id="update-dialog"><form method="dialog"><button class="dialog-close" value="cancel" aria-label="Close">×</button><p class="eyebrow">WICX UPDATES</p><h2 id="update-title">Checking for updates…</h2><p id="update-message" aria-live="polite">Please wait while Wicx checks the latest release.</p><div class="dialog-actions"><a class="secondary-button update-release-link" id="update-release-link" href="#" target="_blank" rel="noreferrer" hidden>View release</a><button class="primary-button" value="cancel">Got it</button></div></form></dialog>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

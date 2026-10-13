@@ -533,6 +533,7 @@ class DaemonStreamingSwitchTests(unittest.TestCase):
         response = self.daemon.command("set_streaming", {"enabled": False})
         self.assertEqual(response["ok"], "true")
         self.assertFalse(response["streaming"])
+        # PCM capture remains enabled for the Linux microphone meter.
         self.assertIsInstance(self.daemon.recorder, StreamingRecorder)
         self.assertFalse(load_config(self.config_path).streaming.enabled)
         response = self.daemon.command("set_streaming", {"enabled": "true"})

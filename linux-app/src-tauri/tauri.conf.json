@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wicx",
+  "version": "2026.10.10",
+  "identifier": "tech.intejers.wicx.linux",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1421",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Wicx",
+        "width": 1360,
+        "height": 900,
+        "minWidth": 980,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "decorations": false,
+        "visible": true
+      },
+      {
+        "label": "recording-pill",
+        "title": "Wicx recording status",
+        "url": "pill.html",
+        "width": 194,
+        "height": 52,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost https://api.github.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png"],
+    "targets": ["deb", "appimage", "rpm"],
+    "category": "Utility",
+    "shortDescription": "A voice-first workspace",
+    "longDescription": "Dictate, capture lectures and meetings, and manage your voice workspace with Wicx."
+  }
+}
