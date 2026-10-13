@@ -39,17 +39,40 @@
 - `[~]` A self-hosted diarization worker and queued API prototype exist. The desktop job lifecycle, durable recovery, and billing entitlement source are unfinished.
 - `[ ]` No public release should claim full multilingual, all-distro Linux, full Lecture/Meeting analysis, account/subscription, sync, or speaker-detection support until the acceptance checks below are met.
 
+### Audited feature matrix (2026-10-13)
+
+| Area | Current evidence | State / remaining gap |
+| --- | --- | --- |
+| Local recording, transcription, session storage | Python daemon modules and tests in `transcriber/`, `tests/test_audio.py`, `tests/test_transcription.py`, `tests/test_session_store.py` | `[~]` Core paths exist; long-session durability, crash recovery, and end-to-end platform validation remain. |
+| Dictation delivery and recording pill | Linux and Windows clients plus native daemon integration | `[~]` UI/platform code exists; validate global activation, focus preservation, real waveform/state transitions, cancel/finish, and delivery on each supported OS/environment. |
+| History, export, custom vocabulary | `transcriber/session_store.py`, `session_export.py`, `vocabulary.py` and associated tests | `[~]` Local storage and API operations exist; verify complete client workflows, editing/import/export, deletion, and vocabulary effect on recognition. |
+| Cloud transcription | Hosted service WebSocket/protocol and service tests; `cloud_transcription` feature grant | `[~]` Service prototype is tested; desktop sign-in/entitlement integration and production quota lifecycle are incomplete. |
+| Rewrite | Hosted rewrite endpoint/tests; Windows Dictation integration described in `README.md` | `[~]` Provider/service path exists; Linux client integration, complete entitlement flow, and quality/latency evaluation remain. |
+| Google/Apple identity | Hosted OAuth/OIDC routes, PKCE handoff, and tests | `[~]` Server path exists; desktop callback/deep-link, secure token storage, sign-in/out, and lifecycle wiring remain. |
+| Paystack subscriptions | Checkout/status/webhook and billing ledger code/tests in `whisper_service/` and `tests/` | `[~]` Backend prototype exists; approved live plans, desktop checkout/status UX, full lifecycle/support cases, and entitlement reconciliation remain. |
+| Usage limits and feature gates | Server entitlement checks and optional cloud-minute metering | `[~]` Core mechanisms exist; normal production source must be billing-backed, limits/policy finalized, and all client fallbacks verified. |
+| Lecture outputs | Long-session and session primitives exist | `[ ]` Structured notes, topic grouping, key terms, and study questions are not a complete end-to-end workflow. |
+| Meeting outputs and speaker detection | Self-hosted queued diarization worker/API; local segment alignment and speaker-label persistence | `[~]` Prototype exists; desktop upload/poll/retry, durable jobs, billing entitlements, user correction workflow, and meeting summaries/actions remain. |
+| Translation and code-switching | Multilingual transcription/provider options exist | `[ ]` No validated source-plus-English workflow or representative Twi-English/French-English quality evaluation is established. |
+| Encrypted paired-device sync | Product direction documented in `product-spec.md` | `[ ]` Not implemented; protocol, threat model, keys, pairing, relay, recovery, and conflict behavior need design first. |
+| Linux/Windows release readiness | Linux installer currently documents limited GNOME Wayland Debian/Ubuntu support; Windows app/installer is still in testing | `[~]` Compatibility matrices, clean-machine packaging, focus checks, and release validation remain. |
+| macOS and mobile | Product direction only | `[ ]` No implementation; assess after Linux and Windows desktop acceptance. |
+
+**Test evidence:** `.venv/bin/python -m pytest -q -p no:cacheprovider -k 'not windows'` passed on 2026-10-13 (one aiohttp `NotAppKeyWarning`). The complete run exposed five failures in `tests/test_windows_tauri_spike.py` where assertions disagree with current Windows config/styles/dependencies; reconcile those on `windows`. Two OAuth tests omitted the fixed test time when redeeming PKCE handoffs; those test calls are corrected to pass the fixture time. The first unprivileged run could not bind local test sockets due to sandbox restrictions. Node/npm were unavailable in this execution environment, so JavaScript test/build commands were not run.
+
 ## Priority 0 — Establish an honest, testable baseline
 
-### P0.1 Audit current end-to-end behavior `[ ]`
+### P0.1 Audit current end-to-end behavior `[x] DONE — 2026-10-13`
 
 Inventory the daemon, hosted service, Linux client, and Windows client. For each current feature, record whether it is implemented, prototype-only, mocked, manually configured, or absent. Identify API mismatches and duplicate/obsolete paths before building more layers.
 
-**Acceptance:** Publish a feature matrix in `docs/product-spec.md` or a linked test report; each row names the client/service path and evidence. No user-facing “ready” claim relies only on a unit test or placeholder UI.
+**Acceptance:** Feature matrix and current test evidence are recorded above. End-to-end verification is still required by the feature tasks; audit completion does not mean those features are production-ready.
 
-### P0.2 Define a smoke/regression suite `[ ]`
+### P0.2 Define a smoke/regression suite `[~] IN PROGRESS`
 
 Cover local Dictation, cancellation/finish, transcript insertion, saved sessions, export, dictionary add/remove, offline fallback, rewrite failure fallback, service restart, and data deletion. Add Linux/Windows-specific checks where behavior differs.
+
+**Current evidence:** Broad Python tests and platform-specific CI workflows exist. The [smoke-test runbook](smoke-test-runbook.md) now lists commands and manual checks. Non-Windows Python tests passed; five Windows static checks need reconciliation on the Windows branch. Frontend build/test commands have not been run in this agent environment.
 
 **Acceptance:** One documented command or short runbook runs the automated checks; manual-only checks are explicitly listed with expected outcomes.
 
