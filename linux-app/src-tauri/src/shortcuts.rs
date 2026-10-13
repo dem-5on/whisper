@@ -327,6 +327,7 @@ fn monitor_device(app: AppHandle, path: PathBuf) {
                     continue;
                 }
                 if tracker.key_event(event.code() == RIGHT_ALT_CODE, event.value()) {
+                    eprintln!("wicx: right-alt tap detected");
                     // Re-read the binding at fire time: threads are spawned
                     // once per device and must follow later rebinds.
                     let (_, accelerator) = binding(&load_store(), "dictation");

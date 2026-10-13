@@ -887,7 +887,10 @@ function comboFromEvent(event) {
 }
 
 document.addEventListener("keydown", (event) => {
-  if (setupScreen !== "shortcuts" || capturingAction || event.repeat) return;
+  if (setupScreen !== "shortcuts") return;
+  const seen = document.querySelector("#last-key-seen");
+  if (seen) seen.textContent = "Last key seen: " + event.code + " (" + event.key + ")";
+  if (capturingAction || event.repeat) return;
   const hit = comboFromEvent(event);
   if (hit.matched) void verifyTestPress(hit.action);
 });
