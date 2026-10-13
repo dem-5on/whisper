@@ -58,7 +58,7 @@
 | Linux/Windows release readiness | Linux installer currently documents limited GNOME Wayland Debian/Ubuntu support; Windows app/installer is still in testing | `[~]` Compatibility matrices, clean-machine packaging, focus checks, and release validation remain. |
 | macOS and mobile | Product direction only | `[ ]` No implementation; assess after Linux and Windows desktop acceptance. |
 
-**Test evidence:** `.venv/bin/python -m pytest -q -p no:cacheprovider -k 'not windows'` passed on 2026-10-13 (one aiohttp `NotAppKeyWarning`). The complete run exposed five failures in `tests/test_windows_tauri_spike.py` where assertions disagree with current Windows config/styles/dependencies; reconcile those on `windows`. Two OAuth tests omitted the fixed test time when redeeming PKCE handoffs; those test calls are corrected to pass the fixture time. The first unprivileged run could not bind local test sockets due to sandbox restrictions. Node/npm were unavailable in this execution environment, so JavaScript test/build commands were not run.
+**Test evidence:** `.venv/bin/python -m pytest -q -p no:cacheprovider -k 'not windows'` passed on 2026-10-13 (one aiohttp `NotAppKeyWarning`). The complete run exposed five Windows checks that no longer matched the current panel width, backdrop, icon sizing, and Cargo manifest/callback. Those checks were reconciled on `windows`; `/home/dae/Main/PERSONAl_PROJECTS/whisper/.venv/bin/python -m pytest tests/test_windows_*.py -q -p no:cacheprovider` passed there with three skips. Two OAuth tests omitted the fixed test time when redeeming PKCE handoffs; those test calls are corrected to pass `now=self.now` on `New-features`. The first unprivileged run could not bind local test sockets due to sandbox restrictions. Node/npm were unavailable in this execution environment, so JavaScript test/build commands were not run.
 
 ## Priority 0 — Establish an honest, testable baseline
 
@@ -68,11 +68,11 @@ Inventory the daemon, hosted service, Linux client, and Windows client. For each
 
 **Acceptance:** Feature matrix and current test evidence are recorded above. End-to-end verification is still required by the feature tasks; audit completion does not mean those features are production-ready.
 
-### P0.2 Define a smoke/regression suite `[~] IN PROGRESS`
+### P0.2 Define a smoke/regression suite `[x] DONE — 2026-10-13`
 
 Cover local Dictation, cancellation/finish, transcript insertion, saved sessions, export, dictionary add/remove, offline fallback, rewrite failure fallback, service restart, and data deletion. Add Linux/Windows-specific checks where behavior differs.
 
-**Current evidence:** Broad Python tests and platform-specific CI workflows exist. The [smoke-test runbook](smoke-test-runbook.md) now lists commands and manual checks. Non-Windows Python tests passed; five Windows static checks need reconciliation on the Windows branch. Frontend build/test commands have not been run in this agent environment.
+**Current evidence:** Broad Python tests and platform-specific CI workflows exist. The [smoke-test runbook](smoke-test-runbook.md) lists commands and expected manual checks. Non-Windows Python tests passed on `New-features`; Windows-specific Python tests passed on `windows`. Frontend build/test commands and hands-on hardware/platform checks remain release-validation work, not gaps in defining the smoke suite.
 
 **Acceptance:** One documented command or short runbook runs the automated checks; manual-only checks are explicitly listed with expected outcomes.
 
