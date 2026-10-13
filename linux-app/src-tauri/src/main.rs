@@ -129,6 +129,18 @@ fn update_recording_pill(
 }
 
 fn main() {
+    // Wayland does not let regular application windows choose absolute screen
+    // coordinates. When a Wayland session also exposes XWayland, prefer it so
+    // the recording pill can be anchored at screen bottom-center. Respect an
+    // explicit user GDK_BACKEND choice and keep native Wayland as fallback.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var_os("DISPLAY").is_some()
+        && std::env::var_os("GDK_BACKEND").is_none()
+    {
+        // Safe before Tauri/GTK initializes and before this process starts threads.
+        unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             daemon_request,

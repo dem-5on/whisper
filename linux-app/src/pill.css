@@ -2,7 +2,9 @@
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
 body { display: grid; place-items: center; font-family: 'DM Sans', Ubuntu, Cantarell, system-ui, sans-serif; color: #f7f7fa; }
 .pill { display: flex; width: 184px; height: 44px; align-items: center; justify-content: space-between; gap: 7px; padding: 4px 6px; border: 1px solid rgba(255,255,255,.3); border-radius: 999px; background: rgba(15,16,19,.97); box-shadow: 0 8px 24px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.12); }
-.pill-action { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; color: white; font: 400 23px/1 system-ui,sans-serif; cursor: pointer; }
+.pill-action { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; color: white; font: 400 23px/1 system-ui,sans-serif; cursor: pointer; appearance: none; -webkit-appearance: none; -webkit-tap-highlight-color: transparent; outline: none; box-shadow: none; }
+.pill-action.cancel:hover,.pill-action.cancel:focus,.pill-action.cancel:focus-visible,.pill-action.cancel:active { background: #303136; outline: none; box-shadow: none; }
+.pill-action.finish:hover,.pill-action.finish:focus,.pill-action.finish:focus-visible,.pill-action.finish:active { background: #fff; color: #17181b; outline: none; box-shadow: none; }
 .pill-action:disabled { opacity: .55; }
 .pill-action.cancel { background: #303136; }
 .pill-action.finish { background: #fff; color: #17181b; font-size: 23px; font-weight: 600; }
