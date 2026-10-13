@@ -397,3 +397,6 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 
 /* Shortcut test cards need air between them */
 #shortcut-tests { display:grid; gap:22px; }
+
+/* Shortcut test cards carry no numbers */
+.setup-step-number { display:none; }
