@@ -380,3 +380,6 @@ body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
 /* Welcome: airier card grid and clear run-up to Continue */
 .privacy-card { gap:30px; }
 .setup-centered .setup-actions { margin-top:38px; }
+
+/* Welcome: Continue sits as far below the cards as the cards sit below the breadcrumb */
+.setup-centered .setup-actions { margin-top:96px; }
