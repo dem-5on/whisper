@@ -202,6 +202,7 @@ button:disabled { opacity: 0.76; }
 .tile:hover { border-color: var(--line-strong); background: var(--surface-hover); }
 .tile[aria-expanded="true"] { outline: 2px solid #6ab4ff; outline-offset: 1px; }
 .tile-icon { display: grid; flex: 0 0 28px; width: 28px; height: 28px; place-items: center; border: 1px solid #1683e833; border-radius: 9px; color: #76baff; background: #1683e814; }
+.tile-symbol { width: 19px; height: 19px; }
 .tile[data-setting="model"] .tile-icon { border-color: #8b7cf833; color: #a99dff; background: #8b7cf814; }
 .tile[data-setting="mic"] .tile-icon { border-color: #50c69b33; color: #72d7b1; background: #50c69b14; }
 .tile-copy { display: grid; min-width: 0; gap: 3px; margin-left: 8px; }

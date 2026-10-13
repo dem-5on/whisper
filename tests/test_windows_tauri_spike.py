@@ -15,14 +15,14 @@ def test_tauri_focus_spike_starts_hidden_and_non_focusable():
     assert window["focusable"] is False
     assert window["alwaysOnTop"] is True
     assert window["skipTaskbar"] is True
-    assert window["width"] == 380
+    assert window["width"] == 420
 
 
 def test_flyout_keeps_its_fixed_width_and_scrolls_added_vertical_content():
     config = json.loads((ROOT / "windows-app/src-tauri/tauri.conf.json").read_text())
     styles = (ROOT / "windows-app/src/style.css").read_text()
 
-    assert config["app"]["windows"][0]["width"] == 380
+    assert config["app"]["windows"][0]["width"] == 420
     assert "overflow-x: hidden" in styles
     assert "overflow-y: auto" in styles
     assert "overflow-wrap: anywhere" in styles
@@ -106,7 +106,7 @@ def test_windows_panel_uses_mica_with_an_older_windows_fallback():
     assert "window_vibrancy::apply_mica(window, Some(true))" in source
     assert "window_vibrancy::apply_blur(window, Some((32, 33, 39, 230)))" in source
     assert "apply_panel_backdrop(&window)" in source
-    assert "background: rgba(32, 33, 39, 0.88)" in styles
+    assert "background: transparent" in styles
 
 
 def test_focus_spike_reports_result_in_the_panel():
@@ -522,13 +522,14 @@ def test_tray_menu_keeps_recording_and_cancel_actions_available():
     assert 'RegisterHotKey(None, 1, 0x0002, 0x20)' in tray
 
 
-def test_packaged_app_uses_single_instance_and_reopens_without_focus_stealing():
+def test_packaged_app_uses_single_instance_and_reopens_the_home_window():
     manifest = (ROOT / "windows-app/src-tauri/Cargo.toml").read_text()
     rust = (ROOT / "windows-app/src-tauri/src/main.rs").read_text()
 
-    assert 'tauri-plugin-single-instance = "2"' in manifest
+    assert 'tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }' in manifest
     assert rust.index("tauri_plugin_single_instance::init") < rust.index("tauri_plugin_shell::init()")
-    assert "toggle_panel(app);" in rust
+    assert "let _ = show_home(app.clone());" in rust
+    assert "fn show_home(app: tauri::AppHandle)" in rust
     assert "fn toggle_panel(app: &tauri::AppHandle)" in rust
     assert "show_panel(&window, &baseline, x, y, PANEL_HEIGHT as f64)" in rust
 
