@@ -808,10 +808,7 @@ function showSetup(name) {
   void setTestMode(isShortcutScreen() || name === "mic");
   void setupBgControl();
   if (isShortcutScreen()) renderSingleCards();
-  if (name === "mic") {
-    ensureMicBars();
-    void renderSetupMics();
-  }
+  if (name === "mic") void renderSetupMics();
   if (name === "role") renderRoleGrid();
   if (name === "exercise") {
     const box = document.querySelector("#exercise-box");
@@ -1032,39 +1029,32 @@ async function renderSetupMics() {
   }
 }
 
-function ensureMicBars() {
-  const box = document.querySelector("#mic-test-bars");
-  if (!box || box.dataset.built === "true") return;
-  box.dataset.built = "true";
-  for (let i = 0; i < 12; i += 1) {
-    const bar = document.createElement("span");
-    box.append(bar);
-  }
-}
-
 function setupLiveStatus(status) {
-  ensureMicBars();
-  if (setupScreen !== "mic" || !micTesting) return;
-  if (status.state !== "RECORDING") return;
+  const box = document.querySelector("#mic-test-bars");
+  if (!box) return;
+  if (setupScreen !== "mic" || !micTesting || status.state !== "RECORDING") return;
+  if (box.childElementCount !== 12) {
+    box.replaceChildren();
+    for (let i = 0; i < 12; i += 1) box.append(document.createElement("span"));
+  }
   const samples = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
   let peak = 0;
-  const bars = document.querySelectorAll("#mic-test-bars span");
-  samples.forEach((sample, index) => {
-    const value = Math.abs(Number(sample) || 0);
-    if (index < 12 * 2 && index % 2 === 0 && value > peak) peak = value;
-  });
-  if (peak > micMaxPeak) micMaxPeak = peak;
-  const pairs = [];
+  const bars = box.querySelectorAll("span");
   for (let i = 0; i < 12; i += 1) {
-    const a = Math.abs(Number(samples[i * 2]) || 0);
-    const b = Math.abs(Number(samples[i * 2 + 1]) || 0);
-    pairs.push(Math.max(a, b));
+    const value = Math.max(
+      Math.abs(Number(samples[i * 2]) || 0),
+      Math.abs(Number(samples[i * 2 + 1]) || 0),
+    );
+    if (value > peak) peak = value;
+    const bar = bars[i];
+    if (bar) bar.style.height = (value < 0.002 ? 4 : 4 + Math.pow(value, 0.4) * 34).toFixed(1) + "px";
   }
-  bars.forEach((bar, index) => {
-    const value = pairs[index] || 0;
-    bar.style.height = (value < 0.002 ? 3 : 3 + Math.pow(value, 0.4) * 30).toFixed(1) + "px";
-    bar.classList.toggle("hot", value >= 0.02);
-  });
+  if (peak > micMaxPeak) micMaxPeak = peak;
+}
+
+function clearMicBars() {
+  const box = document.querySelector("#mic-test-bars");
+  if (box) box.replaceChildren();
 }
 
 async function toggleMicTest() {
@@ -1088,6 +1078,7 @@ async function toggleMicTest() {
     return;
   }
   micTesting = false;
+  clearMicBars();
   if (button) button.textContent = "Test microphone";
   try {
     if (!preview) await invoke("daemon_request", { command: "cancel", params: {} });
@@ -1099,7 +1090,7 @@ async function toggleMicTest() {
     if (yes) yes.disabled = false;
     notify("Microphone responds. Continue when ready.");
   } else if (error) {
-    error.textContent = "No speech detected — check the selected input and try again.";
+    error.textContent = "No speech detected — try choosing your Built-in Audio input explicitly, then test again.";
     error.hidden = false;
   }
 }
