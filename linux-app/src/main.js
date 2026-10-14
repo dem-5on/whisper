@@ -737,14 +737,18 @@ function tryCommitCapture() {
 }
 
 function startCapture(action) {
+  const def = SHORTCUT_DEFAULTS[action] || { display: "", accelerator: null };
+  shortcutDraft[action] = { display: def.display, accelerator: def.accelerator };
+  testedAction[action] = false;
+  renderSingleCards();
+  void shortcutInvoke("set_shortcut", {
+    action, display: def.display || "", accelerator: def.accelerator,
+  }).then(renderShortcutErrors).catch(() => {});
   capturingAction = action;
   pressedCodes.clear();
   seenMods.clear();
-  testedAction[action] = false;
-  const keycap = document.querySelector("#testkey-" + action);
-  if (keycap) keycap.classList.remove("lit");
   const status = document.querySelector("#teststatus-" + action);
-  if (status) status.textContent = "Hold the modifiers, press a key… (Esc cancels)";
+  if (status) status.textContent = "Press your shortcut now — the key lights up when seen. (Esc cancels)";
   refreshYesButtons();
 }
 
