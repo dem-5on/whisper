@@ -836,7 +836,7 @@ function renderSingleCards() {
     change.type = "button";
     change.textContent = "Change";
     change.addEventListener("click", () => startCapture(action));
-    row.append(status, change);
+    row.append(change, status);
     const error = document.createElement("p");
     error.className = "capture-error";
     error.id = "error-" + action;
