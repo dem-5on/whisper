@@ -29,8 +29,6 @@ const ui = {
   updateTitle: document.querySelector("#update-title"),
   updateMessage: document.querySelector("#update-message"),
   updateReleaseLink: document.querySelector("#update-release-link"),
-  setupSave: document.querySelector("#setup-save"),
-  setupConsent: document.querySelector("#setup-consent"),
 };
 
 const currentVersion = String(appInfo.version);
@@ -682,7 +680,7 @@ function tryCommitCapture() {
     capturingAction = null;
     pressedCodes.clear();
     testedAction[action] = false;
-    renderTestCards();
+    renderSingleCards();
     void shortcutInvoke("set_shortcut", { action, display, accelerator })
       .then(renderShortcutErrors)
       .catch((error) => captureError(action, error && error.message ? error.message : String(error)));
@@ -736,7 +734,7 @@ document.addEventListener("keydown", (event) => {
     const action = capturingAction;
     capturingAction = null;
     renderCapture(action, null);
-    renderTestCards();
+    renderSingleCards();
     return;
   }
   pressedCodes.add(event.code);
@@ -750,23 +748,31 @@ document.addEventListener("keyup", (event) => {
 // ---- Walkthrough screens
 
 const SETUP_PHASE = {
-  welcome: "welcome", shortcuts: "setup", mic: "setup", role: "setup",
+  welcome: "welcome",
+  "shortcut-dictation": "setup", "shortcut-meeting": "setup", "shortcut-lecture": "setup",
+  mic: "setup", role: "setup",
   intro: "experience", exercise: "experience", summary: "experience",
 };
+
+let longConsentDraft = false;
+
+function isShortcutScreen() {
+  return setupScreen === "shortcut-dictation" || setupScreen === "shortcut-meeting" || setupScreen === "shortcut-lecture";
+}
 
 function showSetup(name) {
   setupScreen = name;
   const head = document.querySelector("#setup-head");
-  if (head) head.hidden = name !== "shortcuts";
+  if (head) head.hidden = !isShortcutScreen();
   document.querySelectorAll("[data-setup-page]").forEach((page) => {
     page.hidden = page.dataset.setupPage !== name;
   });
   document.querySelectorAll("[data-phase]").forEach((item) => {
     item.classList.toggle("selected", item.dataset.phase === SETUP_PHASE[name]);
   });
-  void setTestMode(name === "shortcuts" || name === "mic");
+  void setTestMode(isShortcutScreen() || name === "mic");
   void setupBgControl();
-  if (name === "shortcuts") renderTestCards();
+  if (isShortcutScreen()) renderSingleCards();
   if (name === "mic") void renderSetupMics();
   if (name === "role") renderRoleGrid();
   if (name === "exercise") {
@@ -792,22 +798,30 @@ async function setTestMode(on) {
   }
 }
 
-function renderTestCards() {
-  const box = document.querySelector("#shortcut-tests");
-  if (!box) return;
-  box.replaceChildren();
-  SHORTCUT_ACTIONS.forEach((action, index) => {
+function renderSingleCards() {
+  for (const action of SHORTCUT_ACTIONS) {
+    const mount = document.querySelector("#single-" + action);
+    if (!mount) continue;
     const draft = shortcutDraft[action];
+    mount.replaceChildren();
     const card = document.createElement("article");
     card.className = "setup-step";
     const head = document.createElement("div");
     head.className = "setup-step-head";
-    head.innerHTML = '<span class="setup-step-number">' + (index + 1) + "</span><div><h2>" +
-      action.charAt(0).toUpperCase() + action.slice(1) + "</h2><p>" + SHORTCUT_BLURB[action] + "</p></div>";
+    const title = document.createElement("div");
+    const name = document.createElement("h2");
+    name.textContent = action.charAt(0).toUpperCase() + action.slice(1);
+    const blurb = document.createElement("p");
+    blurb.textContent = SHORTCUT_BLURB[action];
+    title.append(name, blurb);
+    head.append(title);
     const visual = document.createElement("div");
     visual.className = "test-key-visual";
-    visual.innerHTML = '<div class="test-keycap" id="testkey-' + action + '">' +
-      (draft.display || "Not set") + "</div>";
+    const keycap = document.createElement("div");
+    keycap.className = "test-keycap test-keycap-big";
+    keycap.id = "testkey-" + action;
+    keycap.textContent = draft.display || "Not set";
+    visual.append(keycap);
     const status = document.createElement("p");
     status.className = "capture-hint";
     status.id = "teststatus-" + action;
@@ -821,31 +835,45 @@ function renderTestCards() {
     change.type = "button";
     change.textContent = "Change";
     change.addEventListener("click", () => startCapture(action));
-    const yes = document.createElement("button");
-    yes.className = "primary-button";
-    yes.type = "button";
-    yes.textContent = "Yes, continue";
-    yes.disabled = !testedAction[action];
-    yes.dataset.testYes = action;
-    yes.addEventListener("click", () => { testedAction[action] = true; renderTestCards(); refreshShortcutsNext(); });
-    row.append(change, yes);
+    row.append(change);
     const error = document.createElement("p");
     error.className = "capture-error";
     error.id = "error-" + action;
     error.hidden = true;
     card.append(head, visual, status, row, error);
-    box.append(card);
-  });
-  refreshShortcutsNext();
+    mount.append(card);
+  }
+  refreshYesButtons();
 }
 
-function refreshShortcutsNext() {
-  const next = document.querySelector("#setup-shortcuts-next");
-  if (next) next.disabled = testedAction.dictation !== true;
+function refreshYesButtons() {
+  const yesDictation = document.querySelector("#yes-dictation");
+  if (yesDictation) yesDictation.disabled = testedAction.dictation !== true;
+  for (const action of ["meeting", "lecture"]) {
+    const yes = document.querySelector("#yes-" + action);
+    if (!yes) continue;
+    if (!shortcutDraft[action].accelerator) {
+      yes.disabled = false;
+      continue;
+    }
+    yes.disabled = testedAction[action] !== true;
+  }
+}
+
+function checkDuplicates() {
+  const seen = new Map();
+  for (const action of SHORTCUT_ACTIONS) {
+    const accelerator = shortcutDraft[action].accelerator;
+    if (!accelerator) continue;
+    const key = accelerator.toUpperCase();
+    if (seen.has(key)) return action;
+    seen.set(key, action);
+  }
+  return null;
 }
 
 async function verifyTestPress(action) {
-  if (setupScreen !== "shortcuts" || capturingAction) return;
+  if (!isShortcutScreen() || capturingAction) return;
   const draft = shortcutDraft[action];
   if (!draft.accelerator) return;
   const keycap = document.querySelector("#testkey-" + action);
@@ -864,7 +892,7 @@ async function verifyTestPress(action) {
       return;
     }
     testedAction[action] = true;
-    renderTestCards();
+    renderSingleCards();
   } catch (error) {
     captureError(action, error && error.message ? error.message : String(error));
   }
@@ -888,7 +916,7 @@ function comboFromEvent(event) {
 }
 
 document.addEventListener("keydown", (event) => {
-  if (setupScreen !== "shortcuts") return;
+  if (!isShortcutScreen()) return;
   const seen = document.querySelector("#last-key-seen");
   if (seen) seen.textContent = "Last key seen: " + event.code + " (" + event.key + ")";
   if (capturingAction || event.repeat) return;
@@ -1083,29 +1111,34 @@ function renderSummaryCards() {
   }
 }
 
-function shortcutsContinue() {
-  if (testedAction.dictation !== true) {
+function advanceFromDictation() {
+  if (testedAction.dictation !== true || !shortcutDraft.dictation.accelerator) {
     notify("Press Right Alt once to verify Dictation first.", true);
     return;
   }
-  const usesLongMode = ["meeting", "lecture"].some((action) => shortcutDraft[action].accelerator);
-  if (usesLongMode && !(ui.setupConsent && ui.setupConsent.checked)) {
-    notify("Check the recording-consent box to enable Meeting or Lecture shortcuts.", true);
+  showSetup("shortcut-meeting");
+}
+
+function advanceFromLongMode(action, next) {
+  if (shortcutDraft[action].accelerator && testedAction[action] !== true) {
+    notify("Press the shortcut once to verify it first, or clear it to skip.", true);
     return;
   }
-  const seen = new Map();
-  for (const action of SHORTCUT_ACTIONS) {
-    const accelerator = shortcutDraft[action].accelerator;
-    if (!accelerator) continue;
-    const key = accelerator.toUpperCase();
-    if (seen.has(key)) {
-      captureError(action, "Same shortcut as another mode. Press a different combination.");
-      notify("Two modes share one shortcut. Give each its own.", true);
-      return;
-    }
-    seen.set(key, action);
+  if (shortcutDraft[action].accelerator && !longConsentDraft) {
+    notify("Check the recording-consent box to enable this shortcut.", true);
+    return;
   }
-  showSetup("mic");
+  const dup = checkDuplicates();
+  if (dup) {
+    captureError(dup, "Same shortcut as another mode. Press a different combination.");
+    notify("Two modes share one shortcut. Give each its own.", true);
+    showSetup("shortcut-dictation");
+    return;
+  }
+  if (shortcutDraft[action].accelerator) {
+    void shortcutInvoke("set_long_consent", { consented: true }).catch(() => {});
+  }
+  showSetup(next);
 }
 
 function renderShortcutState(state) {
@@ -1120,13 +1153,16 @@ function renderShortcutState(state) {
     }
     renderShortcutErrors(state);
   }
-  if (ui.setupConsent) ui.setupConsent.checked = state.long_consent === true;
+  longConsentDraft = state.long_consent === true;
+  document.querySelectorAll(".setup-consent-box").forEach((box) => {
+    box.checked = longConsentDraft;
+  });
   if (state.role) {
     setupRole = String(state.role);
     const go = document.querySelector("#role-continue");
     if (go && setupRole) go.disabled = false;
   }
-  renderTestCards();
+  renderSingleCards();
 }
 
 function renderShortcutErrors(state) {
@@ -1165,7 +1201,18 @@ async function bootShortcuts() {
   }
 }
 
-document.querySelector("#setup-shortcuts-next")?.addEventListener("click", shortcutsContinue);
+document.querySelector("#yes-dictation")?.addEventListener("click", advanceFromDictation);
+document.querySelector("#yes-meeting")?.addEventListener("click", () => advanceFromLongMode("meeting", "shortcut-lecture"));
+document.querySelector("#yes-lecture")?.addEventListener("click", () => advanceFromLongMode("lecture", "mic"));
+document.querySelectorAll(".setup-consent-box").forEach((box) => {
+  box.addEventListener("change", () => {
+    longConsentDraft = box.checked;
+    document.querySelectorAll(".setup-consent-box").forEach((other) => {
+      other.checked = longConsentDraft;
+    });
+    refreshYesButtons();
+  });
+});
 document.querySelector("#mic-test-btn")?.addEventListener("click", () => void toggleMicTest());
 document.querySelector("#mic-test-yes")?.addEventListener("click", () => showSetup("role"));
 document.querySelector("#role-continue")?.addEventListener("click", () => void saveRoleAndContinue());
@@ -1190,7 +1237,7 @@ document.querySelectorAll("[data-clear]").forEach((button) => {
     shortcutDraft[action] = { display: "", accelerator: null };
     testedAction[action] = false;
     renderCapture(action, null);
-    renderTestCards();
+    renderSingleCards();
     void shortcutInvoke("set_shortcut", { action, display: "", accelerator: null }).catch(() => {});
   });
 });

@@ -400,3 +400,7 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 
 /* Shortcut test cards carry no numbers */
 .setup-step-number { display:none; }
+
+/* Single-key setup pages */
+.setup-single { max-width:720px; margin:0 auto; }
+.test-keycap-big { font-size:22px; padding:18px 34px; }
