@@ -483,3 +483,6 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 .home-shortcut-row:last-child { border-bottom:0; }
 .home-keycap { white-space:nowrap; }
 #key-dialog .test-key-visual { margin:14px 0 6px; }
+
+/* Home shortcut rows run edge to edge */
+.home-shortcut-row { padding-left:0; padding-right:0; }
