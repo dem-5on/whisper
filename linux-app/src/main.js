@@ -1329,4 +1329,10 @@ document.addEventListener("visibilitychange", () => {
 });
 console.timeStamp("wicx: frontend boot calls issued");
 void bootShortcuts();
+if (!preview) {
+  window.clearTimeout(statusTimer);
+  void pollStatus();
+} else {
+  void refreshStatus();
+}
 
