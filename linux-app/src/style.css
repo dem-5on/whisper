@@ -433,3 +433,9 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 /* Test keycap lights visibly on detected press */
 .test-keycap.lit { border-color:#2859df; background:#e4ecff; color:#1e3fae; box-shadow:0 0 0 4px #3261e733; transform:scale(1.03); }
 .test-keycap { transition:border-color .15s, background .15s, transform .15s, box-shadow .15s; }
+
+/* Verified keycap keeps a blue border only */
+.test-keycap.lit { border-color:#2859df; background:initial; box-shadow:none; transform:none; color:inherit; }
+
+/* Walkthrough shortcuts header stands clear of the card */
+body.in-setup #setup-head { margin-bottom:56px; }
