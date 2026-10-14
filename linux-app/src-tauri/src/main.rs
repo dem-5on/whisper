@@ -126,18 +126,40 @@ fn update_recording_pill(
             // Position only after the surface is visible/realized. On X11 this
             // anchors the compact pill above the bottom edge; Wayland compositors
             // retain final placement authority and may ignore client requests.
-            if let Ok(Some(monitor)) = pill.current_monitor() {
-                if let (Ok(window_size), Ok(scale)) = (pill.outer_size(), pill.scale_factor()) {
-                    let monitor_position = monitor.position();
-                    let monitor_size = monitor.size();
-                    let (x, y) = bottom_center_pill_position(
-                        (monitor_position.x, monitor_position.y),
-                        (monitor_size.width, monitor_size.height),
-                        (window_size.width, window_size.height),
-                        scale,
-                    );
-                    let _ = pill.set_position(PhysicalPosition::new(x, y));
-                }
+            let monitor = pill
+                .current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| app.primary_monitor().ok().flatten());
+            match monitor {
+                Some(monitor) => match (pill.outer_size(), pill.scale_factor()) {
+                    (Ok(window_size), Ok(scale)) => {
+                        let monitor_position = monitor.position();
+                        let monitor_size = monitor.size();
+                        let (x, y) = bottom_center_pill_position(
+                            (monitor_position.x, monitor_position.y),
+                            (monitor_size.width, monitor_size.height),
+                            (window_size.width, window_size.height),
+                            scale,
+                        );
+                        eprintln!(
+                            "wicx: pill pos monitor=({},{}) size={}x{} pill={}x{} scale={scale} -> ({x},{y})",
+                            monitor_position.x,
+                            monitor_position.y,
+                            monitor_size.width,
+                            monitor_size.height,
+                            window_size.width,
+                            window_size.height,
+                        );
+                        if let Err(error) = pill.set_position(PhysicalPosition::new(x, y)) {
+                            eprintln!("wicx: pill set_position failed: {error}");
+                        }
+                    }
+                    _ => {
+                        eprintln!("wicx: pill size/scale unavailable, keeping compositor placement")
+                    }
+                },
+                None => eprintln!("wicx: no monitor found, keeping compositor placement"),
             }
         } else {
             pill.hide()
