@@ -415,3 +415,7 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 /* Single-key card: text left, keycap right */
 .setup-single .setup-step { display:grid; grid-template-columns:minmax(0, 1fr) auto; column-gap:28px; max-width:640px; aspect-ratio:auto; text-align:left; align-items:center; }
 .setup-single .test-key-visual { grid-column:2; grid-row:1 / span 5; align-self:center; }
+
+/* Single-key card: Change pins to the bottom-left corner */
+.setup-single .setup-step { min-height:320px; }
+.setup-single .capture-row { grid-column:1; align-self:end; justify-self:start; margin-top:16px; }
