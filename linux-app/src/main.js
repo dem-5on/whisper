@@ -742,10 +742,7 @@ function startCapture(action) {
   seenMods.clear();
   testedAction[action] = false;
   const keycap = document.querySelector("#testkey-" + action);
-  if (keycap) {
-    keycap.textContent = "\u2026";
-    keycap.classList.remove("lit");
-  }
+  if (keycap) keycap.classList.remove("lit");
   const status = document.querySelector("#teststatus-" + action);
   if (status) status.textContent = "Hold the modifiers, press a key… (Esc cancels)";
   refreshYesButtons();
