@@ -419,3 +419,6 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 /* Single-key card: Change pins to the bottom-left corner */
 .setup-single .setup-step { min-height:320px; }
 .setup-single .capture-row { grid-column:1; align-self:end; justify-self:start; margin-top:16px; }
+
+/* Single-key card: lower height */
+.setup-single .setup-step { min-height:240px; }
