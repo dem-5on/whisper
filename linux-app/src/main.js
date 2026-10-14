@@ -789,8 +789,6 @@ const SETUP_PHASE = {
   intro: "experience", exercise: "experience", summary: "experience",
 };
 
-let longConsentDraft = false;
-
 function isShortcutScreen() {
   return setupScreen === "shortcut-dictation" || setupScreen === "shortcut-meeting" || setupScreen === "shortcut-lecture";
 }
@@ -1166,19 +1164,12 @@ function advanceFromLongMode(action, next) {
     notify("Press the shortcut once to verify it first, or clear it to skip.", true);
     return;
   }
-  if (shortcutDraft[action].accelerator && !longConsentDraft) {
-    notify("Check the recording-consent box to enable this shortcut.", true);
-    return;
-  }
   const dup = checkDuplicates();
   if (dup) {
     captureError(dup, "Same shortcut as another mode. Press a different combination.");
     notify("Two modes share one shortcut. Give each its own.", true);
     showSetup("shortcut-dictation");
     return;
-  }
-  if (shortcutDraft[action].accelerator) {
-    void shortcutInvoke("set_long_consent", { consented: true }).catch(() => {});
   }
   showSetup(next);
 }
@@ -1195,10 +1186,6 @@ function renderShortcutState(state) {
     }
     renderShortcutErrors(state);
   }
-  longConsentDraft = state.long_consent === true;
-  document.querySelectorAll(".setup-consent-box").forEach((box) => {
-    box.checked = longConsentDraft;
-  });
   if (state.role) {
     setupRole = String(state.role);
     const go = document.querySelector("#role-continue");
@@ -1246,15 +1233,6 @@ async function bootShortcuts() {
 document.querySelector("#yes-dictation")?.addEventListener("click", advanceFromDictation);
 document.querySelector("#yes-meeting")?.addEventListener("click", () => advanceFromLongMode("meeting", "shortcut-lecture"));
 document.querySelector("#yes-lecture")?.addEventListener("click", () => advanceFromLongMode("lecture", "mic"));
-document.querySelectorAll(".setup-consent-box").forEach((box) => {
-  box.addEventListener("change", () => {
-    longConsentDraft = box.checked;
-    document.querySelectorAll(".setup-consent-box").forEach((other) => {
-      other.checked = longConsentDraft;
-    });
-    refreshYesButtons();
-  });
-});
 document.querySelector("#mic-test-btn")?.addEventListener("click", () => void toggleMicTest());
 document.querySelector("#mic-test-yes")?.addEventListener("click", () => showSetup("role"));
 document.querySelector("#role-continue")?.addEventListener("click", () => void saveRoleAndContinue());
