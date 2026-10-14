@@ -1030,36 +1030,14 @@ async function renderSetupMics() {
 }
 
 function setupLiveStatus(status) {
-  const box = document.querySelector("#mic-test-bars");
-  if (!box) return;
-  const live = setupScreen === "mic" && micTesting && status.state === "RECORDING";
-  box.hidden = !live;
-  if (!live) {
-    if (box.childElementCount > 0) box.replaceChildren();
-    return;
-  }
-  if (box.childElementCount !== 12) {
-    box.replaceChildren();
-    for (let i = 0; i < 12; i += 1) box.append(document.createElement("span"));
-  }
+  if (setupScreen !== "mic" || !micTesting || status.state !== "RECORDING") return;
   const samples = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
   let peak = 0;
-  const bars = box.querySelectorAll("span");
-  for (let i = 0; i < 12; i += 1) {
-    const value = Math.max(
-      Math.abs(Number(samples[i * 2]) || 0),
-      Math.abs(Number(samples[i * 2 + 1]) || 0),
-    );
+  for (let i = 0; i < samples.length; i += 1) {
+    const value = Math.abs(Number(samples[i]) || 0);
     if (value > peak) peak = value;
-    const bar = bars[i];
-    if (bar) bar.style.height = (value < 0.002 ? 4 : 4 + Math.pow(value, 0.4) * 34).toFixed(1) + "px";
   }
   if (peak > micMaxPeak) micMaxPeak = peak;
-}
-
-function clearMicBars() {
-  const box = document.querySelector("#mic-test-bars");
-  if (box) box.replaceChildren();
 }
 
 async function toggleMicTest() {
@@ -1083,7 +1061,6 @@ async function toggleMicTest() {
     return;
   }
   micTesting = false;
-  clearMicBars();
   if (button) button.textContent = "Test microphone";
   try {
     if (!preview) await invoke("daemon_request", { command: "cancel", params: {} });
