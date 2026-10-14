@@ -808,7 +808,10 @@ function showSetup(name) {
   void setTestMode(isShortcutScreen() || name === "mic");
   void setupBgControl();
   if (isShortcutScreen()) renderSingleCards();
-  if (name === "mic") void renderSetupMics();
+  if (name === "mic") {
+    ensureMicBars();
+    void renderSetupMics();
+  }
   if (name === "role") renderRoleGrid();
   if (name === "exercise") {
     const box = document.querySelector("#exercise-box");
@@ -1029,18 +1032,21 @@ async function renderSetupMics() {
   }
 }
 
+function ensureMicBars() {
+  const box = document.querySelector("#mic-test-bars");
+  if (!box || box.childElementCount === 12) return;
+  box.replaceChildren();
+  for (let i = 0; i < 12; i += 1) box.append(document.createElement("span"));
+}
+
 function setupLiveStatus(status) {
   const box = document.querySelector("#mic-test-bars");
   if (!box) return;
   const live = setupScreen === "mic" && micTesting && status.state === "RECORDING";
-  box.hidden = !live;
+  box.classList.toggle("live", live);
   if (!live) {
-    if (box.childElementCount > 0) box.replaceChildren();
+    box.querySelectorAll("span").forEach((bar) => { bar.style.height = ""; });
     return;
-  }
-  if (box.childElementCount !== 12) {
-    box.replaceChildren();
-    for (let i = 0; i < 12; i += 1) box.append(document.createElement("span"));
   }
   const samples = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
   let peak = 0;
@@ -1052,14 +1058,9 @@ function setupLiveStatus(status) {
     );
     if (value > peak) peak = value;
     const bar = bars[i];
-    if (bar) bar.style.height = (value < 0.002 ? 4 : 4 + Math.pow(value, 0.4) * 34).toFixed(1) + "px";
+    if (bar) bar.style.height = (4 + Math.pow(value, 0.4) * 34).toFixed(1) + "px";
   }
   if (peak > micMaxPeak) micMaxPeak = peak;
-}
-
-function clearMicBars() {
-  const box = document.querySelector("#mic-test-bars");
-  if (box) box.replaceChildren();
 }
 
 async function toggleMicTest() {
@@ -1083,7 +1084,6 @@ async function toggleMicTest() {
     return;
   }
   micTesting = false;
-  clearMicBars();
   if (button) button.textContent = "Test microphone";
   try {
     if (!preview) await invoke("daemon_request", { command: "cancel", params: {} });
