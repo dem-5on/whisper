@@ -404,3 +404,10 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 /* Single-key setup pages */
 .setup-single { max-width:720px; margin:0 auto; }
 .test-keycap-big { font-size:22px; padding:18px 34px; }
+
+/* Single-key cards are centered squares; the card itself flashes on detection */
+.setup-single .setup-step { max-width:440px; margin:0 auto; aspect-ratio:1/1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; transition:border-color .15s, box-shadow .15s; }
+.setup-single .setup-step-head { display:block; }
+.setup-single .capture-row { justify-content:center; }
+.setup-single .setup-step.lit { border-color:#2859df; box-shadow:0 0 0 4px #3261e733; }
+.test-binding-line { color:#596170; font-size:13px; }
