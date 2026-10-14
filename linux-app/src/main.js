@@ -1032,7 +1032,12 @@ async function renderSetupMics() {
 function setupLiveStatus(status) {
   const box = document.querySelector("#mic-test-bars");
   if (!box) return;
-  if (setupScreen !== "mic" || !micTesting || status.state !== "RECORDING") return;
+  const live = setupScreen === "mic" && micTesting && status.state === "RECORDING";
+  box.hidden = !live;
+  if (!live) {
+    if (box.childElementCount > 0) box.replaceChildren();
+    return;
+  }
   if (box.childElementCount !== 12) {
     box.replaceChildren();
     for (let i = 0; i < 12; i += 1) box.append(document.createElement("span"));
