@@ -712,7 +712,8 @@ function tryCommitCapture() {
       .catch((error) => captureError(action, error && error.message ? error.message : String(error)));
   };
   if (!main) {
-    if (rightAlt && !leftAlt && mods.length === 0) {
+    const onlyAlt = mods.every((mod) => mod.code === "Alt");
+    if (rightAlt && !leftAlt && onlyAlt) {
       if (action !== "dictation") {
         captureError(action, "Right Alt alone is reserved for Dictation. Pick a combination.");
         return;
