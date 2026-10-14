@@ -90,8 +90,8 @@ fn default_store() -> Value {
         "role": "",
         "bindings": {
             "dictation": {"display": "Right Alt", "accelerator": "RightAlt"},
-            "meeting": {"display": "", "accelerator": null},
-            "lecture": {"display": "", "accelerator": null},
+            "meeting": {"display": "Right Alt + M", "accelerator": "Alt+KeyM"},
+            "lecture": {"display": "Right Alt + L", "accelerator": "Alt+KeyL"},
         },
     })
 }

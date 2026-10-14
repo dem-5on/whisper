@@ -550,8 +550,8 @@ void loadActivityStats();
 const SHORTCUT_ACTIONS = ["dictation", "meeting", "lecture"];
 const SHORTCUT_DEFAULTS = {
   dictation: { display: "Right Alt", accelerator: "RightAlt" },
-  meeting: { display: "", accelerator: null },
-  lecture: { display: "", accelerator: null },
+  meeting: { display: "Right Alt + M", accelerator: "Alt+KeyM" },
+  lecture: { display: "Right Alt + L", accelerator: "Alt+KeyL" },
 };
 const SHORTCUT_BLURB = {
   dictation: "Speak into whatever app you're using.",
@@ -567,8 +567,8 @@ const ROLES = [
 let mockShortcuts = {
   bindings: {
     dictation: { display: "Right Alt", accelerator: "RightAlt", register_error: null },
-    meeting: { display: "", accelerator: null, register_error: null },
-    lecture: { display: "", accelerator: null, register_error: null },
+    meeting: { display: "Right Alt + M", accelerator: "Alt+KeyM", register_error: null },
+    lecture: { display: "Right Alt + L", accelerator: "Alt+KeyL", register_error: null },
   },
   long_consent: false,
   setup_completed: false,
@@ -725,7 +725,7 @@ function tryCommitCapture() {
   const displays = [];
   const codes = [];
   if ((rightAlt || leftAlt) && !mods.some((mod) => mod.code === "Alt")) {
-    displays.push("Alt");
+    displays.push(rightAlt && !leftAlt ? "Right Alt" : "Alt");
     codes.push("Alt");
   }
   for (const mod of mods) {
