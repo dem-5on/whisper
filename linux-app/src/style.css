@@ -451,3 +451,9 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 
 /* Fallback footnote lower still */
 .setup-step-page .shortcut-footnote { margin-top:88px; }
+
+/* Mic page: centered heading, dropdown input, live meter on top */
+[data-setup-page="mic"] .setup-h2, [data-setup-page="mic"] .setup-lead { text-align:center; }
+[data-setup-page="mic"] .mic-test-bars { max-width:640px; margin-left:auto; margin-right:auto; }
+#setup-mics { max-width:640px; margin-left:auto; margin-right:auto; }
+#setup-mic-select { width:100%; padding:12px 14px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:14px; cursor:pointer; }

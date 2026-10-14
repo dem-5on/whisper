@@ -808,7 +808,10 @@ function showSetup(name) {
   void setTestMode(isShortcutScreen() || name === "mic");
   void setupBgControl();
   if (isShortcutScreen()) renderSingleCards();
-  if (name === "mic") void renderSetupMics();
+  if (name === "mic") {
+    ensureMicBars();
+    void renderSetupMics();
+  }
   if (name === "role") renderRoleGrid();
   if (name === "exercise") {
     const box = document.querySelector("#exercise-box");
@@ -1002,23 +1005,28 @@ async function renderSetupMics() {
     }
     setupMicChoices = mics;
     box.replaceChildren();
+    const select = document.createElement("select");
+    select.id = "setup-mic-select";
+    select.setAttribute("aria-label", "Choose microphone");
     for (const mic of mics) {
-      const label = document.createElement("label");
-      label.className = "mic-option";
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.name = "setup-mic";
-      radio.value = mic.id;
-      radio.checked = setupMic === mic.id;
-      radio.addEventListener("change", () => {
-        setupMic = mic.id;
-        if (!preview) invoke("daemon_request", { command: "set_mic", params: { device: mic.id } }).catch(() => {});
-      });
-      const text = document.createElement("span");
-      text.textContent = mic.name;
-      label.append(radio, text);
-      box.append(label);
+      const option = document.createElement("option");
+      option.value = mic.id;
+      option.textContent = mic.name;
+      if (setupMic === mic.id) option.selected = true;
+      select.append(option);
     }
+    if (!mics.some((mic) => mic.id === setupMic)) {
+      const option = document.createElement("option");
+      option.value = setupMic;
+      option.textContent = setupMicLabel(setupMic);
+      option.selected = true;
+      select.prepend(option);
+    }
+    select.addEventListener("change", () => {
+      setupMic = select.value;
+      if (!preview) invoke("daemon_request", { command: "set_mic", params: { device: setupMic } }).catch(() => {});
+    });
+    box.append(select);
   } catch (error) {
     box.innerHTML = '<div class="empty-state">Could not list microphones. You can pick one later.</div>';
   }
