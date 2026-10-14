@@ -53,6 +53,24 @@ function notify(text = "", error = false) {
   ui.feedback.dataset.error = String(error);
 }
 
+let toastTimer;
+function showToast(message, ms) {
+  const toast = document.querySelector("#toast");
+  if (!toast) {
+    notify(message);
+    return;
+  }
+  toast.textContent = message;
+  toast.hidden = false;
+  toast.classList.remove("show");
+  void toast.offsetWidth;
+  toast.classList.add("show");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toast.hidden = true;
+  }, ms || 2400);
+}
+
 async function request(command, params = {}) {
   if (!preview) return invoke("daemon_request", { command, params });
   await new Promise((resolve) => window.setTimeout(resolve, 90));
@@ -298,18 +316,47 @@ function sessionQuery(offset) {
 
 function appendSessionRows(sessions) {
   for (const session of sessions) {
-    const row = document.createElement("button");
-    row.type = "button";
+    const row = document.createElement("div");
     row.className = `session-row${session.id === selectedSessionId ? " selected" : ""}`;
     row.dataset.sessionId = session.id;
-    row.addEventListener("click", () => void loadSession(session.id));
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    const open = () => void loadSession(session.id);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
     const title = document.createElement("strong");
     title.textContent = `${session.mode[0].toUpperCase()}${session.mode.slice(1)} · ${new Date(session.created_at).toLocaleString()}`;
     const meta = document.createElement("small");
     meta.textContent = `${session.state} · ${session.audio_available ? "Audio saved" : "No audio"}`;
     const previewText = document.createElement("p");
     previewText.textContent = session.source_transcript || "Transcript not available yet.";
-    row.append(title, meta, previewText);
+    const del = document.createElement("button");
+    del.className = "row-delete";
+    del.type = "button";
+    del.title = "Delete session";
+    del.setAttribute("aria-label", `Delete ${session.mode} session`);
+    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13h10l1-13"/></svg>';
+    del.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      if (!window.confirm("Delete this recording, transcript, and saved audio from this device? This cannot be undone.")) return;
+      try {
+        await request("delete_session", { session_id: session.id });
+        if (selectedSessionId === session.id) {
+          selectedSessionId = "";
+          showSessionPlaceholder();
+        }
+        showToast("Recording deleted.");
+        await loadSessions();
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+      }
+    });
+    row.append(title, meta, previewText, del);
     ui.sessionList.append(row);
   }
 }
@@ -451,36 +498,18 @@ async function loadSession(id) {
       try {
         if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(session.source_transcript || "");
         else throw new Error("Clipboard is unavailable.");
-        notify("Transcript copied.");
+        showToast("Transcript copied.");
       } catch { notify("Could not copy the transcript.", true); }
     });
     const exportTranscript = document.createElement("button");
     exportTranscript.className = "small-button";
     exportTranscript.textContent = "Export transcript";
     exportTranscript.disabled = !session.source_transcript;
-    exportTranscript.addEventListener("click", () => {
-      const created = new Date(session.created_at);
-      const filename = `wicx-${session.mode}-${created.toISOString().slice(0, 10)}.txt`;
-      const contents = `Wicx ${session.mode} transcript\n${created.toLocaleString()}\n\n${session.source_transcript || ""}\n`;
-      const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      notify("Transcript exported as a text file.");
+    exportTranscript.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleExportMenu(session, exportTranscript);
     });
-    const remove = document.createElement("button");
-    remove.className = "small-button danger";
-    remove.textContent = "Delete";
-    remove.addEventListener("click", async () => {
-      if (!window.confirm("Delete this recording, transcript, and saved audio from this device? This cannot be undone.")) return;
-      try { await request("delete_session", { session_id: id }); selectedSessionId = ""; notify("Recording deleted from this device."); await loadSessions(); }
-      catch (error) { notify(error.message, true); }
-    });
-    actions.append(copy, exportTranscript, remove);
+    actions.append(copy, exportTranscript);
     header.append(info, actions);
     const transcript = document.createElement("div");
     transcript.className = "transcript-body";
@@ -488,6 +517,95 @@ async function loadSession(id) {
     ui.sessionDetail.append(header, transcript);
     document.querySelectorAll(".session-row").forEach((row) => row.classList.toggle("selected", row.dataset.sessionId === id));
   } catch (error) { notify(error.message, true); }
+}
+
+function closeExportMenu() {
+  document.querySelector("#export-menu")?.remove();
+  document.removeEventListener("keydown", closeExportMenuOnEscape);
+}
+
+function closeExportMenuOnEscape(event) {
+  if (event.code === "Escape") closeExportMenu();
+}
+
+function toggleExportMenu(session, anchor) {
+  const existing = document.querySelector("#export-menu");
+  if (existing) {
+    closeExportMenu();
+    return;
+  }
+  const menu = document.createElement("div");
+  menu.className = "export-menu";
+  menu.id = "export-menu";
+  const options = [
+    ["Text (.txt)", () => exportText(session)],
+    ["PDF (print)", () => exportPdf(session)],
+    ["Word (.docx)", () => exportWord(session)],
+  ];
+  for (const [label, run] of options) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    item.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      closeExportMenu();
+      await run();
+    });
+    menu.append(item);
+  }
+  document.body.append(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 6 + window.scrollY}px`;
+  menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 220))}px`;
+  window.setTimeout(() => document.addEventListener("click", closeExportMenu), 0);
+  document.addEventListener("keydown", closeExportMenuOnEscape);
+}
+
+function exportText(session) {
+  const created = new Date(session.created_at);
+  const filename = `wicx-${session.mode}-${created.toISOString().slice(0, 10)}.txt`;
+  const contents = `Wicx ${session.mode} transcript\n${created.toLocaleString()}\n\n${session.source_transcript || ""}\n`;
+  const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Transcript exported as a text file.");
+}
+
+function exportPdf(session) {
+  const area = document.querySelector("#print-area");
+  if (!area) {
+    notify("Printing is unavailable in this window.", true);
+    return;
+  }
+  const created = new Date(session.created_at);
+  const mode = `${session.mode[0].toUpperCase()}${session.mode.slice(1)}`;
+  area.replaceChildren();
+  const title = document.createElement("h1");
+  title.textContent = `Wicx ${mode} transcript`;
+  const date = document.createElement("p");
+  date.textContent = created.toLocaleString();
+  const body = document.createElement("div");
+  for (const line of String(session.source_transcript || "No transcript available.").split("\n")) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = line;
+    body.append(paragraph);
+  }
+  area.append(title, date, body);
+  window.print();
+}
+
+async function exportWord(session) {
+  try {
+    const response = await request("export_session", { session_id: session.id, format: "docx" });
+    notify(`Word document saved to ${response.export_path || "your Documents folder"}.`);
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
 }
 
 async function loadDictionary() {

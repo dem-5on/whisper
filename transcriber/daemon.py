@@ -46,7 +46,7 @@ from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallback
 from .processing import process_transcript
 from .state import State
 from .session_store import SessionStore, SessionStoreError
-from .session_export import export_session_audio, export_session_markdown
+from .session_export import default_export_path, export_session_audio, export_session_docx, export_session_markdown
 from .vocabulary import VocabularyError, VocabularyStore
 from .streaming import LiveEvent, LiveSession
 from .transcription import (
@@ -225,7 +225,10 @@ class TranscriberDaemon:
                 str(params.get("target_id", "")),
             )
         if command == "export_session":
-            return self._export_session(str(params.get("session_id", "")), str(params.get("output", "")))
+            return self._export_session(
+                str(params.get("session_id", "")), str(params.get("output", "")),
+                str(params.get("format", "markdown")),
+            )
         if command == "export_session_audio":
             return self._export_session_audio(str(params.get("session_id", "")), str(params.get("output", "")))
         if command == "dictionary":
@@ -665,10 +668,10 @@ class TranscriberDaemon:
                 "source_id": source_id, "target_id": target_id,
             }
 
-    def _export_session(self, session_id: str, output: str) -> dict[str, Any]:
-        if not session_id or not output:
+    def _export_session(self, session_id: str, output: str = "", format: str = "markdown") -> dict[str, Any]:
+        if not session_id:
             with self._lock:
-                return {**self._status_locked(), "ok": "false", "error": "A session identifier and output path are required"}
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
         try:
             stored = self._session_store.get(session_id)
         except KeyError:
@@ -677,14 +680,27 @@ class TranscriberDaemon:
         except SessionStoreError:
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        if format == "docx":
+            target = output or str(default_export_path(stored, ".docx"))
+            writer = export_session_docx
+        elif format in {"markdown", "md", ""}:
+            if not output:
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": "An output path is required for Markdown export"}
+            target = output
+            writer = export_session_markdown
+        else:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": f"Unsupported export format: {format}"}
         try:
-            exported = export_session_markdown(stored, output)
+            exported = writer(stored, target)
         except FileExistsError:
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "The export file already exists; choose another path"}
-        except OSError:
+        except (OSError, RuntimeError) as exc:
             with self._lock:
-                return {**self._status_locked(), "ok": "false", "error": "Could not write the session export; check the path and permissions"}
+                message = str(exc) if isinstance(exc, RuntimeError) else "Could not write the session export; check the path and permissions"
+                return {**self._status_locked(), "ok": "false", "error": message}
         with self._lock:
             return {**self._status_locked(), "ok": "true", "export_path": str(exported)}
 

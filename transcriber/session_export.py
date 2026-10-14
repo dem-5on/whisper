@@ -91,6 +91,82 @@ def export_session_markdown(session: StoredSession, output: str | Path) -> Path:
     return target
 
 
+def default_export_path(session: StoredSession, suffix: str) -> Path:
+    """Suggest a non-clobbering export path in the user's Documents folder."""
+    documents = Path.home() / "Documents"
+    try:
+        documents.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        documents = Path.cwd()
+    date = "".join(ch for ch in str(session.created_at)[:10] if ch.isdigit() or ch == "-")
+    stem = f"wicx-{session.mode}-{date or 'session'}"
+    candidate = documents / f"{stem}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = documents / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def export_session_docx(session: StoredSession, output: str | Path) -> Path:
+    """Create a Word (.docx) export, refusing to overwrite an existing file."""
+    try:
+        from docx import Document
+        from docx.shared import Pt
+    except ImportError as exc:
+        raise RuntimeError(
+            "Word export needs the 'export' extra: pip install '.[export]'"
+        ) from exc
+    target = Path(output).expanduser()
+    if target.exists():
+        raise FileExistsError(f"Export already exists: {target}")
+    title = {"dictation": "Dictation", "lecture": "Lecture", "meeting": "Meeting"}.get(
+        session.mode, "Wicx session"
+    )
+    document = Document()
+    document.add_heading(title, level=1)
+    document.add_paragraph(f"Recorded: {session.created_at} · Status: {session.state}")
+    document.add_heading("Transcript", level=2)
+    if session.segments:
+        speaker_names = session.outputs.get("speaker_names", {})
+        if not isinstance(speaker_names, dict):
+            speaker_names = {}
+        for segment in session.segments:
+            speaker_id = segment.get("speaker_id")
+            speaker_name = speaker_names.get(speaker_id) if speaker_id else None
+            speaker = speaker_name or (
+                speaker_id.replace("_", " ").title() if speaker_id else ""
+            )
+            timestamp = _format_timestamp(segment.get("start_seconds", 0))
+            paragraph = document.add_paragraph()
+            label = f"[{timestamp}] "
+            if speaker:
+                label += f"{speaker}: "
+            run = paragraph.add_run(label)
+            run.bold = True
+            run.font.size = Pt(9)
+            paragraph.add_run(str(segment.get("text", "")))
+    else:
+        text = session.source_transcript.strip() or "(No transcript available.)"
+        document.add_paragraph(text)
+    if session.english_translation:
+        document.add_heading("English translation", level=2)
+        document.add_paragraph(session.english_translation.strip())
+    if session.error:
+        document.add_heading("Processing status", level=2)
+        document.add_paragraph(session.error)
+    try:
+        document.save(str(target))
+    except OSError:
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        raise
+    return target
+
+
 def export_session_audio(session: StoredSession, output: str | Path) -> Path:
     """Copy retained session audio, refusing to overwrite an existing file."""
     if session.mode not in {"lecture", "meeting"}:

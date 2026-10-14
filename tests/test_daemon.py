@@ -320,6 +320,25 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(refused["ok"], "false")
         self.assertIn("already exists", refused["error"])
 
+    def test_export_session_docx_uses_default_documents_path(self) -> None:
+        from unittest.mock import patch
+
+        stored = self.daemon._session_store.create("dictation")
+        self.daemon._session_store.update(
+            stored.id, state="ready", source_transcript="Docx please.", finished=True,
+        )
+        with patch("transcriber.session_export.Path.home", return_value=self.data):
+            exported = self.daemon.command("export_session", {
+                "session_id": stored.id, "format": "docx",
+            })
+        self.assertEqual(exported["ok"], "true")
+        self.assertTrue(exported["export_path"].endswith(".docx"))
+        self.assertTrue(exported["export_path"].startswith(str(self.data)))
+        bad = self.daemon.command("export_session", {
+            "session_id": stored.id, "format": "pdf",
+        })
+        self.assertEqual(bad["ok"], "false")
+
     def test_dictionary_commands_persist_terms_and_supply_local_recognition_hint(self) -> None:
         added = self.daemon.command("dictionary", {"action": "add", "term": "CTranslate2"})
         duplicate = self.daemon.command("dictionary", {"action": "add", "term": "ctranslate2"})

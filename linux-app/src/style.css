@@ -514,3 +514,29 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
   .session-list, .session-detail { min-height:200px; max-height:min(62vh, 640px); overflow-y:auto; }
 }
 .load-more { display:block; margin:10px auto; }
+
+/* Toast confirmation */
+#toast { position:fixed; left:50%; bottom:28px; z-index:60; padding:10px 20px; border-radius:999px; color:#fff; background:#1c1e22f2; font-size:13px; font-weight:600; opacity:0; transform:translateX(-50%) translateY(8px); transition:opacity .18s, transform .18s; pointer-events:none; }
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* Session rows are blocks with a hover-only delete icon */
+.session-row { position:relative; }
+.row-delete { position:absolute; top:8px; right:8px; display:grid; width:28px; height:28px; place-items:center; border:1px solid #e5e7eb; border-radius:8px; color:#8a919b; background:#fff; cursor:pointer; opacity:0; transition:opacity .15s; }
+.row-delete svg { width:15px; height:15px; }
+.row-delete:hover { color:#b3261e; border-color:#efc5c5; }
+.session-row:hover .row-delete, .session-row:focus-within .row-delete { opacity:1; }
+.session-row strong { padding-right:32px; }
+
+/* Export format menu */
+.export-menu { position:absolute; z-index:50; display:grid; gap:2px; min-width:180px; padding:6px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; box-shadow:0 12px 32px #11182722; }
+.export-menu button { padding:9px 12px; border:0; border-radius:7px; background:transparent; font-size:13px; text-align:left; cursor:pointer; }
+.export-menu button:hover { background:#f3f5fa; }
+
+/* Print transcript */
+#print-area { display:none; }
+@media print {
+  body > *:not(#print-area) { display:none !important; }
+  #print-area { display:block !important; color:#000; }
+  #print-area h1 { font-size:20px; margin-bottom:4px; }
+  #print-area p { font-size:13px; line-height:1.6; }
+}

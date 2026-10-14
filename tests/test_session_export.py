@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from transcriber.session_export import export_session_audio, export_session_markdown, render_session_markdown
+from transcriber.session_export import default_export_path, export_session_audio, export_session_docx, export_session_markdown, render_session_markdown
 from transcriber.session_store import SessionStore
 
 
@@ -35,6 +35,44 @@ class SessionExportTests(unittest.TestCase):
             self.assertIn("## Speakers", markdown)
             self.assertIn("Speaker 1: Dr. Mensah", markdown)
             self.assertEqual(exported.read_text(encoding="utf-8"), markdown)
+
+    def test_docx_export_holds_transcript_and_refuses_overwrite(self) -> None:
+        from docx import Document
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("dictation")
+            session = store.update(
+                session.id,
+                state="ready",
+                source_transcript="Export this dictation.",
+            )
+            target = Path(directory) / "dictation.docx"
+            exported = export_session_docx(session, target)
+
+            self.assertEqual(exported, target)
+            read_back = Document(str(target))
+            self.assertIn(
+                "Export this dictation.",
+                "\n".join(paragraph.text for paragraph in read_back.paragraphs),
+            )
+            with self.assertRaises(FileExistsError):
+                export_session_docx(session, target)
+
+    def test_default_export_path_avoids_clobbering(self) -> None:
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("lecture")
+            with patch("transcriber.session_export.Path.home", return_value=Path(directory)):
+                first = default_export_path(session, ".docx")
+                self.assertEqual(first.parent, Path(directory) / "Documents")
+                first.parent.mkdir(parents=True, exist_ok=True)
+                first.write_bytes(b"existing")
+                second = default_export_path(session, ".docx")
+            self.assertNotEqual(first, second)
+            self.assertTrue(str(second).endswith(".docx"))
 
     def test_export_never_overwrites_an_existing_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
