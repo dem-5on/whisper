@@ -37,7 +37,7 @@ fn bottom_center_pill_position(
     scale_factor: f64,
 ) -> (i32, i32) {
     let x = monitor_position.0 + (monitor_size.0 as i32 - pill_size.0 as i32) / 2;
-    let bottom_gap = (36.0 * scale_factor) as i32;
+    let bottom_gap = (8.0 * scale_factor) as i32;
     let y = monitor_position.1 + monitor_size.1 as i32 - pill_size.1 as i32 - bottom_gap;
     (x, y)
 }
@@ -228,7 +228,7 @@ mod tests {
     fn pill_is_centered_and_inset_from_bottom() {
         assert_eq!(
             bottom_center_pill_position((0, 0), (1920, 1080), (400, 74), 1.0),
-            (760, 970),
+            (760, 998),
         );
     }
 
@@ -236,7 +236,7 @@ mod tests {
     fn pill_position_respects_negative_monitor_origin() {
         assert_eq!(
             bottom_center_pill_position((-1920, -200), (1920, 1080), (400, 74), 1.0),
-            (-1160, 770),
+            (-1160, 798),
         );
     }
 
@@ -244,7 +244,7 @@ mod tests {
     fn bottom_inset_scales_with_display_density() {
         assert_eq!(
             bottom_center_pill_position((50, 100), (1440, 900), (400, 72), 1.5),
-            (570, 874),
+            (570, 916),
         );
     }
 }
