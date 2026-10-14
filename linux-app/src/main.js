@@ -579,6 +579,7 @@ let setupRole = "";
 let setupScreen = "welcome";
 let capturingAction = null;
 let pressedCodes = new Set();
+let seenMods = new Set();
 let testedAction = { dictation: false, meeting: false, lecture: false };
 let setupMic = "default";
 let setupMicChoices = [];
@@ -630,19 +631,45 @@ function codeToKeyName(code) {
   return map[code] ? { display: map[code], code } : null;
 }
 
+function modOf(code) {
+  if (code === "AltRight" || code === "AltLeft") return { display: "Alt", code: "Alt" };
+  if (code === "ControlLeft" || code === "ControlRight") return { display: "Ctrl", code: "Control" };
+  if (code === "ShiftLeft" || code === "ShiftRight") return { display: "Shift", code: "Shift" };
+  if (code === "MetaLeft" || code === "MetaRight") return { display: "Super", code: "Super" };
+  return null;
+}
+
 function describeCapture() {
   const mods = [];
+  const seen = new Set();
   let rightAlt = false;
   let leftAlt = false;
+  const note = (mod) => {
+    if (!seen.has(mod.code)) {
+      seen.add(mod.code);
+      mods.push(mod);
+    }
+  };
   for (const code of pressedCodes) {
     if (code === "AltRight") rightAlt = true;
     else if (code === "AltLeft") leftAlt = true;
-    else if (code === "ControlLeft" || code === "ControlRight") mods.push({ display: "Ctrl", code: "Control" });
-    else if (code === "ShiftLeft" || code === "ShiftRight") mods.push({ display: "Shift", code: "Shift" });
-    else if (code === "MetaLeft" || code === "MetaRight") mods.push({ display: "Super", code: "Super" });
+    else {
+      const mod = modOf(code);
+      if (mod) note(mod);
+    }
+  }
+  for (const code of seenMods) {
+    const mod = modOf(code);
+    if (mod) note(mod);
   }
   const mains = [...pressedCodes].map(codeToKeyName).filter(Boolean);
   return { mods, rightAlt, leftAlt, mains };
+}
+
+function clearCaptureState() {
+  capturingAction = null;
+  pressedCodes.clear();
+  seenMods.clear();
 }
 
 function renderCapture(action, interim) {
@@ -677,8 +704,7 @@ function tryCommitCapture() {
   const main = mains[0];
   const commit = (display, accelerator) => {
     shortcutDraft[action] = { display, accelerator };
-    capturingAction = null;
-    pressedCodes.clear();
+    clearCaptureState();
     testedAction[action] = false;
     renderSingleCards();
     void shortcutInvoke("set_shortcut", { action, display, accelerator })
@@ -713,8 +739,9 @@ function tryCommitCapture() {
 function startCapture(action) {
   capturingAction = action;
   pressedCodes.clear();
+  seenMods.clear();
   const status = document.querySelector("#teststatus-" + action);
-  if (status) status.textContent = "Press keys now… (Esc cancels)";
+  if (status) status.textContent = "Hold the modifiers, press a key… (Esc cancels)";
 }
 
 document.addEventListener("keydown", (event) => {
@@ -723,8 +750,7 @@ document.addEventListener("keydown", (event) => {
   event.stopPropagation();
   if (event.code === "Escape") {
     const action = capturingAction;
-    capturingAction = null;
-    pressedCodes.clear();
+    clearCaptureState();
     renderCapture(action, null);
     return;
   }
@@ -732,12 +758,13 @@ document.addEventListener("keydown", (event) => {
   if ((event.code === "Backspace" || event.code === "Delete") && pressedCodes.size === 0) {
     shortcutDraft[capturingAction] = { display: "", accelerator: null };
     const action = capturingAction;
-    capturingAction = null;
+    clearCaptureState();
     renderCapture(action, null);
     renderSingleCards();
     return;
   }
   pressedCodes.add(event.code);
+  if (modOf(event.code)) seenMods.add(event.code);
   tryCommitCapture();
 }, true);
 
