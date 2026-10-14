@@ -874,15 +874,18 @@ function checkDuplicates() {
   return null;
 }
 
+function flashKeycap(action, ms) {
+  const keycap = document.querySelector("#testkey-" + action);
+  if (!keycap) return;
+  keycap.classList.add("lit");
+  window.setTimeout(() => keycap.classList.remove("lit"), ms || 900);
+}
+
 async function verifyTestPress(action) {
   if (!isShortcutScreen() || capturingAction) return;
   const draft = shortcutDraft[action];
   if (!draft.accelerator) return;
-  const keycap = document.querySelector("#testkey-" + action);
-  if (keycap) {
-    keycap.classList.add("lit");
-    window.setTimeout(() => keycap.classList.remove("lit"), 700);
-  }
+  flashKeycap(action, 1200);
   try {
     const state = await shortcutInvoke("set_shortcut", {
       action, display: draft.display || "", accelerator: draft.accelerator,
@@ -895,6 +898,7 @@ async function verifyTestPress(action) {
     }
     testedAction[action] = true;
     renderSingleCards();
+    flashKeycap(action, 1200);
   } catch (error) {
     captureError(action, error && error.message ? error.message : String(error));
   }

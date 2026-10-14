@@ -429,3 +429,7 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 
 /* Single-key card: trim empty space below the Change row */
 .setup-single .setup-step { min-height:190px; }
+
+/* Test keycap lights visibly on detected press */
+.test-keycap.lit { border-color:#2859df; background:#e4ecff; color:#1e3fae; box-shadow:0 0 0 4px #3261e733; transform:scale(1.03); }
+.test-keycap { transition:border-color .15s, background .15s, transform .15s, box-shadow .15s; }
