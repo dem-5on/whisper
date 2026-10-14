@@ -282,10 +282,56 @@ function showSessionPlaceholder() {
   ui.sessionDetail.innerHTML = '<div class="detail-placeholder"><span>◷</span><h3>Choose a recording</h3><p>Select a session to read its transcript and details.</p></div>';
 }
 
+const SESSION_PAGE_SIZE = 20;
+let sessionOffset = 0;
+let sessionHasMore = false;
+let sessionLoadingMore = false;
+
+function sessionQuery(offset) {
+  return {
+    limit: SESSION_PAGE_SIZE,
+    offset,
+    mode: historyFilter === "all" ? undefined : historyFilter,
+    search: ui.historySearch.value.trim() || undefined,
+  };
+}
+
+function appendSessionRows(sessions) {
+  for (const session of sessions) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `session-row${session.id === selectedSessionId ? " selected" : ""}`;
+    row.dataset.sessionId = session.id;
+    row.addEventListener("click", () => void loadSession(session.id));
+    const title = document.createElement("strong");
+    title.textContent = `${session.mode[0].toUpperCase()}${session.mode.slice(1)} · ${new Date(session.created_at).toLocaleString()}`;
+    const meta = document.createElement("small");
+    meta.textContent = `${session.state} · ${session.audio_available ? "Audio saved" : "No audio"}`;
+    const previewText = document.createElement("p");
+    previewText.textContent = session.source_transcript || "Transcript not available yet.";
+    row.append(title, meta, previewText);
+    ui.sessionList.append(row);
+  }
+}
+
+function renderLoadMore() {
+  document.querySelector("#load-more-sessions")?.remove();
+  if (!sessionHasMore) return;
+  const button = document.createElement("button");
+  button.id = "load-more-sessions";
+  button.className = "secondary-button load-more";
+  button.type = "button";
+  button.textContent = "Load more";
+  button.addEventListener("click", () => void loadMoreSessions());
+  ui.sessionList.append(button);
+}
+
 async function loadSessions() {
+  sessionOffset = 0;
+  sessionHasMore = false;
   ui.sessionList.innerHTML = '<div class="empty-state">Loading recordings…</div>';
   try {
-    const response = await request("sessions", { limit: 100, offset: 0, mode: historyFilter === "all" ? undefined : historyFilter, search: ui.historySearch.value.trim() || undefined });
+    const response = await request("sessions", sessionQuery(0));
     const sessions = Array.isArray(response.sessions) ? response.sessions : [];
     ui.sessionList.replaceChildren();
     if (!sessions.length) {
@@ -293,25 +339,33 @@ async function loadSessions() {
       showSessionPlaceholder();
       return;
     }
-    sessions.forEach((session) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = `session-row${session.id === selectedSessionId ? " selected" : ""}`;
-      row.dataset.sessionId = session.id;
-      row.addEventListener("click", () => void loadSession(session.id));
-      const title = document.createElement("strong");
-      title.textContent = `${session.mode[0].toUpperCase()}${session.mode.slice(1)} · ${new Date(session.created_at).toLocaleString()}`;
-      const meta = document.createElement("small");
-      meta.textContent = `${session.state} · ${session.audio_available ? "Audio saved" : "No audio"}`;
-      const previewText = document.createElement("p");
-      previewText.textContent = session.source_transcript || "Transcript not available yet.";
-      row.append(title, meta, previewText);
-      ui.sessionList.append(row);
-    });
+    appendSessionRows(sessions);
+    sessionOffset = sessions.length;
+    sessionHasMore = response.has_more === true;
+    renderLoadMore();
     if (selectedSessionId && sessions.some((session) => session.id === selectedSessionId)) await loadSession(selectedSessionId);
     else showSessionPlaceholder();
   } catch (error) {
     ui.sessionList.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadMoreSessions() {
+  if (sessionLoadingMore || !sessionHasMore) return;
+  sessionLoadingMore = true;
+  document.querySelector("#load-more-sessions")?.remove();
+  try {
+    const response = await request("sessions", sessionQuery(sessionOffset));
+    const sessions = Array.isArray(response.sessions) ? response.sessions : [];
+    appendSessionRows(sessions);
+    sessionOffset += sessions.length;
+    sessionHasMore = response.has_more === true;
+    renderLoadMore();
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+    renderLoadMore();
+  } finally {
+    sessionLoadingMore = false;
   }
 }
 
