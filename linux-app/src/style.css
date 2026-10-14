@@ -498,3 +498,6 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 
 /* Activity rail stays put while the middle column scrolls */
 .right-rail { position:sticky; top:24px; align-self:start; }
+
+/* Rail must be content-height for sticky to engage */
+.right-rail { min-height:0; }
