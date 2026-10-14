@@ -117,25 +117,31 @@ fn anchor_pill(app: &tauri::AppHandle, pill: &tauri::WebviewWindow, loud: bool) 
         .flatten()
         .or_else(|| app.primary_monitor().ok().flatten());
     match monitor {
-        Some(monitor) => match (pill.outer_size(), pill.scale_factor()) {
-            (Ok(window_size), Ok(scale)) => {
+        Some(monitor) => match pill.scale_factor() {
+            Ok(scale) => {
+                // The pill window has a fixed size (see tauri.conf.json); the
+                // runtime outer_size read is unreliable on some stacks, so
+                // anchor from the configured size instead of measuring.
+                const PILL_WIDTH: f64 = 194.0;
+                const PILL_HEIGHT: f64 = 52.0;
                 let monitor_position = monitor.position();
                 let monitor_size = monitor.size();
                 let (x, y) = bottom_center_pill_position(
                     (monitor_position.x, monitor_position.y),
                     (monitor_size.width, monitor_size.height),
-                    (window_size.width, window_size.height),
+                    (
+                        (PILL_WIDTH * scale) as u32,
+                        (PILL_HEIGHT * scale) as u32,
+                    ),
                     scale,
                 );
                 if loud {
                     eprintln!(
-                        "wicx: pill pos monitor=({},{}) size={}x{} pill={}x{} scale={scale} -> ({x},{y})",
+                        "wicx: pill pos monitor=({},{}) size={}x{} scale={scale} -> ({x},{y})",
                         monitor_position.x,
                         monitor_position.y,
                         monitor_size.width,
                         monitor_size.height,
-                        window_size.width,
-                        window_size.height,
                     );
                 }
                 if let Err(error) = pill.set_position(PhysicalPosition::new(x, y)) {
