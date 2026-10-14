@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
-use tauri::{Emitter, Manager, PhysicalPosition};
+use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
 mod shortcuts;
@@ -164,6 +164,11 @@ fn main() {
 
     tauri::Builder::default()
         .manage(shortcuts::ShortcutState_::new())
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(focused) = event {
+                eprintln!("wicx: window '{}' focused={focused}", window.label());
+            }
+        })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
