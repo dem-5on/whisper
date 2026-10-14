@@ -448,3 +448,6 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 
 /* Fallback footnote sits well below the shortcut card */
 .setup-step-page .shortcut-footnote { margin-top:44px; }
+
+/* Fallback footnote lower still */
+.setup-step-page .shortcut-footnote { margin-top:88px; }
