@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import appInfo from "../package.json";
 import "./style.css";
+console.timeStamp("wicx: frontend module start");
 
 const preview = !window.__TAURI_INTERNALS__;
 const ui = {
@@ -124,6 +126,7 @@ function updateStatus(status) {
     void loadActivityStats();
   }
   previousState = status.state;
+  void setupLiveStatus(status);
 }
 
 async function syncRecordingPill(status, busy, activeMode, recording) {
@@ -166,6 +169,7 @@ async function pollStatus() {
 }
 
 function openPage(page) {
+  document.body.classList.toggle("in-setup", page === "setup");
   ui.pages.forEach((element) => {
     const active = element.id === `page-${page}`;
     element.hidden = !active;
@@ -174,6 +178,7 @@ function openPage(page) {
   document.querySelectorAll(".nav-item[data-page]").forEach((button) => button.classList.toggle("selected", button.dataset.page === page));
   if (page === "history") void loadSessions();
   if (page === "dictionary") void loadDictionary();
+  void setupBgControl();
 }
 
 async function loadActivityStats() {
@@ -539,7 +544,764 @@ ui.rewrite.addEventListener("change", async () => {
 void refreshMicrophones().catch((error) => { if (!preview) notify(error.message, true); });
 ui.updateButton.addEventListener("click", () => void checkForUpdates());
 void loadActivityStats();
+
+// ---- First-run setup walkthrough: Welcome > Set up > Experience it
+
+const SHORTCUT_ACTIONS = ["dictation", "meeting", "lecture"];
+const SHORTCUT_DEFAULTS = {
+  dictation: { display: "Right Alt", accelerator: "RightAlt" },
+  meeting: { display: "", accelerator: null },
+  lecture: { display: "", accelerator: null },
+};
+const SHORTCUT_BLURB = {
+  dictation: "Speak into whatever app you're using.",
+  meeting: "Capture a discussion with speaker labels and outcomes.",
+  lecture: "Capture a class with audio and transcript together.",
+};
+const ROLES = [
+  ["student", "Student"], ["engineering", "Engineering / data"], ["writer", "Writer"],
+  ["healthcare", "Healthcare"], ["legal", "Legal"], ["finance", "Finance"],
+  ["educator", "Educator"], ["marketing", "Marketing"], ["sales", "Sales"],
+  ["creator", "Creator"], ["other", "Other"],
+];
+let mockShortcuts = {
+  bindings: {
+    dictation: { display: "Right Alt", accelerator: "RightAlt", register_error: null },
+    meeting: { display: "", accelerator: null, register_error: null },
+    lecture: { display: "", accelerator: null, register_error: null },
+  },
+  long_consent: false,
+  setup_completed: false,
+  role: "",
+};
+let shortcutDraft = JSON.parse(JSON.stringify(SHORTCUT_DEFAULTS));
+let setupRole = "";
+let setupScreen = "welcome";
+let capturingAction = null;
+let pressedCodes = new Set();
+let testedAction = { dictation: false, meeting: false, lecture: false };
+let setupMic = "default";
+let setupMicChoices = [];
+let micTesting = false;
+let micMaxPeak = 0;
+
+async function shortcutInvoke(command, params = {}) {
+  if (!preview) return invoke(command, params);
+  await new Promise((resolve) => window.setTimeout(resolve, 60));
+  if (command === "get_shortcuts") return JSON.parse(JSON.stringify(mockShortcuts));
+  if (command === "set_shortcut") {
+    const { action, display, accelerator } = params;
+    mockShortcuts.bindings[action] = {
+      display: accelerator ? display : "",
+      accelerator: accelerator || null,
+      register_error: null,
+    };
+    return JSON.parse(JSON.stringify(mockShortcuts));
+  }
+  if (command === "set_long_consent") {
+    mockShortcuts.long_consent = params.consented === true;
+    return { long_consent: mockShortcuts.long_consent };
+  }
+  if (command === "set_role") {
+    mockShortcuts.role = String(params.role || "");
+    return { role: mockShortcuts.role, seeded: 5 };
+  }
+  if (command === "set_shortcut_test") return { shortcut_test: params.active === true };
+  if (command === "complete_setup") {
+    mockShortcuts.setup_completed = true;
+    return { setup_completed: true };
+  }
+  throw new Error("Unsupported shortcut action.");
+}
+
+function codeToKeyName(code) {
+  if (code === "Space") return { display: "Space", code: "Space" };
+  if (/^Key[A-Z]$/.test(code)) return { display: code.slice(3), code };
+  if (/^Digit[0-9]$/.test(code)) return { display: code.slice(5), code };
+  if (/^F\d{1,2}$/.test(code)) return { display: code, code };
+  const map = {
+    Tab: "Tab", CapsLock: "CapsLock", Backquote: "`", Minus: "-", Equal: "=",
+    BracketLeft: "[", BracketRight: "]", Backslash: "\\", Semicolon: ";",
+    Quote: "'", Comma: ",", Period: ".", Slash: "/", Insert: "Insert",
+    Delete: "Delete", Home: "Home", End: "End", PageUp: "PageUp",
+    PageDown: "PageDown", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left",
+    ArrowRight: "Right", PrintScreen: "PrintScreen", ScrollLock: "ScrollLock", Pause: "Pause",
+  };
+  return map[code] ? { display: map[code], code } : null;
+}
+
+function describeCapture() {
+  const mods = [];
+  let rightAlt = false;
+  let leftAlt = false;
+  for (const code of pressedCodes) {
+    if (code === "AltRight") rightAlt = true;
+    else if (code === "AltLeft") leftAlt = true;
+    else if (code === "ControlLeft" || code === "ControlRight") mods.push({ display: "Ctrl", code: "Control" });
+    else if (code === "ShiftLeft" || code === "ShiftRight") mods.push({ display: "Shift", code: "Shift" });
+    else if (code === "MetaLeft" || code === "MetaRight") mods.push({ display: "Super", code: "Super" });
+  }
+  const mains = [...pressedCodes].map(codeToKeyName).filter(Boolean);
+  return { mods, rightAlt, leftAlt, mains };
+}
+
+function renderCapture(action, interim) {
+  const display = document.querySelector("#capture-" + action);
+  const error = document.querySelector("#error-" + action);
+  if (!display) return;
+  if (interim) {
+    display.textContent = interim;
+    display.classList.add("capturing");
+    if (error) error.hidden = true;
+    return;
+  }
+  display.classList.remove("capturing");
+  const draft = shortcutDraft[action];
+  display.textContent = draft.display || "Not set";
+  display.classList.toggle("capture-empty", !draft.display);
+  if (error) error.hidden = true;
+}
+
+function captureError(action, message) {
+  const error = document.querySelector("#error-" + action);
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = false;
+}
+
+
+function tryCommitCapture() {
+  if (!capturingAction) return;
+  const action = capturingAction;
+  const { mods, rightAlt, leftAlt, mains } = describeCapture();
+  const main = mains[0];
+  const commit = (display, accelerator) => {
+    shortcutDraft[action] = { display, accelerator };
+    capturingAction = null;
+    pressedCodes.clear();
+    testedAction[action] = false;
+    renderSingleCards();
+    void shortcutInvoke("set_shortcut", { action, display, accelerator })
+      .then(renderShortcutErrors)
+      .catch((error) => captureError(action, error && error.message ? error.message : String(error)));
+  };
+  if (!main) {
+    if (rightAlt && !leftAlt && mods.length === 0) {
+      if (action !== "dictation") {
+        captureError(action, "Right Alt alone is reserved for Dictation. Pick a combination.");
+        return;
+      }
+      commit("Right Alt", "RightAlt");
+    }
+    return;
+  }
+  const displays = [];
+  const codes = [];
+  if (rightAlt || leftAlt) {
+    displays.push("Alt");
+    codes.push("Alt");
+  }
+  for (const mod of mods) {
+    displays.push(mod.display);
+    codes.push(mod.code);
+  }
+  displays.push(main.display);
+  codes.push(main.code);
+  commit(displays.join(" + "), codes.join("+"));
+}
+
+function startCapture(action) {
+  capturingAction = action;
+  pressedCodes.clear();
+  const status = document.querySelector("#teststatus-" + action);
+  if (status) status.textContent = "Press keys now… (Esc cancels)";
+}
+
+document.addEventListener("keydown", (event) => {
+  if (!capturingAction) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.code === "Escape") {
+    const action = capturingAction;
+    capturingAction = null;
+    pressedCodes.clear();
+    renderCapture(action, null);
+    return;
+  }
+  if (event.repeat) return;
+  if ((event.code === "Backspace" || event.code === "Delete") && pressedCodes.size === 0) {
+    shortcutDraft[capturingAction] = { display: "", accelerator: null };
+    const action = capturingAction;
+    capturingAction = null;
+    renderCapture(action, null);
+    renderSingleCards();
+    return;
+  }
+  pressedCodes.add(event.code);
+  tryCommitCapture();
+}, true);
+
+document.addEventListener("keyup", (event) => {
+  if (capturingAction) pressedCodes.delete(event.code);
+}, true);
+
+// ---- Walkthrough screens
+
+const SETUP_PHASE = {
+  welcome: "welcome",
+  "shortcut-dictation": "setup", "shortcut-meeting": "setup", "shortcut-lecture": "setup",
+  mic: "setup", role: "setup",
+  intro: "experience", exercise: "experience", summary: "experience",
+};
+
+let longConsentDraft = false;
+
+function isShortcutScreen() {
+  return setupScreen === "shortcut-dictation" || setupScreen === "shortcut-meeting" || setupScreen === "shortcut-lecture";
+}
+
+function showSetup(name) {
+  if (!SETUP_PHASE[name]) return;
+  setupScreen = name;
+  const head = document.querySelector("#setup-head");
+  if (head) head.hidden = !isShortcutScreen();
+  document.querySelectorAll("[data-setup-page]").forEach((page) => {
+    page.hidden = page.dataset.setupPage !== name;
+  });
+  document.querySelectorAll("[data-phase]").forEach((item) => {
+    item.classList.toggle("selected", item.dataset.phase === SETUP_PHASE[name]);
+  });
+  void setTestMode(isShortcutScreen() || name === "mic");
+  void setupBgControl();
+  if (isShortcutScreen()) renderSingleCards();
+  if (name === "mic") void renderSetupMics();
+  if (name === "role") renderRoleGrid();
+  if (name === "exercise") {
+    const box = document.querySelector("#exercise-box");
+    if (box) {
+      box.value = "";
+      const go = document.querySelector("#exercise-continue");
+      if (go) go.disabled = true;
+      const note = document.querySelector("#exercise-note");
+      if (note) note.hidden = true;
+      window.setTimeout(() => box.focus(), 60);
+    }
+  }
+  if (name === "summary") renderSummaryCards();
+}
+
+async function setTestMode(on) {
+  if (preview) return;
+  try {
+    await invoke("set_shortcut_test", { active: on === true });
+  } catch (error) {
+    /* test mode is best-effort; capture still works in-app */
+  }
+}
+
+function renderSingleCards() {
+  for (const action of SHORTCUT_ACTIONS) {
+    const mount = document.querySelector("#single-" + action);
+    if (!mount) continue;
+    const draft = shortcutDraft[action];
+    mount.replaceChildren();
+    const card = document.createElement("article");
+    card.className = "setup-step";
+    const head = document.createElement("div");
+    head.className = "setup-step-head";
+    const title = document.createElement("div");
+    const name = document.createElement("h2");
+    name.textContent = action.charAt(0).toUpperCase() + action.slice(1);
+    const blurb = document.createElement("p");
+    blurb.textContent = SHORTCUT_BLURB[action];
+    title.append(name, blurb);
+    head.append(title);
+    const visual = document.createElement("div");
+    visual.className = "test-key-visual";
+    const keycap = document.createElement("div");
+    keycap.className = "test-keycap test-keycap-big";
+    keycap.id = "testkey-" + action;
+    keycap.textContent = draft.display || "Not set";
+    visual.append(keycap);
+    const status = document.createElement("p");
+    status.className = "capture-hint";
+    status.id = "teststatus-" + action;
+    status.textContent = testedAction[action]
+      ? "Working. Press it anytime."
+      : "Press " + (draft.display || "your shortcut") + " now — the key lights up when seen.";
+    const row = document.createElement("div");
+    row.className = "capture-row";
+    const change = document.createElement("button");
+    change.className = "secondary-button";
+    change.type = "button";
+    change.textContent = "Change";
+    change.addEventListener("click", () => startCapture(action));
+    row.append(change);
+    const error = document.createElement("p");
+    error.className = "capture-error";
+    error.id = "error-" + action;
+    error.hidden = true;
+    card.append(head, visual, status, row, error);
+    mount.append(card);
+  }
+  refreshYesButtons();
+}
+
+function refreshYesButtons() {
+  const yesDictation = document.querySelector("#yes-dictation");
+  if (yesDictation) yesDictation.disabled = testedAction.dictation !== true;
+  for (const action of ["meeting", "lecture"]) {
+    const yes = document.querySelector("#yes-" + action);
+    if (!yes) continue;
+    if (!shortcutDraft[action].accelerator) {
+      yes.disabled = false;
+      continue;
+    }
+    yes.disabled = testedAction[action] !== true;
+  }
+}
+
+function checkDuplicates() {
+  const seen = new Map();
+  for (const action of SHORTCUT_ACTIONS) {
+    const accelerator = shortcutDraft[action].accelerator;
+    if (!accelerator) continue;
+    const key = accelerator.toUpperCase();
+    if (seen.has(key)) return action;
+    seen.set(key, action);
+  }
+  return null;
+}
+
+async function verifyTestPress(action) {
+  if (!isShortcutScreen() || capturingAction) return;
+  const draft = shortcutDraft[action];
+  if (!draft.accelerator) return;
+  const keycap = document.querySelector("#testkey-" + action);
+  if (keycap) {
+    keycap.classList.add("lit");
+    window.setTimeout(() => keycap.classList.remove("lit"), 700);
+  }
+  try {
+    const state = await shortcutInvoke("set_shortcut", {
+      action, display: draft.display || "", accelerator: draft.accelerator,
+    });
+    renderShortcutErrors(state);
+    const refused = state.bindings?.[action]?.register_error;
+    if (refused) {
+      captureError(action, refused);
+      return;
+    }
+    testedAction[action] = true;
+    renderSingleCards();
+  } catch (error) {
+    captureError(action, error && error.message ? error.message : String(error));
+  }
+}
+
+function comboFromEvent(event) {
+  if (event.code === "AltRight") return { action: "dictation", matched: true };
+  const mods = [];
+  if (event.altKey) mods.push("Alt");
+  if (event.ctrlKey) mods.push("Control");
+  if (event.shiftKey) mods.push("Shift");
+  if (event.metaKey) mods.push("Super");
+  const main = codeToKeyName(event.code);
+  if (!main || mods.length === 0) return { matched: false };
+  const combo = mods.concat([main.code]).join("+").toUpperCase();
+  for (const action of SHORTCUT_ACTIONS) {
+    const accel = shortcutDraft[action].accelerator;
+    if (accel && accel.toUpperCase() === combo) return { action, matched: true };
+  }
+  return { matched: false };
+}
+
+document.addEventListener("keydown", (event) => {
+  if (!isShortcutScreen()) return;
+  const seen = document.querySelector("#last-key-seen");
+  if (seen) seen.textContent = "Last key seen: " + event.code + " (" + event.key + ")";
+  if (capturingAction || event.repeat) return;
+  const hit = comboFromEvent(event);
+  if (hit.matched) void verifyTestPress(hit.action);
+});
+
 if (!preview) {
-  window.clearTimeout(statusTimer);
-  void pollStatus();
-} else void refreshStatus();
+  listen("shortcut-test-press", (event) => {
+    const action = String(event.payload || "");
+    if (SHORTCUT_ACTIONS.includes(action)) void verifyTestPress(action);
+  }).catch(() => {});
+  listen("shortcut-needs-consent", (event) => {
+    const mode = String(event.payload || "");
+    if (mode === "lecture" || mode === "meeting") beginSession(mode);
+  }).catch(() => {});
+}
+
+function setupMicLabel(id) {
+  if (!id || id === "default") return "System default";
+  const found = setupMicChoices.find((mic) => mic.id === id);
+  return found ? found.name : id;
+}
+
+async function renderSetupMics() {
+  const box = document.querySelector("#setup-mics");
+  if (!box) return;
+  box.innerHTML = '<div class="empty-state">Loading microphones…</div>';
+  try {
+    let mics = [{ id: "default", name: "System default" }];
+    if (!preview) {
+      const response = await invoke("daemon_request", { command: "mics", params: {} });
+      if (Array.isArray(response.mics) && response.mics.length > 0) {
+        mics = [{ id: "default", name: "System default" }];
+        for (const mic of response.mics) {
+          if (mic.id !== "default") mics.push({ id: String(mic.id), name: String(mic.name || mic.id) });
+        }
+      }
+      const status = await invoke("daemon_request", { command: "status", params: {} });
+      if (status.mic) setupMic = String(status.mic);
+    } else {
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+    }
+    setupMicChoices = mics;
+    box.replaceChildren();
+    for (const mic of mics) {
+      const label = document.createElement("label");
+      label.className = "mic-option";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "setup-mic";
+      radio.value = mic.id;
+      radio.checked = setupMic === mic.id;
+      radio.addEventListener("change", () => {
+        setupMic = mic.id;
+        if (!preview) invoke("daemon_request", { command: "set_mic", params: { device: mic.id } }).catch(() => {});
+      });
+      const text = document.createElement("span");
+      text.textContent = mic.name;
+      label.append(radio, text);
+      box.append(label);
+    }
+  } catch (error) {
+    box.innerHTML = '<div class="empty-state">Could not list microphones. You can pick one later.</div>';
+  }
+}
+
+function ensureMicBars() {
+  const box = document.querySelector("#mic-test-bars");
+  if (!box || box.dataset.built === "true") return;
+  box.dataset.built = "true";
+  for (let i = 0; i < 12; i += 1) {
+    const bar = document.createElement("span");
+    box.append(bar);
+  }
+}
+
+function setupLiveStatus(status) {
+  ensureMicBars();
+  if (setupScreen !== "mic" || !micTesting) return;
+  if (status.state !== "RECORDING") return;
+  const samples = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
+  let peak = 0;
+  const bars = document.querySelectorAll("#mic-test-bars span");
+  samples.forEach((sample, index) => {
+    const value = Math.abs(Number(sample) || 0);
+    if (index < 12 * 2 && index % 2 === 0 && value > peak) peak = value;
+  });
+  if (peak > micMaxPeak) micMaxPeak = peak;
+  const pairs = [];
+  for (let i = 0; i < 12; i += 1) {
+    const a = Math.abs(Number(samples[i * 2]) || 0);
+    const b = Math.abs(Number(samples[i * 2 + 1]) || 0);
+    pairs.push(Math.max(a, b));
+  }
+  bars.forEach((bar, index) => {
+    const value = pairs[index] || 0;
+    bar.style.height = (value < 0.002 ? 3 : 3 + Math.pow(value, 0.4) * 30).toFixed(1) + "px";
+    bar.classList.toggle("hot", value >= 0.02);
+  });
+}
+
+async function toggleMicTest() {
+  const button = document.querySelector("#mic-test-btn");
+  const error = document.querySelector("#mic-test-error");
+  if (!micTesting) {
+    micTesting = true;
+    micMaxPeak = 0;
+    if (error) error.hidden = true;
+    if (button) button.textContent = "Stop & discard";
+    try {
+      if (!preview) await invoke("daemon_request", { command: "toggle", params: {} });
+    } catch (err) {
+      micTesting = false;
+      if (button) button.textContent = "Test microphone";
+      if (error) {
+        error.textContent = err && err.message ? err.message : String(err);
+        error.hidden = false;
+      }
+    }
+    return;
+  }
+  micTesting = false;
+  if (button) button.textContent = "Test microphone";
+  try {
+    if (!preview) await invoke("daemon_request", { command: "cancel", params: {} });
+  } catch (err) {
+    /* already stopped; fall through to evaluation */
+  }
+  const yes = document.querySelector("#mic-test-yes");
+  if (micMaxPeak > 0.02) {
+    if (yes) yes.disabled = false;
+    notify("Microphone responds. Continue when ready.");
+  } else if (error) {
+    error.textContent = "No speech detected — check the selected input and try again.";
+    error.hidden = false;
+  }
+}
+
+function renderRoleGrid() {
+  const box = document.querySelector("#role-grid");
+  if (!box || box.dataset.built === "true") return;
+  box.dataset.built = "true";
+  for (const [id, label] of ROLES) {
+    const button = document.createElement("button");
+    button.className = "role-chip";
+    button.type = "button";
+    button.textContent = label;
+    button.dataset.role = id;
+    if (setupRole === id) button.classList.add("selected");
+    button.addEventListener("click", () => {
+      setupRole = id;
+      box.querySelectorAll(".role-chip").forEach((chip) => {
+        chip.classList.toggle("selected", chip.dataset.role === id);
+      });
+      const go = document.querySelector("#role-continue");
+      if (go) go.disabled = false;
+    });
+    box.append(button);
+  }
+  const selected = document.querySelector("#role-continue");
+  if (selected && setupRole) selected.disabled = false;
+}
+
+async function saveRoleAndContinue() {
+  if (!setupRole) {
+    notify("Pick the role that fits best to continue.", true);
+    return;
+  }
+  try {
+    const result = await shortcutInvoke("set_role", { role: setupRole });
+    if (result.seeded > 0) notify("Starter vocabulary for your field is in Dictionary.");
+    showSetup("intro");
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
+}
+
+function renderSummaryCards() {
+  const box = document.querySelector("#setup-summary-cards");
+  if (!box) return;
+  box.replaceChildren();
+  for (const action of SHORTCUT_ACTIONS) {
+    const card = document.createElement("div");
+    card.className = "summary-card";
+    const title = document.createElement("strong");
+    title.textContent = action.charAt(0).toUpperCase() + action.slice(1);
+    const key = document.createElement("code");
+    key.textContent = shortcutDraft[action].display || "Not set";
+    card.append(title, key);
+    box.append(card);
+  }
+}
+
+function advanceFromDictation() {
+  if (testedAction.dictation !== true || !shortcutDraft.dictation.accelerator) {
+    notify("Press Right Alt once to verify Dictation first.", true);
+    return;
+  }
+  showSetup("shortcut-meeting");
+}
+
+function advanceFromLongMode(action, next) {
+  if (shortcutDraft[action].accelerator && testedAction[action] !== true) {
+    notify("Press the shortcut once to verify it first, or clear it to skip.", true);
+    return;
+  }
+  if (shortcutDraft[action].accelerator && !longConsentDraft) {
+    notify("Check the recording-consent box to enable this shortcut.", true);
+    return;
+  }
+  const dup = checkDuplicates();
+  if (dup) {
+    captureError(dup, "Same shortcut as another mode. Press a different combination.");
+    notify("Two modes share one shortcut. Give each its own.", true);
+    showSetup("shortcut-dictation");
+    return;
+  }
+  if (shortcutDraft[action].accelerator) {
+    void shortcutInvoke("set_long_consent", { consented: true }).catch(() => {});
+  }
+  showSetup(next);
+}
+
+function renderShortcutState(state) {
+  if (!state) return;
+  if (state.bindings) {
+    for (const action of SHORTCUT_ACTIONS) {
+      const entry = state.bindings[action];
+      if (entry && (entry.display || entry.accelerator)) {
+        shortcutDraft[action] = { display: entry.display || "", accelerator: entry.accelerator || null };
+      }
+      renderCapture(action, null);
+    }
+    renderShortcutErrors(state);
+  }
+  longConsentDraft = state.long_consent === true;
+  document.querySelectorAll(".setup-consent-box").forEach((box) => {
+    box.checked = longConsentDraft;
+  });
+  if (state.role) {
+    setupRole = String(state.role);
+    const go = document.querySelector("#role-continue");
+    if (go && setupRole) go.disabled = false;
+  }
+  renderSingleCards();
+}
+
+function renderShortcutErrors(state) {
+  if (!state || !state.bindings) return;
+  for (const action of SHORTCUT_ACTIONS) {
+    const error = document.querySelector("#error-" + action);
+    const registerError = state.bindings[action]?.register_error;
+    if (error && registerError) {
+      error.textContent = registerError;
+      error.hidden = false;
+    }
+  }
+}
+
+async function finishSetup() {
+  try {
+    await shortcutInvoke("complete_setup", {});
+    await setTestMode(false);
+    notify("Setup complete. Press Right Alt anywhere to dictate.");
+    openPage("home");
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
+}
+
+async function bootShortcuts() {
+  try {
+    const state = await shortcutInvoke("get_shortcuts", {});
+    renderShortcutState(state);
+    if (state.setup_completed !== true) {
+      showSetup("welcome");
+      openPage("setup");
+    }
+  } catch (error) {
+    if (!preview) notify("Could not load keyboard shortcuts.", true);
+  }
+}
+
+document.querySelector("#yes-dictation")?.addEventListener("click", advanceFromDictation);
+document.querySelector("#yes-meeting")?.addEventListener("click", () => advanceFromLongMode("meeting", "shortcut-lecture"));
+document.querySelector("#yes-lecture")?.addEventListener("click", () => advanceFromLongMode("lecture", "mic"));
+document.querySelectorAll(".setup-consent-box").forEach((box) => {
+  box.addEventListener("change", () => {
+    longConsentDraft = box.checked;
+    document.querySelectorAll(".setup-consent-box").forEach((other) => {
+      other.checked = longConsentDraft;
+    });
+    refreshYesButtons();
+  });
+});
+document.querySelector("#mic-test-btn")?.addEventListener("click", () => void toggleMicTest());
+document.querySelector("#mic-test-yes")?.addEventListener("click", () => showSetup("role"));
+document.querySelector("#role-continue")?.addEventListener("click", () => void saveRoleAndContinue());
+document.querySelector("#setup-finish")?.addEventListener("click", () => void finishSetup());
+document.querySelectorAll("[data-setup-go]").forEach((button) => {
+  button.addEventListener("click", () => showSetup(button.dataset.setupGo));
+});
+document.querySelector("#exercise-box")?.addEventListener("input", (event) => {
+  const go = document.querySelector("#exercise-continue");
+  const done = event.target.value.trim().length > 3;
+  if (go) go.disabled = !done;
+  const note = document.querySelector("#exercise-note");
+  if (note) note.hidden = !done;
+});
+document.querySelector("#exercise-continue")?.addEventListener("click", () => showSetup("summary"));
+document.querySelectorAll("[data-capture]").forEach((button) => {
+  button.addEventListener("click", () => startCapture(button.dataset.capture));
+});
+document.querySelectorAll("[data-clear]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const action = button.dataset.clear;
+    shortcutDraft[action] = { display: "", accelerator: null };
+    testedAction[action] = false;
+    renderCapture(action, null);
+    renderSingleCards();
+    void shortcutInvoke("set_shortcut", { action, display: "", accelerator: null }).catch(() => {});
+  });
+});
+let setupBgRunning = false;
+
+function setupBgDraw(now) {
+  const canvas = document.querySelector("#setup-bg");
+  if (!canvas) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const w = window.innerWidth;
+  const hgt = window.innerHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(hgt * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(hgt * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, hgt);
+  const t = now / 1000;
+  const ribbons = [
+    { y: 0.40, a: 44, f: 0.0062, sp: 0.35, r: 2.1, al: 0.20 },
+    { y: 0.55, a: 68, f: 0.0041, sp: -0.22, r: 1.6, al: 0.12 },
+    { y: 0.48, a: 24, f: 0.0110, sp: 0.50, r: 1.2, al: 0.10 },
+  ];
+  for (const ribbon of ribbons) {
+    for (let x = -20; x < w + 20; x += 9) {
+      const y = hgt * ribbon.y
+        + Math.sin(x * ribbon.f + t * ribbon.sp) * ribbon.a
+        + Math.sin(x * ribbon.f * 2.7 + t * ribbon.sp * 1.6) * ribbon.a * 0.35;
+      const edge = Math.abs(y - hgt * ribbon.y) / (ribbon.a * 1.4);
+      const alpha = Math.max(0.02, ribbon.al * (1 - edge));
+      ctx.beginPath();
+      ctx.fillStyle = "rgba(23, 24, 27, " + alpha.toFixed(3) + ")";
+      ctx.arc(x, y, ribbon.r, 0, 6.2832);
+      ctx.fill();
+    }
+  }
+}
+
+function setupBgLoop(now) {
+  setupBgDraw(now);
+  if (setupBgRunning) requestAnimationFrame(setupBgLoop);
+}
+
+function setupBgControl() {
+  const canvas = document.querySelector("#setup-bg");
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const page = document.querySelector("#page-setup");
+  const active = document.body.classList.contains("in-setup") && !!page && !page.hidden;
+  if (canvas) canvas.hidden = !active;
+  if (!active || reduce) setupBgRunning = false;
+  if (active && !reduce && !setupBgRunning) {
+    setupBgRunning = true;
+    requestAnimationFrame(setupBgLoop);
+  }
+  if (active && reduce) setupBgDraw(1200);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) setupBgRunning = false;
+  else void setupBgControl();
+});
+console.timeStamp("wicx: frontend boot calls issued");
+void bootShortcuts();
+

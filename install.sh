@@ -74,6 +74,11 @@ sudo -v
 run_quiet sudo apt-get -qq update
 sudo -v
 run_quiet sudo apt-get -qq install -y sox ydotool pipewire-bin python3-venv curl
+if ! id -nG "$(id -u)" | tr ' ' '\n' | grep -qx input; then
+    status "Granting keyboard-device access for the Right Alt shortcut (sudo may ask again)..."
+    sudo usermod -aG input "$(id -un)"
+    ADDED_INPUT_GROUP=1
+fi
 
 PYTHON=""
 for candidate in python3 python3.12 python3.11; do
@@ -160,4 +165,8 @@ echo "Open Extensions and enable 'Wicx' if it is not enabled already."
 echo "Wayland text insertion needs ydotool access to /dev/uinput. If the first recording"
 echo "transcribes but doesn't type into the active app, open README.md → Installation help"
 echo "for the one-time device permission check."
+echo "The Right Alt shortcut reads keyboard devices through the 'input' group."
+if [[ "${ADDED_INPUT_GROUP:-}" == "1" ]]; then
+    echo "You were just added to the input group: sign out and back in once so Right Alt works."
+fi
 echo "Run 'wicx status' to check the daemon."

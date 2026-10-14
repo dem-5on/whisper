@@ -13,7 +13,7 @@ docs/*
 /windows-app/src-tauri/icons/
 /linux-app/node_modules/
 /linux-app/dist/
-/linux-app/src-tauri/target/
+/linux-app/src-tauri/target
 /linux-app/src-tauri/gen/
 /linux-app/src-tauri/icons/
 

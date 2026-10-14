@@ -275,3 +275,132 @@ h1,h2,h3,p { margin-top:0; }
   .right-rail { grid-template-rows:auto auto; }
   .update-footer { grid-column:auto; }
 }
+
+/* First-run shortcut setup */
+.setup-steps { display:grid; gap:14px; margin-bottom:18px; }
+.setup-step { padding:16px 18px; border:1px solid #eaecf0; border-radius:15px; background:#fff; box-shadow:0 4px 16px #14204105; }
+.setup-step-head { display:flex; align-items:center; gap:12px; margin-bottom:12px; }
+.setup-step-number { display:grid; width:28px; height:28px; flex:none; place-items:center; border-radius:50%; color:#fff; background:linear-gradient(145deg,#4c78f0,#2859df); font-size:13px; font-weight:700; }
+.setup-step-head h2 { margin:0; font-size:16px; }
+.setup-step-head p { margin:2px 0 0; color:#878d97; font-size:12px; }
+.capture-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.capture-display { min-width:140px; padding:8px 12px; border:1px solid #e5e7eb; border-radius:8px; color:#333943; background:#f8f9fb; font:600 13px ui-monospace,monospace; }
+.capture-display.capture-empty { color:#a5a9b0; font-weight:400; }
+.capture-display.capturing { border-color:#4c78f0; color:#2859df; background:#eef3ff; animation:capture-pulse 1s infinite; }
+@keyframes capture-pulse { 50% { box-shadow:0 0 0 4px #3261e722; } }
+.capture-hint { margin:8px 0 0; color:#9298a1; font-size:11px; }
+.capture-error { margin:8px 0 0; color:#b3261e; font-size:11px; font-weight:600; }
+.setup-consent { display:flex; gap:10px; align-items:flex-start; margin:4px 0 16px; padding:12px 14px; border:1px solid #e5e7eb; border-radius:10px; background:#f8f9fb; font-size:12px; color:#596170; }
+.setup-actions { display:flex; align-items:center; gap:14px; margin-top:4px; }
+.setting-row .secondary-button { flex:none; }
+
+/* Setup walkthrough */
+.setup-progress { display:flex; gap:8px; margin:0; padding:0; list-style:none; }
+.setup-progress li { padding:6px 12px; border-radius:999px; color:#9298a1; background:#eef0f3; font-size:11px; font-weight:700; }
+.setup-progress li.selected { color:#fff; background:linear-gradient(145deg,#4c78f0,#2859df); }
+.setup-h2 { margin:4px 0 6px; font-size:18px; }
+.setup-lead { margin:0 0 14px; color:#737a85; font-size:12px; }
+.mic-option { display:flex; gap:10px; align-items:center; margin-bottom:8px; padding:10px 12px; border:1px solid #eaecf0; border-radius:10px; background:#fff; font-size:13px; cursor:pointer; }
+.setup-summary { display:grid; gap:8px; margin-bottom:6px; }
+.summary-row { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border:1px solid #eaecf0; border-radius:10px; background:#fff; font-size:13px; }
+.summary-row code { padding:5px 9px; border-radius:6px; color:#333943; background:#f8f9fb; font-size:12px; }
+.setup-fallback { margin-top:10px; }
+#setup-mics { margin-bottom:6px; }
+
+/* Walkthrough: breadcrumb, test keys, mic test, roles, exercise */
+.setup-crumb { display:flex; gap:10px; align-items:center; margin-bottom:14px; color:#9298a1; font-size:12px; font-weight:600; }
+.setup-crumb .selected { color:#242831; }
+.test-key-visual { display:flex; justify-content:center; margin:6px 0 10px; }
+.test-keycap { min-width:120px; padding:14px 22px; text-align:center; border:2px solid #dfe3e8; border-radius:12px; background:#fff; font-size:17px; font-weight:700; transition:border-color .15s, background .15s; }
+.test-keycap.lit { border-color:#2859df; background:#e4ecff; }
+.mic-test-bars { display:flex; height:44px; align-items:center; justify-content:center; gap:3px; margin:10px 0 14px; padding:8px; border:1px solid #eaecf0; border-radius:12px; background:#fff; }
+.mic-test-bars span { width:5px; height:3px; border-radius:4px; background:#c9ced6; }
+.mic-test-bars span.hot { background:#2859df; }
+.role-grid { display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-bottom:6px; }
+.role-chip { padding:12px 8px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:13px; font-weight:600; cursor:pointer; }
+.role-chip.selected { border-color:#2859df; background:#eef3ff; color:#2859df; }
+.privacy-points { display:grid; gap:12px; margin:6px 0 18px; }
+.privacy-point { display:flex; gap:12px; padding:14px; border:1px solid #eaecf0; border-radius:12px; background:#fff; }
+.privacy-point strong { display:block; font-size:14px; }
+.privacy-point small { color:#737a85; font-size:12px; }
+.setup-center { display:grid; justify-items:center; gap:14px; padding:30px 0; text-align:center; }
+.setup-big { margin:0; font-size:40px; font-weight:500; color:#6f7782; }
+.setup-big strong { color:#17181b; font-weight:800; }
+.exercise-card { padding:16px 18px; border:1px solid #eaecf0; border-radius:15px; background:#fff; }
+.exercise-instruction { margin:0 0 12px; color:#424851; font-size:13px; }
+.exercise-sample { margin:0 0 12px; padding-left:12px; border-left:3px solid #e5e7eb; font-size:15px; font-style:italic; }
+.exercise-box { width:100%; box-sizing:border-box; padding:12px; border:1px solid #e5e7eb; border-radius:10px; font:400 14px inherit; resize:vertical; }
+.exercise-note { color:#1a7f37; font-size:12px; font-weight:600; }
+.summary-cards { display:grid; gap:10px; width:min(420px, 100%); }
+.summary-card { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-radius:14px; background:linear-gradient(180deg,#e8efff,#f7f9ff); font-size:16px; }
+.summary-card code { padding:6px 12px; border:1px solid #d5dbea; border-radius:8px; background:#fff; font-size:13px; }
+.kbd-chip { padding:4px 10px; border:1px solid #d5dbea; border-radius:8px; background:#f4f6fb; font-size:13px; }
+.setup-backrow { width:100%; text-align:left; }
+
+/* Welcome: centered privacy card */
+.setup-centered { max-width:660px; margin:0 auto; }
+.privacy-card { padding:6px; border:1px solid #eaecf0; border-radius:18px; background:#fff; box-shadow:0 6px 22px #14204108; }
+.privacy-card .privacy-point { border:0; border-radius:0; background:transparent; box-shadow:none; }
+.privacy-card .privacy-point + .privacy-point { border-top:1px solid #f0f1f4; }
+.privacy-point svg { width:22px; height:22px; flex:none; margin-top:2px; fill:none; stroke:#536fc8; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.setup-centered .setup-actions { margin-top:16px; }
+
+/* Welcome: three separate privacy cards */
+.privacy-card { display:grid; gap:14px; padding:0; border:0; background:transparent; box-shadow:none; }
+.privacy-card .privacy-point { padding:16px 18px; border:1px solid #eaecf0; border-radius:16px; background:#fff; box-shadow:0 6px 22px #14204108; }
+.privacy-card .privacy-point + .privacy-point { border-top:1px solid #eaecf0; }
+
+/* Walkthrough has no sidebar: the user has not reached the main app yet */
+body.in-setup .sidebar { display:none; }
+body.in-setup .window-chrome { left:0; }
+
+/* Welcome: three square privacy cards */
+.privacy-card { grid-template-columns:repeat(3, minmax(0, 1fr)); align-items:stretch; }
+.privacy-card .privacy-point { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; aspect-ratio:1/1; padding:20px 16px; text-align:center; }
+@media (max-width:680px) { .privacy-card { grid-template-columns:1fr; } .privacy-card .privacy-point { aspect-ratio:auto; } }
+
+/* Walkthrough content is centered on both axes */
+body.in-setup #page-setup { width:100%; max-width:960px; margin:auto; }
+
+/* Walkthrough breadcrumb: big, bold, centered, well clear of the cards */
+.setup-crumb { justify-content:center; gap:14px; margin:6px 0 96px; color:#9aa0a8; font-size:19px; font-weight:800; }
+.setup-crumb [data-phase].selected { color:#17181b; }
+
+/* Welcome: bigger square cards */
+.setup-centered { max-width:920px; }
+.privacy-card .privacy-point { gap:16px; padding:34px 26px; }
+.privacy-point svg { width:30px; height:30px; }
+.privacy-point strong { font-size:17px; }
+.privacy-point small { font-size:14px; line-height:1.55; }
+
+/* Welcome: centered, bigger Continue */
+.setup-centered .setup-actions { justify-content:center; }
+.setup-centered .primary-button { padding:14px 48px; font-size:16px; border-radius:12px; }
+
+/* Welcome: airier card grid and clear run-up to Continue */
+.privacy-card { gap:30px; }
+.setup-centered .setup-actions { margin-top:38px; }
+
+/* Welcome: Continue sits as far below the cards as the cards sit below the breadcrumb */
+.setup-centered .setup-actions { margin-top:96px; }
+
+/* Welcome: double the cards-to-Continue run-up */
+.setup-centered .setup-actions { margin-top:192px; }
+
+/* Walkthrough monochrome dotted-wave backdrop */
+#setup-bg { position:fixed; inset:0; z-index:0; pointer-events:none; }
+body.in-setup .workspace { background:#f6f7f9; }
+body.in-setup #page-setup { position:relative; z-index:1; }
+
+/* Backdrop canvas must cover the viewport, not the default 300x150 box */
+#setup-bg { width:100vw; height:100vh; }
+
+/* Shortcut test cards need air between them */
+#shortcut-tests { display:grid; gap:22px; }
+
+/* Shortcut test cards carry no numbers */
+.setup-step-number { display:none; }
+
+/* Single-key setup pages */
+.setup-single { max-width:720px; margin:0 auto; }
+.test-keycap-big { font-size:22px; padding:18px 34px; }

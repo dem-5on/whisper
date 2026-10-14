@@ -198,14 +198,22 @@ class StreamingRecorder:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._path.unlink(missing_ok=True)
         command = [
-            "rec", "-q", "-r", str(self.config.sample_rate), "-c", str(self.config.channels),
+            "rec", "--buffer", "1600", "-q", "-r", str(self.config.sample_rate), "-c", str(self.config.channels),
             "-b", "16", "-e", "signed-integer", "-L", "-t", "raw", "-",
         ]
-        env: dict[str, str] | None = None
+        if shutil.which("stdbuf") is not None:
+            # Keep piped stdout unbuffered so frames reach the meter thread
+            # as SoX emits them instead of in libc-sized blocks.
+            command = ["stdbuf", "-o0", "-e0", *command]
+        env = dict(os.environ)
         device = (self.config.input_device or "").strip() if self.config.input_device else ""
         if device and device != "default":
-            env = dict(os.environ)
             env["PULSE_SOURCE"] = device
+        # PipeWire-Pulse otherwise delivers capture in ~1s batches, which made
+        # the pill waveform step once per second. Request VoIP-style latency
+        # so 50ms frames flow while recording. setdefault keeps an explicit
+        # user/exported value in charge.
+        env.setdefault("PULSE_LATENCY_MSEC", "60")
         self._drain_queue()
         self._window.clear()
         self._captured_frames = 0
