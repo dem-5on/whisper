@@ -445,3 +445,6 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 
 /* Consent row: plain inline checkbox, aligned with the card */
 .setup-step-page .setup-consent { display:flex; align-items:center; gap:10px; max-width:640px; width:100%; margin:14px auto 0; padding:0; border:0; background:transparent; }
+
+/* Fallback footnote sits well below the shortcut card */
+.setup-step-page .shortcut-footnote { margin-top:44px; }
