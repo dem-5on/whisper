@@ -7,7 +7,6 @@ console.timeStamp("wicx: frontend module start");
 
 const preview = !window.__TAURI_INTERNALS__;
 const ui = {
-  connection: document.querySelector("#service-status"),
   feedback: document.querySelector("#feedback"),
   pages: [...document.querySelectorAll(".page")],
   nav: [...document.querySelectorAll("[data-page]")],
@@ -105,8 +104,6 @@ function updateStatus(status) {
   if (!status || typeof status !== "object") return;
   mockStatus = { ...mockStatus, ...status };
   const ready = status.ok !== "false";
-  ui.connection.dataset.ready = String(ready);
-  ui.connection.querySelector("span").textContent = preview ? "Preview" : ready ? "Ready" : "Offline";
   const busy = ["RECORDING", "PROCESSING", "DELIVERING"].includes(status.state);
   const activeMode = status.session_mode || mockStatus.session_mode || "dictation";
   const recording = status.state === "RECORDING";
@@ -155,8 +152,6 @@ async function syncRecordingPill(status, busy, activeMode, recording) {
 async function refreshStatus() {
   try { updateStatus(await request("status")); }
   catch (error) {
-    ui.connection.dataset.ready = "false";
-    ui.connection.querySelector("span").textContent = preview ? "Preview" : "Offline";
     if (!preview) notify(error.message, true);
   }
 }
