@@ -161,6 +161,13 @@ pub fn validate_accelerator(accelerator: &str, action: &str) -> Result<(), Strin
     if upper == "ALT" {
         return Err("“Alt” alone cannot be grabbed by apps. Use Alt+Space or a combination — or bind Right Alt in your desktop settings.".to_string());
     }
+    let mut seen = HashSet::new();
+    for part in text.split('+') {
+        let key = part.trim().to_uppercase();
+        if !seen.insert(key.clone()) {
+            return Err(format!("“{text}” repeats {key}. Press each key once."));
+        }
+    }
     for banned in ["CONTROL", "CTRL", "SHIFT", "SUPER", "META", "WIN"] {
         if upper == banned {
             return Err(format!(
@@ -611,6 +618,12 @@ mod tests {
     fn bare_alt_alone_is_rejected_with_guidance() {
         let error = validate_accelerator("Alt", "dictation").unwrap_err();
         assert!(error.contains("Alt+Space"), "unexpected message: {error}");
+    }
+
+    #[test]
+    fn repeated_modifier_is_rejected() {
+        let error = validate_accelerator("Alt+Alt+KeyM", "meeting").unwrap_err();
+        assert!(error.contains("repeats"), "unexpected message: {error}");
     }
 
     #[test]

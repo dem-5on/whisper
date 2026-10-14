@@ -723,7 +723,7 @@ function tryCommitCapture() {
   }
   const displays = [];
   const codes = [];
-  if (rightAlt || leftAlt) {
+  if ((rightAlt || leftAlt) && !mods.some((mod) => mod.code === "Alt")) {
     displays.push("Alt");
     codes.push("Alt");
   }
@@ -740,8 +740,15 @@ function startCapture(action) {
   capturingAction = action;
   pressedCodes.clear();
   seenMods.clear();
+  testedAction[action] = false;
+  const keycap = document.querySelector("#testkey-" + action);
+  if (keycap) {
+    keycap.textContent = "\u2026";
+    keycap.classList.remove("lit");
+  }
   const status = document.querySelector("#teststatus-" + action);
   if (status) status.textContent = "Hold the modifiers, press a key… (Esc cancels)";
+  refreshYesButtons();
 }
 
 document.addEventListener("keydown", (event) => {
@@ -749,9 +756,8 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   if (event.code === "Escape") {
-    const action = capturingAction;
     clearCaptureState();
-    renderCapture(action, null);
+    renderSingleCards();
     return;
   }
   if (event.repeat) return;
@@ -789,6 +795,7 @@ function isShortcutScreen() {
 
 function showSetup(name) {
   if (!SETUP_PHASE[name]) return;
+  clearCaptureState();
   setupScreen = name;
   const head = document.querySelector("#setup-head");
   if (head) head.hidden = !isShortcutScreen();
