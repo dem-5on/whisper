@@ -486,3 +486,7 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 
 /* Home shortcut rows run edge to edge */
 .home-shortcut-row { padding-left:0; padding-right:0; }
+
+/* Home shortcut hover spans the full card width */
+.home-shortcut-row { margin-left:-17px; margin-right:-17px; padding-left:17px; padding-right:17px; }
+@media (max-width:680px) { .home-shortcut-row { margin-left:-12px; margin-right:-12px; padding-left:12px; padding-right:12px; } }
