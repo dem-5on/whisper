@@ -823,25 +823,25 @@ function renderSingleCards() {
     keycap.id = "testkey-" + action;
     keycap.textContent = draft.display || "Not set";
     visual.append(keycap);
-    const status = document.createElement("p");
-    status.className = "capture-hint";
+    const row = document.createElement("div");
+    row.className = "capture-row";
+    const status = document.createElement("span");
+    status.className = "capture-hint test-status-inline";
     status.id = "teststatus-" + action;
     status.textContent = testedAction[action]
       ? "Working. Press it anytime."
       : "Press " + (draft.display || "your shortcut") + " now — the key lights up when seen.";
-    const row = document.createElement("div");
-    row.className = "capture-row";
     const change = document.createElement("button");
     change.className = "secondary-button";
     change.type = "button";
     change.textContent = "Change";
     change.addEventListener("click", () => startCapture(action));
-    row.append(change);
+    row.append(status, change);
     const error = document.createElement("p");
     error.className = "capture-error";
     error.id = "error-" + action;
     error.hidden = true;
-    card.append(head, visual, status, row, error);
+    card.append(head, visual, row, error);
     card.id = "testcard-" + action;
     mount.append(card);
   }

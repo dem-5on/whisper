@@ -422,3 +422,7 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 
 /* Single-key card: lower height */
 .setup-single .setup-step { min-height:240px; }
+
+/* Single-key card: status text sits inline before Change */
+.setup-single .capture-row { align-items:center; gap:14px; }
+.setup-single .test-status-inline { margin:0; }
