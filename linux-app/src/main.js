@@ -1198,6 +1198,7 @@ function renderShortcutState(state) {
     if (go && setupRole) go.disabled = false;
   }
   renderSingleCards();
+  renderHomeShortcuts(state);
 }
 
 function renderShortcutErrors(state) {
@@ -1222,6 +1223,163 @@ async function finishSetup() {
     notify(error && error.message ? error.message : String(error), true);
   }
 }
+
+const HOME_BLURB = {
+  dictation: "Speak naturally — your words go straight into the app you're using.",
+  meeting: "Capture a discussion with speaker labels and outcomes.",
+  lecture: "Capture a class with audio and transcript together.",
+};
+
+let keyDialogAction = null;
+let keyDialogCodes = new Set();
+let keyDialogSeen = new Set();
+let keyDialogDraft = { display: "", accelerator: null };
+
+function renderHomeShortcuts(state) {
+  const box = document.querySelector("#home-shortcuts");
+  if (!box) return;
+  box.replaceChildren();
+  for (const action of SHORTCUT_ACTIONS) {
+    const entry = state && state.bindings ? state.bindings[action] : null;
+    const display = (entry && entry.display) || shortcutDraft[action].display || "Not set";
+    const row = document.createElement("button");
+    row.className = "shortcut-row home-shortcut-row";
+    row.type = "button";
+    const copy = document.createElement("div");
+    copy.className = "shortcut-copy";
+    const name = document.createElement("strong");
+    name.textContent = action.charAt(0).toUpperCase() + action.slice(1);
+    const blurb = document.createElement("p");
+    blurb.textContent = HOME_BLURB[action];
+    copy.append(name, blurb);
+    const binding = document.createElement("div");
+    binding.className = "shortcut-binding";
+    const chip = document.createElement("code");
+    chip.className = "home-keycap";
+    chip.textContent = display;
+    binding.append(chip);
+    row.append(copy, binding);
+    row.addEventListener("click", () => openKeyDialog(action));
+    box.append(row);
+  }
+}
+
+function openKeyDialog(action) {
+  keyDialogAction = action;
+  keyDialogCodes.clear();
+  keyDialogSeen.clear();
+  const draft = shortcutDraft[action] || { display: "", accelerator: null };
+  keyDialogDraft = { display: draft.display || "", accelerator: draft.accelerator || null };
+  const title = document.querySelector("#key-dialog-title");
+  if (title) title.textContent = "Change " + action + " shortcut";
+  const keycap = document.querySelector("#key-dialog-keycap");
+  if (keycap) keycap.textContent = keyDialogDraft.display || "Not set";
+  const error = document.querySelector("#key-dialog-error");
+  if (error) error.hidden = true;
+  const dialog = document.querySelector("#key-dialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function keyDialogCommit(display, accelerator) {
+  keyDialogDraft = { display, accelerator };
+  const keycap = document.querySelector("#key-dialog-keycap");
+  if (keycap) keycap.textContent = display;
+  const error = document.querySelector("#key-dialog-error");
+  if (error) error.hidden = true;
+}
+
+document.addEventListener("keydown", (event) => {
+  const dialog = document.querySelector("#key-dialog");
+  if (!keyDialogAction || !dialog || !dialog.open) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.repeat) return;
+  if ((event.code === "Backspace" || event.code === "Delete") && keyDialogCodes.size === 0) {
+    keyDialogCommit("", null);
+    return;
+  }
+  keyDialogCodes.add(event.code);
+  const mod = modOf(event.code);
+  if (mod) keyDialogSeen.add(event.code);
+  const codes = [...keyDialogCodes];
+  const rightAlt = codes.includes("AltRight");
+  const leftAlt = codes.includes("AltLeft");
+  const mains = codes.map(codeToKeyName).filter(Boolean);
+  const main = mains[0];
+  const seen = new Set();
+  const mods = [];
+  const push = (display, code) => {
+    if (!seen.has(code)) {
+      seen.add(code);
+      mods.push({ display, code });
+    }
+  };
+  for (const code of [...keyDialogCodes, ...keyDialogSeen]) {
+    const m = modOf(code);
+    if (m) push(m.display, m.code);
+  }
+  if (!main) {
+    if (rightAlt && !leftAlt && mods.length === 1 && mods[0].code === "Alt") {
+      if (keyDialogAction !== "dictation") {
+        const error = document.querySelector("#key-dialog-error");
+        if (error) {
+          error.textContent = "Right Alt alone is reserved for Dictation. Pick a combination.";
+          error.hidden = false;
+        }
+        return;
+      }
+      keyDialogCommit("Right Alt", "RightAlt");
+    }
+    return;
+  }
+  const displays = [];
+  const accels = [];
+  for (const mod of mods) {
+    displays.push(mod.display === "Alt" && rightAlt && !leftAlt ? "Right Alt" : mod.display);
+    accels.push(mod.code);
+  }
+  displays.push(main.display);
+  accels.push(main.code);
+  keyDialogCommit(displays.join(" + "), accels.join("+"));
+}, true);
+
+document.querySelector("#key-dialog")?.addEventListener("close", () => {
+  keyDialogAction = null;
+  keyDialogCodes.clear();
+  keyDialogSeen.clear();
+});
+
+document.querySelector("#key-dialog-save")?.addEventListener("click", async () => {
+  if (!keyDialogAction) return;
+  const action = keyDialogAction;
+  try {
+    const state = await shortcutInvoke("set_shortcut", {
+      action, display: keyDialogDraft.display || "", accelerator: keyDialogDraft.accelerator,
+    });
+    const refused = state.bindings?.[action]?.register_error;
+    const error = document.querySelector("#key-dialog-error");
+    if (refused) {
+      if (error) {
+        error.textContent = refused;
+        error.hidden = false;
+      }
+      return;
+    }
+    shortcutDraft[action] = { ...keyDialogDraft };
+    testedAction[action] = false;
+    renderSingleCards();
+    renderHomeShortcuts(state);
+    const dialog = document.querySelector("#key-dialog");
+    if (dialog && dialog.open) dialog.close();
+    notify(action.charAt(0).toUpperCase() + action.slice(1) + " shortcut saved.");
+  } catch (error) {
+    const box = document.querySelector("#key-dialog-error");
+    if (box) {
+      box.textContent = error && error.message ? error.message : String(error);
+      box.hidden = false;
+    }
+  }
+});
 
 async function bootShortcuts() {
   try {
