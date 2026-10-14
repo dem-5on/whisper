@@ -106,6 +106,50 @@ pub fn send_daemon(command: &str, params: Map<String, Value>) -> Result<Value, S
     Ok(response)
 }
 
+fn anchor_pill(app: &tauri::AppHandle, pill: &tauri::WebviewWindow, loud: bool) {
+    // Position only after the surface is visible/realized. Runs on every
+    // update while visible so late compositor moves get corrected. On X11
+    // this anchors the compact pill above the bottom edge; Wayland
+    // compositors retain final placement authority and may ignore requests.
+    let monitor = pill
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    match monitor {
+        Some(monitor) => match (pill.outer_size(), pill.scale_factor()) {
+            (Ok(window_size), Ok(scale)) => {
+                let monitor_position = monitor.position();
+                let monitor_size = monitor.size();
+                let (x, y) = bottom_center_pill_position(
+                    (monitor_position.x, monitor_position.y),
+                    (monitor_size.width, monitor_size.height),
+                    (window_size.width, window_size.height),
+                    scale,
+                );
+                if loud {
+                    eprintln!(
+                        "wicx: pill pos monitor=({},{}) size={}x{} pill={}x{} scale={scale} -> ({x},{y})",
+                        monitor_position.x,
+                        monitor_position.y,
+                        monitor_size.width,
+                        monitor_size.height,
+                        window_size.width,
+                        window_size.height,
+                    );
+                }
+                if let Err(error) = pill.set_position(PhysicalPosition::new(x, y)) {
+                    eprintln!("wicx: pill set_position failed: {error}");
+                }
+            }
+            _ => {
+                eprintln!("wicx: pill size/scale unavailable, keeping compositor placement")
+            }
+        },
+        None => eprintln!("wicx: no monitor found, keeping compositor placement"),
+    }
+}
+
 #[tauri::command]
 fn update_recording_pill(
     app: tauri::AppHandle,
@@ -123,48 +167,13 @@ fn update_recording_pill(
         if visible {
             pill.show()
                 .map_err(|error| format!("Could not show recording pill: {error}"))?;
-            // Position only after the surface is visible/realized. On X11 this
-            // anchors the compact pill above the bottom edge; Wayland compositors
-            // retain final placement authority and may ignore client requests.
-            let monitor = pill
-                .current_monitor()
-                .ok()
-                .flatten()
-                .or_else(|| app.primary_monitor().ok().flatten());
-            match monitor {
-                Some(monitor) => match (pill.outer_size(), pill.scale_factor()) {
-                    (Ok(window_size), Ok(scale)) => {
-                        let monitor_position = monitor.position();
-                        let monitor_size = monitor.size();
-                        let (x, y) = bottom_center_pill_position(
-                            (monitor_position.x, monitor_position.y),
-                            (monitor_size.width, monitor_size.height),
-                            (window_size.width, window_size.height),
-                            scale,
-                        );
-                        eprintln!(
-                            "wicx: pill pos monitor=({},{}) size={}x{} pill={}x{} scale={scale} -> ({x},{y})",
-                            monitor_position.x,
-                            monitor_position.y,
-                            monitor_size.width,
-                            monitor_size.height,
-                            window_size.width,
-                            window_size.height,
-                        );
-                        if let Err(error) = pill.set_position(PhysicalPosition::new(x, y)) {
-                            eprintln!("wicx: pill set_position failed: {error}");
-                        }
-                    }
-                    _ => {
-                        eprintln!("wicx: pill size/scale unavailable, keeping compositor placement")
-                    }
-                },
-                None => eprintln!("wicx: no monitor found, keeping compositor placement"),
-            }
+            anchor_pill(&app, &pill, true);
         } else {
             pill.hide()
                 .map_err(|error| format!("Could not hide recording pill: {error}"))?;
         }
+    } else if visible {
+        anchor_pill(&app, &pill, false);
     }
 
     app.emit_to("recording-pill", "recording-status", status)
