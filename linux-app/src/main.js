@@ -822,6 +822,7 @@ function renderSingleCards() {
     keycap.className = "test-keycap test-keycap-big";
     keycap.id = "testkey-" + action;
     keycap.textContent = draft.display || "Not set";
+    if (testedAction[action]) keycap.classList.add("lit");
     visual.append(keycap);
     const row = document.createElement("div");
     row.className = "capture-row";
@@ -874,18 +875,17 @@ function checkDuplicates() {
   return null;
 }
 
-function flashKeycap(action, ms) {
+function setKeycapLit(action, on) {
   const keycap = document.querySelector("#testkey-" + action);
   if (!keycap) return;
-  keycap.classList.add("lit");
-  window.setTimeout(() => keycap.classList.remove("lit"), ms || 900);
+  keycap.classList.toggle("lit", on === true);
 }
 
 async function verifyTestPress(action) {
   if (!isShortcutScreen() || capturingAction) return;
   const draft = shortcutDraft[action];
   if (!draft.accelerator) return;
-  flashKeycap(action, 1200);
+  setKeycapLit(action, true);
   try {
     const state = await shortcutInvoke("set_shortcut", {
       action, display: draft.display || "", accelerator: draft.accelerator,
@@ -893,13 +893,15 @@ async function verifyTestPress(action) {
     renderShortcutErrors(state);
     const refused = state.bindings?.[action]?.register_error;
     if (refused) {
+      setKeycapLit(action, false);
       captureError(action, refused);
       return;
     }
     testedAction[action] = true;
     renderSingleCards();
-    flashKeycap(action, 1200);
+    setKeycapLit(action, true);
   } catch (error) {
+    setKeycapLit(action, false);
     captureError(action, error && error.message ? error.message : String(error));
   }
 }
