@@ -116,7 +116,6 @@ function updateStatus(status) {
   void syncRecordingPill(status, busy, activeMode, recording);
   ui.hidePill.checked = status.hide_recording_pill === true;
   ui.rewrite.checked = status.rewrite_enabled === true;
-  document.querySelector("#model-name").textContent = `${status.backend === "local" ? "Local" : status.backend || "Local"} · ${status.effective_model || status.model || "base"}`;
   const activeMic = availableMics.find((mic) => mic.id === status.mic);
   document.querySelector("#mic-name").textContent = activeMic?.name || (status.mic && status.mic !== "default" ? status.mic : "System default");
   ui.micButton.disabled = busy;
