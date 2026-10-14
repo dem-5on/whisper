@@ -343,7 +343,12 @@ function appendSessionRows(sessions) {
     del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13h10l1-13"/></svg>';
     del.addEventListener("click", async (event) => {
       event.stopPropagation();
-      if (!window.confirm("Delete this recording, transcript, and saved audio from this device? This cannot be undone.")) return;
+      const confirmed = await confirmDialog(
+        "Delete session",
+        "Delete this recording, transcript, and saved audio from this device? This cannot be undone.",
+        "Delete",
+      );
+      if (!confirmed) return;
       try {
         await request("delete_session", { session_id: session.id });
         if (selectedSessionId === session.id) {
@@ -606,6 +611,23 @@ async function exportWord(session) {
   } catch (error) {
     notify(error && error.message ? error.message : String(error), true);
   }
+}
+
+function confirmDialog(title, message, confirmLabel) {
+  const dialog = document.querySelector("#confirm-dialog");
+  if (!dialog) return Promise.resolve(window.confirm(message));
+  document.querySelector("#confirm-title").textContent = title;
+  document.querySelector("#confirm-message").textContent = message;
+  document.querySelector("#confirm-ok").textContent = confirmLabel || "Confirm";
+  return new Promise((resolve) => {
+    const done = (value) => {
+      dialog.removeEventListener("close", onClose);
+      resolve(value);
+    };
+    const onClose = () => done(dialog.returnValue === "confirm");
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+  });
 }
 
 async function loadDictionary() {

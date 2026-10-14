@@ -540,3 +540,9 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
   #print-area h1 { font-size:20px; margin-bottom:4px; }
   #print-area p { font-size:13px; line-height:1.6; }
 }
+
+/* Destructive confirm dialog */
+.confirm-icon { color:#b3261e; font-size:20px; font-weight:700; }
+.danger-button { background:#b3261e; }
+.danger-button:hover { background:#8f1d17; }
+#confirm-message { margin-bottom:6px; }
