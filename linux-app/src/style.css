@@ -504,3 +504,6 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 
 /* Version footer pins to the window bottom-right regardless of scroll */
 .update-footer { position:fixed; right:clamp(28px, 4.7vw, 68px); bottom:16px; z-index:5; text-align:right; }
+
+/* Mode cards navigate to filtered history */
+.mode-card:hover { border-color:#d5dbea; }

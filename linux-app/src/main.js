@@ -513,11 +513,28 @@ document.querySelector("#add-term-form").addEventListener("submit", async (event
   try { const term = input.value.trim(); renderTerms((await request("dictionary", { action: "add", term })).terms || []); notify(`Added “${term}” to your dictionary.`); input.value = ""; }
   catch (error) { notify(error.message, true); }
 });
-document.querySelectorAll("[data-history-filter]").forEach((button) => button.addEventListener("click", () => {
-  historyFilter = button.dataset.historyFilter;
-  document.querySelectorAll("[data-history-filter]").forEach((chip) => chip.classList.toggle("selected", chip === button));
+function applyHistoryFilter(mode) {
+  historyFilter = mode;
+  document.querySelectorAll("[data-history-filter]").forEach((chip) => {
+    chip.classList.toggle("selected", chip.dataset.historyFilter === mode);
+  });
   void loadSessions();
+}
+
+document.querySelectorAll("[data-history-filter]").forEach((button) => button.addEventListener("click", () => {
+  applyHistoryFilter(button.dataset.historyFilter);
 }));
+
+document.querySelectorAll(".mode-card").forEach((card) => {
+  card.style.cursor = "pointer";
+  card.addEventListener("click", (event) => {
+    if (event.target.closest("button")) return;
+    const mode = card.classList.contains("lecture-mode") ? "lecture"
+      : card.classList.contains("meeting-mode") ? "meeting" : "dictation";
+    openPage("history");
+    applyHistoryFilter(mode);
+  });
+});
 ui.historySearch.addEventListener("input", () => {
   window.clearTimeout(historyTimer);
   historyTimer = window.setTimeout(() => void loadSessions(), 250);
