@@ -761,6 +761,7 @@ function isShortcutScreen() {
 }
 
 function showSetup(name) {
+  if (!SETUP_PHASE[name]) return;
   setupScreen = name;
   const head = document.querySelector("#setup-head");
   if (head) head.hidden = !isShortcutScreen();
