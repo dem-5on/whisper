@@ -818,10 +818,11 @@ function renderSingleCards() {
     head.append(title);
     const visual = document.createElement("div");
     visual.className = "test-key-visual";
-    const binding = document.createElement("p");
-    binding.className = "test-binding-line";
-    binding.textContent = "Current: " + (draft.display || "Not set");
-    visual.append(binding);
+    const keycap = document.createElement("div");
+    keycap.className = "test-keycap test-keycap-big";
+    keycap.id = "testkey-" + action;
+    keycap.textContent = draft.display || "Not set";
+    visual.append(keycap);
     const status = document.createElement("p");
     status.className = "capture-hint";
     status.id = "teststatus-" + action;
@@ -877,10 +878,10 @@ async function verifyTestPress(action) {
   if (!isShortcutScreen() || capturingAction) return;
   const draft = shortcutDraft[action];
   if (!draft.accelerator) return;
-  const card = document.querySelector("#testcard-" + action);
-  if (card) {
-    card.classList.add("lit");
-    window.setTimeout(() => card.classList.remove("lit"), 700);
+  const keycap = document.querySelector("#testkey-" + action);
+  if (keycap) {
+    keycap.classList.add("lit");
+    window.setTimeout(() => keycap.classList.remove("lit"), 700);
   }
   try {
     const state = await shortcutInvoke("set_shortcut", {

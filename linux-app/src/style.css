@@ -411,3 +411,7 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 .setup-single .capture-row { justify-content:center; }
 .setup-single .setup-step.lit { border-color:#2859df; box-shadow:0 0 0 4px #3261e733; }
 .test-binding-line { color:#596170; font-size:13px; }
+
+/* Single-key card: text left, keycap right */
+.setup-single .setup-step { display:grid; grid-template-columns:minmax(0, 1fr) auto; column-gap:28px; max-width:640px; aspect-ratio:auto; text-align:left; align-items:center; }
+.setup-single .test-key-visual { grid-column:2; grid-row:1 / span 5; align-self:center; }
