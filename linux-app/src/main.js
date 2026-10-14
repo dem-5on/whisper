@@ -1069,6 +1069,8 @@ async function toggleMicTest() {
   if (!micTesting) {
     micTesting = true;
     micMaxPeak = 0;
+    const yes = document.querySelector("#mic-test-yes");
+    if (yes) yes.disabled = true;
     if (error) error.hidden = true;
     if (button) button.textContent = "Stop & discard";
     try {
