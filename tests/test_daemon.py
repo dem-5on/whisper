@@ -270,6 +270,48 @@ class DaemonTests(unittest.TestCase):
         backend.assert_not_called()
         self.assertEqual(self.daemon.command("history")["history"], [])
 
+    def test_cancel_retains_long_session_audio(self) -> None:
+        started = self.daemon.command("start_session", {
+            "mode": "lecture", "consent_acknowledged": True,
+        })
+        self.assertEqual(started["state"], "RECORDING")
+        session_id = self.daemon._stored_session_id
+        self.assertIsNotNone(session_id)
+        response = self.daemon.command("cancel")
+        self.assertEqual(response["state"], "IDLE")
+        assert session_id is not None
+        saved = self.daemon._session_store.get(session_id)
+        self.assertEqual(saved.state, "error")
+        self.assertIn("retained", saved.error)
+        self.assertEqual(len(self.daemon.command("sessions")["sessions"]), 1)
+
+    def test_restart_repairs_truncated_long_recording(self) -> None:
+        import wave
+
+        stored = self.daemon._session_store.create("lecture")
+        frames = b"\x01\x02" * 8000
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(frames)
+        with open(stored.audio_path, "r+b") as stream:
+            stream.seek(0, 2)
+            stream.write(frames)
+        recovered = self.daemon._recover_interrupted_sessions()
+        self.assertEqual(recovered, [stored.id])
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.state, "error")
+        with wave.open(str(stored.audio_path), "rb") as wav:
+            self.assertEqual(wav.getnframes(), 16000)
+
+    def test_low_disk_refuses_new_recording(self) -> None:
+        with patch.object(self.daemon, "_disk_free_bytes", return_value=1):
+            refused = self.daemon.command("toggle")
+        self.assertEqual(refused["ok"], "false")
+        self.assertIn("disk space", refused["error"])
+        self.assertFalse(self.recorder.started)
+
     def test_history_rejects_invalid_limit(self) -> None:
         response = self.daemon.command("history", {"limit": 0})
         self.assertEqual(response["ok"], "false")

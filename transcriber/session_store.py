@@ -201,17 +201,24 @@ class SessionStore:
         has_more = len(rows) > limit
         return [self.get(row["id"]) for row in rows[:limit]], has_more
 
-    def recover_interrupted(self) -> int:
+    def recover_interrupted(self) -> list[str]:
         """Mark unfinished long-form sessions as interrupted without deleting audio.
 
         A daemon restart cannot safely resume microphone capture or assume a
         partially written WAV is complete. Keep the record and audio for later
         user review/recovery, but don't leave the session appearing active.
+        Returns the affected session ids so callers can repair audio headers.
         """
         now = self._now()
         try:
             with self._connection() as connection:
-                cursor = connection.execute(
+                rows = connection.execute(
+                    """SELECT id FROM sessions
+                       WHERE mode IN ('lecture', 'meeting')
+                         AND state IN ('recording', 'transcribing', 'processing')""",
+                ).fetchall()
+                ids = [row["id"] for row in rows]
+                connection.execute(
                     """UPDATE sessions
                        SET state = 'error',
                            error = 'Wicx closed before this session finished. The saved recording may be incomplete.',
@@ -221,7 +228,7 @@ class SessionStore:
                          AND state IN ('recording', 'transcribing', 'processing')""",
                     (now, now),
                 )
-                return cursor.rowcount
+                return ids
         except sqlite3.Error as exc:
             raise SessionStoreError("Could not recover interrupted local sessions") from exc
 

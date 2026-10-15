@@ -39,7 +39,7 @@ from typing import Any
 import re
 
 from . import __version__
-from .audio import list_sources, make_recorder
+from .audio import list_sources, make_recorder, repair_wav_header
 from .config import KEY_ENV, Config, load_config, load_keys_env, resolve_config_path, save_config, write_key
 from .delivery import make_delivery
 from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallbacks, RemoteLiveCallbacks, make_live_engine
@@ -58,6 +58,12 @@ from .transcription import (
 from .vad import SpeechEndpoint, create_vad
 
 LOG = logging.getLogger("transcriber")
+
+# Local capture is 16 kHz mono PCM16 (~115 MB/hour). Refuse to start below
+# this free space and stop a long recording before the disk fills.
+MIN_START_DISK_BYTES = 512 * 1024 * 1024
+MIN_KEEP_DISK_BYTES = 256 * 1024 * 1024
+DISK_CHECK_INTERVAL_SECONDS = 60.0
 
 _VALID_BACKENDS = ("local", "groq", "openrouter", "openai")
 _LOCAL_MODEL_PRESETS = ("tiny", "base", "small", "medium", "large-v3", "turbo")
@@ -124,6 +130,7 @@ class TranscriberDaemon:
         # CTranslate2 model instance.
         self._inference_lock = threading.Lock()
         self._timer: threading.Timer | None = None
+        self._disk_timer: threading.Timer | None = None
         self._generation = 0
         self._error: str | None = None
         self._soft_error = False
@@ -137,9 +144,7 @@ class TranscriberDaemon:
         self._session_store = SessionStore(self._data_dir)
         self._vocabulary = VocabularyStore(self._data_dir)
         try:
-            recovered = self._session_store.recover_interrupted()
-            if recovered:
-                LOG.warning("Marked %d unfinished long-form session(s) as interrupted", recovered)
+            self._recover_interrupted_sessions()
         except SessionStoreError:
             # Keep the daemon usable even if recovery metadata cannot be
             # updated; the underlying session files remain untouched.
@@ -325,6 +330,33 @@ class TranscriberDaemon:
                 "error": "A recording is already being processed",
             }
 
+    def _recover_interrupted_sessions(self) -> list[str]:
+        """Mark unfinished long-form sessions interrupted and repair headers.
+
+        Returns the recovered session ids. Crash-truncated WAV headers are
+        rewritten from actual file sizes so the retained audio stays playable.
+        """
+        interrupted = self._session_store.recover_interrupted()
+        if interrupted:
+            LOG.warning("Marked %d unfinished long-form session(s) as interrupted", len(interrupted))
+        for session_id in interrupted:
+            try:
+                audio_path = self._session_store.audio_path(session_id)
+            except (SessionStoreError, KeyError):
+                continue
+            try:
+                if repair_wav_header(audio_path):
+                    LOG.warning("Repaired truncated recording header for session %s", session_id)
+            except OSError:
+                LOG.error("Could not repair recording header for session %s", session_id)
+        return interrupted
+
+    def _disk_free_bytes(self) -> int | None:
+        try:
+            return shutil.disk_usage(self._data_dir).free
+        except OSError:
+            return None
+
     def _start_session(self, params: dict[str, Any]) -> dict[str, Any]:
         mode = str(params.get("mode", "")).strip().lower()
         if mode not in {"lecture", "meeting"}:
@@ -339,6 +371,9 @@ class TranscriberDaemon:
             return self._start_recording_locked(mode)
 
     def _start_recording_locked(self, mode: str) -> dict[str, Any]:
+        free_bytes = self._disk_free_bytes()
+        if free_bytes is not None and free_bytes < MIN_START_DISK_BYTES:
+            return {**self._status_locked(), "ok": "false", "error": "Not enough disk space to record; free at least 512 MB and try again"}
         try:
             stored_session = self._session_store.create(mode)
         except SessionStoreError:
@@ -363,6 +398,8 @@ class TranscriberDaemon:
             )
             self._timer.daemon = True
             self._timer.start()
+        else:
+            self._schedule_disk_check(generation)
         self._error = None
         self._last_notice = ""
         self._recording_started = time.monotonic()
@@ -371,6 +408,31 @@ class TranscriberDaemon:
         self._start_live_session_locked(generation)
         LOG.info("%s recording started", mode.title())
         return self._ok_locked()
+
+    def _schedule_disk_check(self, generation: int) -> None:
+        self._cancel_disk_timer()
+        self._disk_timer = threading.Timer(
+            DISK_CHECK_INTERVAL_SECONDS, self._check_disk_storage, args=(generation,)
+        )
+        self._disk_timer.daemon = True
+        self._disk_timer.start()
+
+    def _cancel_disk_timer(self) -> None:
+        if self._disk_timer:
+            self._disk_timer.cancel()
+            self._disk_timer = None
+
+    def _check_disk_storage(self, generation: int) -> None:
+        with self._lock:
+            if generation != self._generation or self._state != State.RECORDING:
+                return
+            free_bytes = self._disk_free_bytes()
+            if free_bytes is not None and free_bytes < MIN_KEEP_DISK_BYTES:
+                LOG.warning("Stopping long recording early: low disk space")
+                self._last_notice = "Stopped early: low disk space. Free space and record the rest separately."
+                self._stop_locked()
+                return
+            self._schedule_disk_check(generation)
 
     def _auto_stop(self, generation: int) -> None:
         with self._lock:
@@ -425,7 +487,15 @@ class TranscriberDaemon:
                     LOG.error("Audio capture could not be cancelled")
                 if self._stored_session_id:
                     try:
-                        self._session_store.delete(self._stored_session_id)
+                        if self._active_mode in {"lecture", "meeting"}:
+                            self._session_store.update(
+                                self._stored_session_id,
+                                state="error",
+                                error="Recording cancelled before finishing; audio retained.",
+                                finished=True,
+                            )
+                        else:
+                            self._session_store.delete(self._stored_session_id)
                     except (SessionStoreError, KeyError):
                         LOG.error("Could not remove cancelled local session")
                     self._stored_session_id = None
@@ -1731,6 +1801,7 @@ class TranscriberDaemon:
         if self._timer:
             self._timer.cancel()
             self._timer = None
+        self._cancel_disk_timer()
 
     def shutdown(self) -> None:
         with self._lock:

@@ -230,6 +230,7 @@ fn main() {
             shortcuts::set_long_consent,
             shortcuts::set_role,
             shortcuts::set_shortcut_test,
+            shortcuts::request_stop_session,
             shortcuts::complete_setup
         ])
         .run(tauri::generate_context!())

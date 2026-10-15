@@ -366,6 +366,73 @@ class StreamingRecorder:
             self._path = None
 
 
+def repair_wav_header(path: str | Path) -> bool:
+    """Repair the frame counts of a PCM WAV left unfinished by a crash.
+
+    A killed recorder leaves captured frames on disk while the header still
+    claims whatever had flushed so far, so players see almost nothing. This
+    rewrites the RIFF and data chunk sizes from the actual file length without
+    touching audio bytes. Only plain PCM (8/16/24/32-bit, 1-2 channels) is
+    repaired; anything else is left untouched. Returns True when the header
+    changed, False when it was already consistent or unrepairable.
+    """
+    target = Path(path)
+    try:
+        file_size = target.stat().st_size
+        with target.open("r+b") as stream:
+            riff = stream.read(12)
+            if len(riff) < 12 or riff[0:4] != b"RIFF" or riff[8:12] != b"WAVE":
+                return False
+            fmt: tuple[int, int, int, int] | None = None
+            data_offset: int | None = None
+            data_claimed: int | None = None
+            position = 12
+            while position + 8 <= file_size:
+                stream.seek(position)
+                header = stream.read(8)
+                if len(header) < 8:
+                    return False
+                chunk_id, chunk_length = struct.unpack("<4sI", header)
+                if chunk_id == b"fmt ":
+                    body = stream.read(min(chunk_length, 40))
+                    if len(body) < 16:
+                        return False
+                    audio_format, channels, rate, _, _, bits = struct.unpack("<HHIIHH", body[:16])
+                    fmt = (audio_format, channels, rate, bits)
+                elif chunk_id == b"data":
+                    data_offset = position + 8
+                    data_claimed = chunk_length
+                    break
+                position += 8 + chunk_length + (chunk_length & 1)
+            if fmt is None or data_offset is None or data_claimed is None:
+                return False
+            audio_format, channels, rate, bits = fmt
+            if audio_format != 1 or channels not in (1, 2) or bits not in (8, 16, 24, 32):
+                return False
+            if not 1000 <= rate <= 192000:
+                return False
+            frame_bytes = channels * bits // 8
+            available = file_size - data_offset
+            if available < 0:
+                return False
+            frames = available // frame_bytes
+            clean_end = data_offset + frames * frame_bytes
+            stream.truncate(clean_end)
+            data_bytes = frames * frame_bytes
+            stream.seek(4)
+            stream.write(struct.pack("<I", (clean_end - 8)))
+            stream.seek(data_offset - 4)
+            stream.write(struct.pack("<I", data_bytes))
+            stream.flush()
+            try:
+                os.fsync(stream.fileno())
+            except OSError:
+                pass
+            return data_bytes != data_claimed
+    except OSError:
+        return False
+
+
 def make_recorder(config: AudioConfig, streaming_enabled: bool = True, frame_ms: int = 20,
                    max_queue_seconds: int = 30, rolling_seconds: int = 30):  # type: ignore[no-untyped-def]
     """Select the native capture implementation for the current platform."""

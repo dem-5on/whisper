@@ -1181,6 +1181,21 @@ if (!preview) {
     const mode = String(event.payload || "");
     if (mode === "lecture" || mode === "meeting") beginSession(mode);
   }).catch(() => {});
+  listen("shortcut-stop-request", (event) => {
+    const mode = String(event.payload || "");
+    if (mode !== "lecture" && mode !== "meeting") return;
+    const label = mode === "lecture" ? "Lecture" : "Meeting";
+    void confirmDialog(
+      `Stop ${mode} recording?`,
+      `${label} is still capturing. Stopping now ends the session and keeps everything recorded so far.`,
+      "Stop recording",
+    ).then((confirmed) => {
+      if (!confirmed) return;
+      invoke("daemon_request", { command: "stop_session", params: {} })
+        .then(updateStatus)
+        .catch((error) => notify(error && error.message ? error.message : String(error), true));
+    });
+  }).catch(() => {});
 }
 
 function setupMicLabel(id) {

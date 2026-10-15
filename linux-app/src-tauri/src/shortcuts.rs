@@ -402,7 +402,9 @@ fn toggle_long_session(app: &AppHandle, mode: &str) -> Result<Value, String> {
     let recording_same_mode = status.get("state").and_then(Value::as_str) == Some("RECORDING")
         && status.get("session_mode").and_then(Value::as_str) == Some(mode);
     if recording_same_mode {
-        return send_daemon("stop_session", Map::new());
+        // Long sessions stop only after an explicit confirmation in the main
+        // window; a stray keypress must not end an hour of capture.
+        return request_stop_session(app.clone());
     }
     if status.get("state").and_then(Value::as_str) == Some("RECORDING") {
         return Err("Finish the current recording first.".to_string());
@@ -428,6 +430,34 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     register_all(app);
     ensure_monitor(app);
     Ok(())
+}
+
+fn focus_main_window(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+}
+
+/// Stop the active recording, asking first for long Lecture/Meeting
+/// sessions. Used by the pill check button and the global-shortcut stop
+/// path. Dictation stays instant; the CLI stop-session command is unaffected.
+#[tauri::command]
+pub fn request_stop_session(app: AppHandle) -> Result<Value, String> {
+    let status = send_daemon("status", Map::new())?;
+    if status.get("state").and_then(Value::as_str) != Some("RECORDING") {
+        return Ok(status);
+    }
+    let mode = status
+        .get("session_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("dictation");
+    if mode == "lecture" || mode == "meeting" {
+        let _ = app.emit("shortcut-stop-request", mode);
+        focus_main_window(&app);
+        return Ok(json!({"stop_confirmation": "requested", "mode": mode}));
+    }
+    send_daemon("toggle", Map::new())
 }
 
 pub fn handle_press(app: &AppHandle, id: &Shortcut) {
