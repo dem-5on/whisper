@@ -64,6 +64,10 @@ LOG = logging.getLogger("transcriber")
 MIN_START_DISK_BYTES = 512 * 1024 * 1024
 MIN_KEEP_DISK_BYTES = 256 * 1024 * 1024
 DISK_CHECK_INTERVAL_SECONDS = 60.0
+#: How often queued (transiently failed) analysis retries itself. Blocked
+#: stages (no subscription, exhausted allowance) stay manual: retrying those
+#: on a timer would hammer a quota that only renews monthly.
+ANALYSIS_SWEEP_INTERVAL_SECONDS = 300.0
 
 _VALID_BACKENDS = ("local", "groq", "openrouter", "openai")
 _LOCAL_MODEL_PRESETS = ("tiny", "base", "small", "medium", "large-v3", "turbo")
@@ -131,6 +135,7 @@ class TranscriberDaemon:
         self._inference_lock = threading.Lock()
         self._timer: threading.Timer | None = None
         self._disk_timer: threading.Timer | None = None
+        self._sweep_timer: threading.Timer | None = None
         self._generation = 0
         self._error: str | None = None
         self._soft_error = False
@@ -149,6 +154,7 @@ class TranscriberDaemon:
             # Keep the daemon usable even if recovery metadata cannot be
             # updated; the underlying session files remain untouched.
             LOG.error("Could not mark interrupted local sessions for recovery")
+        self._schedule_analysis_sweep()
         self._stored_session_id: str | None = None
         self._active_mode = "dictation"
         self._config_path = config_path
@@ -2036,6 +2042,77 @@ class TranscriberDaemon:
             self._timer.cancel()
             self._timer = None
         self._cancel_disk_timer()
+        if self._sweep_timer:
+            self._sweep_timer.cancel()
+            self._sweep_timer = None
+
+    def _schedule_analysis_sweep(self) -> None:
+        if self._sweep_timer:
+            self._sweep_timer.cancel()
+            self._sweep_timer = None
+        self._sweep_timer = threading.Timer(
+            ANALYSIS_SWEEP_INTERVAL_SECONDS, self._sweep_queued_analysis
+        )
+        self._sweep_timer.daemon = True
+        self._sweep_timer.start()
+
+    def _queued_analysis_sessions(self) -> list[str]:
+        """Ids of lecture sessions with transiently queued (not blocked) stages."""
+        from .lecture import LECTURE_STAGES
+
+        found: list[str] = []
+        offset = 0
+        while True:
+            try:
+                sessions, has_more = self._session_store.list_page(limit=200, offset=offset)
+            except (SessionStoreError, ValueError):
+                LOG.error("Analysis sweep could not list sessions")
+                return found
+            for item in sessions:
+                if item.mode != "lecture":
+                    continue
+                outputs = item.outputs if isinstance(item.outputs, dict) else {}
+                states = outputs.get("analysis_state", {})
+                if not isinstance(states, dict):
+                    continue
+                for kind in LECTURE_STAGES:
+                    entry = states.get(kind)
+                    if isinstance(entry, dict) and entry.get("state") == "queued":
+                        found.append(item.id)
+                        break
+            if not has_more:
+                break
+            offset += 200
+        return found
+
+    def _sweep_queued_analysis(self) -> None:
+        """Retry queued lecture analysis when connectivity returns."""
+        try:
+            with self._lock:
+                busy = self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}
+            if busy:
+                return
+            for session_id in self._queued_analysis_sessions():
+                with self._lock:
+                    if self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}:
+                        return
+                before = self._session_store.get(session_id).outputs.get("analysis_state", {})
+                self._run_lecture_analysis(session_id)
+                after = self._session_store.get(session_id).outputs.get("analysis_state", {})
+                if isinstance(after, dict) and not any(
+                    isinstance(entry, dict) and entry.get("state") == "queued"
+                    for entry in after.values()
+                ) and before != after:
+                    with self._lock:
+                        self._last_notice = "Queued session analysis completed."
+                    LOG.info("Queued analysis completed for session %s", session_id)
+        except (SessionStoreError, KeyError, OSError) as exc:
+            LOG.warning("Analysis sweep skipped (%s)", type(exc).__name__)
+        finally:
+            try:
+                self._schedule_analysis_sweep()
+            except Exception:
+                LOG.error("Analysis sweep could not reschedule")
 
     def shutdown(self) -> None:
         with self._lock:

@@ -527,6 +527,66 @@ class DaemonTests(unittest.TestCase):
         saved = self.daemon._session_store.get(stored.id)
         self.assertEqual(saved.outputs["key_terms"], [{"term": "Light", "definition": "Energy."}])
 
+    def test_sweep_retries_queued_analysis_on_reconnect(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Service unreachable.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "queued")
+
+        def fake_post(kind: str, text: str, language: str | None = None):
+            if kind == "translation":
+                return "ready", {"language": "en", "translation": None}
+            if kind == "topics":
+                return "ready", []
+            if kind == "terms":
+                return "ready", [{"term": "Light", "definition": "Energy."}]
+            if kind == "questions":
+                return "ready", ["What?"]
+            return "ready", "notes text"
+
+        with patch.object(self.daemon, "_analysis_post", side_effect=fake_post):
+            self.daemon._sweep_timer.cancel()
+            self.daemon._sweep_queued_analysis()
+        saved = self.daemon._session_store.get(stored.id)
+        states = saved.outputs["analysis_state"]
+        self.assertTrue(all(states[kind]["state"] == "ready" for kind in (
+            "translation", "notes", "topics", "terms", "questions")))
+        self.assertIn("completed", self.daemon._last_notice)
+
+    def test_sweep_skips_blocked_and_busy(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("blocked", "No subscription.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        with patch.object(
+            self.daemon, "_analysis_post", side_effect=AssertionError("must not call"),
+        ):
+            self.daemon._sweep_timer.cancel()
+            self.daemon._sweep_queued_analysis()
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "blocked")
+
+        self.daemon._set_state(State.RECORDING)
+        pending = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Service unreachable.")
+        ):
+            self.daemon._run_lecture_analysis(pending.id)
+        try:
+            with patch.object(
+                self.daemon, "_analysis_post", side_effect=AssertionError("must not call"),
+            ):
+                self.daemon._sweep_timer.cancel()
+                self.daemon._sweep_queued_analysis()
+        finally:
+            self.daemon._set_state(State.IDLE)
+        saved = self.daemon._session_store.get(pending.id)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "queued")
+
     def test_retry_analysis_validates_session(self) -> None:
         self.assertEqual(self.daemon.command("retry_analysis", {"session_id": ""})["ok"], "false")
         self.assertEqual(self.daemon.command("retry_analysis", {"session_id": "missing"})["ok"], "false")
