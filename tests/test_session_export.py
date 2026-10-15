@@ -74,6 +74,52 @@ class SessionExportTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertTrue(str(second).endswith(".docx"))
 
+    def test_markdown_contains_lecture_analysis_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("lecture")
+            session = store.update(
+                session.id,
+                state="ready",
+                source_transcript="Photosynthesis converts light.",
+                outputs={
+                    "lecture_notes": "# Notes\n- Light matters.",
+                    "topic_groups": [{"title": "Intro", "summary": "Start", "start_segment": 0, "end_segment": 0}],
+                    "key_terms": [{"term": "Photosynthesis", "definition": "Plants make food."}],
+                    "review_questions": ["Why do plants need light?"],
+                },
+                finished=True,
+            )
+            markdown = render_session_markdown(session)
+            self.assertIn("## Lecture notes", markdown)
+            self.assertIn("### Intro", markdown)
+            self.assertIn("**Photosynthesis**: Plants make food.", markdown)
+            self.assertIn("1. Why do plants need light?", markdown)
+
+    def test_docx_contains_lecture_analysis_sections(self) -> None:
+        from docx import Document
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = SessionStore(Path(directory) / "data")
+            session = store.create("lecture")
+            session = store.update(
+                session.id,
+                state="ready",
+                source_transcript="Photosynthesis converts light.",
+                outputs={
+                    "lecture_notes": "Light matters.",
+                    "topic_groups": [{"title": "Intro", "summary": "Start"}],
+                    "key_terms": [{"term": "Photosynthesis", "definition": "Plants make food."}],
+                    "review_questions": ["Why?"],
+                },
+                finished=True,
+            )
+            target = Path(directory) / "lecture.docx"
+            export_session_docx(session, target)
+            text = "\n".join(p.text for p in Document(str(target)).paragraphs)
+            for expected in ("Lecture notes", "Intro", "Photosynthesis", "Why?"):
+                self.assertIn(expected, text)
+
     def test_export_never_overwrites_an_existing_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SessionStore(Path(directory) / "data")

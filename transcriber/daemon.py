@@ -240,6 +240,8 @@ class TranscriberDaemon:
             return self._dictionary_command(str(params.get("action", "list")), params.get("term"))
         if command == "retry_session":
             return self._retry_session(str(params.get("session_id", "")))
+        if command == "retry_analysis":
+            return self._retry_analysis(str(params.get("session_id", "")))
         if command == "mics":
             return self._get_mics()
         if command == "models":
@@ -860,6 +862,233 @@ class TranscriberDaemon:
             )
             worker.start()
             return self._ok_locked()
+
+    def _analysis_base_url(self) -> str | None:
+        """Derive the analysis HTTPS base from the configured live URL."""
+        from urllib.parse import urlsplit
+
+        raw = (self.config.streaming.server_url or "").strip()
+        if not raw:
+            return None
+        try:
+            parts = urlsplit(raw)
+        except ValueError:
+            return None
+        if parts.scheme == "wss":
+            return f"https://{parts.netloc}"
+        if parts.scheme == "ws" and parts.hostname in {"localhost", "127.0.0.1", "::1"}:
+            return f"http://{parts.netloc}"
+        if parts.scheme == "https" and parts.netloc:
+            return f"https://{parts.netloc}"
+        return None
+
+    def _analysis_post(self, kind: str, text: str, language: str | None = None) -> tuple[str, Any]:
+        """Submit one analysis stage. Returns (state, result-or-message).
+
+        States: "ready" with the parsed result, "blocked" for entitlement or
+        quota refusals, "queued" for anything retryable (offline, timeouts,
+        provider failures, missing service configuration).
+        """
+        base_url = self._analysis_base_url()
+        token = os.environ.get("WHISPER_SERVICE_TOKEN", "").strip()
+        if not base_url or not token:
+            return "queued", "Analysis service is not configured."
+        payload = json.dumps({"kind": kind, "text": text, "language": language}).encode("utf-8")
+        request = urllib.request.Request(
+            base_url.rstrip("/") + "/v1/analysis",
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                code = json.loads(exc.read().decode("utf-8")).get("error", "")
+            except (ValueError, UnicodeDecodeError):
+                code = ""
+            if code == "subscription_required":
+                return "blocked", "Subscription required for session analysis."
+            if code == "quota_exhausted":
+                return "blocked", "Subscription allowance exhausted. Analysis resumes after renewal or upgrade."
+            LOG.warning("Analysis stage %s refused (%s)", kind, exc.code)
+            return "queued", "Analysis service refused the request; will retry."
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            LOG.warning("Analysis stage %s unreachable (%s)", kind, type(exc).__name__)
+            return "queued", "Analysis service is unreachable; will retry when online."
+        except (ValueError, UnicodeDecodeError):
+            return "queued", "Analysis service returned an invalid response."
+        result = body.get("result") if isinstance(body, dict) else None
+        if result is None:
+            return "queued", "Analysis service returned an unusable result."
+        return "ready", result
+
+    def _store_analysis_stage(
+        self, session_id: str, kind: str, state: str,
+        result: Any = None, message: str = "",
+    ) -> None:
+        from .lecture import OUTPUT_KEYS
+
+        try:
+            stored = self._session_store.get(session_id)
+        except (KeyError, SessionStoreError):
+            LOG.error("Could not store analysis stage for missing session")
+            return
+        outputs = dict(stored.outputs) if isinstance(stored.outputs, dict) else {}
+        states = dict(outputs.get("analysis_state", {})) if isinstance(outputs.get("analysis_state"), dict) else {}
+        states[kind] = {"state": state, "message": message}
+        outputs["analysis_state"] = states
+        update: dict[str, Any] = {"outputs": outputs}
+        translation: str | None = None
+        if kind == "translation" and state == "ready":
+            if isinstance(result, dict):
+                language = str(result.get("language", "")).strip().lower()
+                text = result.get("translation")
+                outputs["source_language"] = language
+                if language and language != "en" and isinstance(text, str) and text.strip():
+                    translation = text.strip()
+            elif isinstance(result, str) and result.strip():
+                translation = result.strip()
+        elif kind in OUTPUT_KEYS and state == "ready":
+            outputs[OUTPUT_KEYS[kind]] = result
+            update["outputs"] = outputs
+        if translation is not None:
+            update["english_translation"] = translation
+            update["outputs"] = outputs
+        try:
+            self._session_store.update(session_id, **update)
+        except (SessionStoreError, KeyError, ValueError):
+            LOG.error("Could not persist analysis stage")
+
+    def _run_lecture_analysis(self, session_id: str) -> None:
+        """Run Lecture post-processing stages after the transcript is saved."""
+        from .lecture import LECTURE_STAGES, MAX_STAGE_CHARS, adjust_topics, numbered_utterances, split_text
+
+        try:
+            stored = self._session_store.get(session_id)
+        except (KeyError, SessionStoreError):
+            LOG.error("Lecture analysis skipped for missing session")
+            return
+        transcript = (stored.source_transcript or "").strip()
+        if not transcript:
+            return
+        segments = stored.segments if isinstance(stored.segments, list) else []
+        outputs = stored.outputs if isinstance(stored.outputs, dict) else {}
+        existing = outputs.get("analysis_state", {})
+        if not isinstance(existing, dict):
+            existing = {}
+
+        def is_ready(kind: str) -> bool:
+            entry = existing.get(kind)
+            return isinstance(entry, dict) and entry.get("state") == "ready"
+
+        if all(is_ready(kind) for kind in LECTURE_STAGES):
+            return
+
+        numbered, total = numbered_utterances(segments, transcript)
+        merged_notes: list[str] = []
+
+        if not is_ready("translation"):
+            state, result = self._analysis_post(
+                "translation", transcript[:MAX_STAGE_CHARS], language=None,
+            )
+            if state == "ready" and isinstance(result, dict):
+                language = str(result.get("language", "")).strip().lower()
+                if language in {"en", "english"}:
+                    self._store_analysis_stage(session_id, "translation", "ready", result={})
+                    LOG.info("Lecture source already English; no translation stored")
+                else:
+                    self._store_analysis_stage(session_id, "translation", "ready", result=result)
+            elif state == "ready":
+                self._store_analysis_stage(session_id, "translation", "ready", result=result)
+            else:
+                self._store_analysis_stage(session_id, "translation", state, message=str(result))
+                if state == "blocked":
+                    LOG.info("Lecture analysis blocked (%s); transcript kept locally", result)
+                    for kind in ("notes", "topics", "terms", "questions"):
+                        self._store_analysis_stage(session_id, kind, "blocked", message=str(result))
+                    return
+
+        stored_notes = outputs.get("lecture_notes") if is_ready("notes") else ""
+        if isinstance(stored_notes, str) and stored_notes:
+            merged_notes = [stored_notes]
+        elif not is_ready("notes"):
+            chunks = split_text(transcript)
+            for index, chunk in enumerate(chunks):
+                state, result = self._analysis_post("notes", chunk)
+                if state != "ready":
+                    self._store_analysis_stage(session_id, "notes", state, message=str(result))
+                    break
+                merged_notes.append(
+                    f"Part {index + 1} of {len(chunks)}:\n{result}" if len(chunks) > 1 else str(result)
+                )
+            else:
+                self._store_analysis_stage(session_id, "notes", "ready", result="\n\n".join(merged_notes))
+        if not merged_notes and not is_ready("notes"):
+            for kind in ("topics", "terms", "questions"):
+                self._store_analysis_stage(session_id, kind, "queued", message="Waiting on lecture notes.")
+            return
+
+        if not is_ready("topics"):
+            numbered_chunks = split_text(numbered, MAX_STAGE_CHARS)
+            all_topics: list[dict[str, Any]] = []
+            topics_failed: tuple[str, str] | None = None
+            offset = 0
+            for chunk in numbered_chunks:
+                lines = chunk.count("\n") + 1
+                state, result = self._analysis_post("topics", chunk)
+                if state != "ready":
+                    topics_failed = (state, str(result))
+                    break
+                all_topics.extend(adjust_topics(result, offset, total))
+                offset += lines
+            if topics_failed is not None:
+                self._store_analysis_stage(session_id, "topics", topics_failed[0], message=topics_failed[1])
+            else:
+                self._store_analysis_stage(session_id, "topics", "ready", result=all_topics)
+
+        detail_source = "\n\n".join(merged_notes) if merged_notes else transcript[:MAX_STAGE_CHARS]
+        for kind in ("terms", "questions"):
+            if is_ready(kind):
+                continue
+            state, result = self._analysis_post(kind, detail_source)
+            self._store_analysis_stage(
+                session_id, kind, state,
+                result=result if state == "ready" else None,
+                message="" if state == "ready" else str(result),
+            )
+
+    def _retry_analysis(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        if stored.mode != "lecture":
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Only Lecture sessions can re-run analysis"}
+        if not (stored.source_transcript or "").strip():
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "The session has no transcript to analyze"}
+        with self._lock:
+            if self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}:
+                return {**self._status_locked(), "ok": "false", "error": "Another recording or transcription is in progress"}
+        worker = threading.Thread(
+            target=self._run_lecture_analysis,
+            args=(session_id,),
+            name="wicx-lecture-analysis",
+            daemon=True,
+        )
+        worker.start()
+        with self._lock:
+            return {**self._status_locked(), "ok": "true", "retried_session_id": session_id}
 
     def _get_mics(self) -> dict[str, Any]:
         with self._lock:
@@ -1595,6 +1824,11 @@ class TranscriberDaemon:
                     )
                 except (SessionStoreError, KeyError):
                     LOG.error("Could not save transcript to local history")
+            if mode == "lecture" and session_id:
+                try:
+                    self._run_lecture_analysis(session_id)
+                except Exception:
+                    LOG.error("Lecture analysis pipeline failed")
             if mode == "dictation":
                 with self._lock:
                     self._last_transcript = text

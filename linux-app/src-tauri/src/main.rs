@@ -54,6 +54,7 @@ fn daemon_request(command: String, params: Option<Value>) -> Result<Value, Strin
         "delete_session",
         "dictionary",
         "export_session",
+        "retry_analysis",
         "start_session",
         "stop_session",
         "set_rewrite",

@@ -520,8 +520,126 @@ async function loadSession(id) {
     transcript.className = "transcript-body";
     transcript.textContent = session.source_transcript || "No transcript is available for this recording.";
     ui.sessionDetail.append(header, transcript);
+    if (session.mode === "lecture") renderLectureAnalysis(session);
     document.querySelectorAll(".session-row").forEach((row) => row.classList.toggle("selected", row.dataset.sessionId === id));
   } catch (error) { notify(error.message, true); }
+}
+
+const LECTURE_STAGE_LABELS = {
+  translation: "Translation",
+  notes: "Lecture notes",
+  topics: "Topics",
+  terms: "Key terms",
+  questions: "Review questions",
+};
+
+function renderLectureAnalysis(session) {
+  const outputs = session.outputs && typeof session.outputs === "object" ? session.outputs : {};
+  const states = outputs.analysis_state && typeof outputs.analysis_state === "object"
+    ? outputs.analysis_state : {};
+  const section = document.createElement("section");
+  section.className = "analysis-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Session analysis";
+  section.append(heading);
+
+  if (session.english_translation) {
+    const label = document.createElement("h4");
+    label.textContent = "English translation" + (
+      outputs.source_language ? ` (from ${outputs.source_language})` : "");
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = session.english_translation;
+    section.append(label, body);
+  }
+
+  const stage = (key, build) => {
+    const state = states[key] && states[key].state;
+    if (state !== "ready" && state !== "queued" && state !== "blocked") return;
+    const label = document.createElement("h4");
+    label.textContent = LECTURE_STAGE_LABELS[key] || key;
+    section.append(label);
+    if (state === "ready") {
+      build();
+      return;
+    }
+    const note = document.createElement("p");
+    note.className = "analysis-pending";
+    note.textContent = state === "blocked"
+      ? `Unavailable right now${states[key].message ? `: ${states[key].message}` : "."}`
+      : "Still processing — check back shortly.";
+    section.append(note);
+  };
+
+  stage("notes", () => {
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = outputs.lecture_notes || "";
+    section.append(body);
+  });
+  stage("topics", () => {
+    const list = document.createElement("ul");
+    list.className = "analysis-list";
+    for (const topic of outputs.topic_groups || []) {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      title.textContent = topic.title || "Untitled";
+      item.append(title);
+      if (topic.summary) {
+        const summary = document.createElement("p");
+        summary.textContent = topic.summary;
+        item.append(summary);
+      }
+      list.append(item);
+    }
+    section.append(list);
+  });
+  stage("terms", () => {
+    const list = document.createElement("dl");
+    list.className = "analysis-terms";
+    for (const term of outputs.key_terms || []) {
+      const name = document.createElement("dt");
+      name.textContent = term.term || "";
+      const definition = document.createElement("dd");
+      definition.textContent = term.definition || "";
+      list.append(name, definition);
+    }
+    section.append(list);
+  });
+  stage("questions", () => {
+    const list = document.createElement("ol");
+    list.className = "analysis-list";
+    for (const question of outputs.review_questions || []) {
+      const item = document.createElement("li");
+      item.textContent = typeof question === "string" ? question
+        : (question && question.question) || "";
+      list.append(item);
+    }
+    section.append(list);
+  });
+
+  const actionable = ["translation", "notes", "topics", "terms", "questions"].some((key) => {
+    const state = states[key] && states[key].state;
+    return state === "queued" || state === "blocked";
+  });
+  if (actionable) {
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = "Run analysis";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        await request("retry_analysis", { session_id: session.id });
+        notify("Analysis queued. Results appear here when ready.");
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        retry.disabled = false;
+      }
+    });
+    section.append(retry);
+  }
+  ui.sessionDetail.append(section);
 }
 
 function closeExportMenu() {

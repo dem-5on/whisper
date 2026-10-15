@@ -446,6 +446,95 @@ class DaemonTests(unittest.TestCase):
         self.assertTrue(session_list[0]["audio_available"])
         self.assertEqual(audio_path.read_bytes(), b"wav")
 
+    def _make_lecture_session(self, transcript="Photosynthesis converts light."):
+        stored = self.daemon._session_store.create("lecture")
+        return self.daemon._session_store.update(
+            stored.id, state="ready", source_transcript=transcript, finished=True,
+        )
+
+    def test_lecture_analysis_stores_all_stages(self) -> None:
+        stored = self._make_lecture_session()
+        calls: list[str] = []
+
+        def fake_post(kind: str, text: str, language: str | None = None):
+            calls.append(kind)
+            if kind == "translation":
+                return "ready", {"language": "en", "translation": None}
+            if kind == "topics":
+                return "ready", [{"title": "Intro", "summary": "Start", "start_segment": 0, "end_segment": 0}]
+            if kind == "terms":
+                return "ready", [{"term": "Photosynthesis", "definition": "Plants make food."}]
+            if kind == "questions":
+                return "ready", ["Why do plants need light?"]
+            return "ready", f"# Notes\n- {text[:20]}"
+
+        with patch.object(self.daemon, "_analysis_post", side_effect=fake_post):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.source_transcript, "Photosynthesis converts light.")
+        self.assertTrue(saved.outputs["lecture_notes"].startswith("# Notes"))
+        self.assertEqual(saved.outputs["topic_groups"][0]["title"], "Intro")
+        self.assertEqual(saved.outputs["key_terms"][0]["term"], "Photosynthesis")
+        self.assertEqual(saved.outputs["review_questions"], ["Why do plants need light?"])
+        self.assertEqual(saved.english_translation, "")
+        states = saved.outputs["analysis_state"]
+        self.assertTrue(all(states[kind]["state"] == "ready" for kind in (
+            "translation", "notes", "topics", "terms", "questions")))
+        self.assertEqual(calls[0], "translation")
+
+    def test_lecture_analysis_blocked_keeps_transcript(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("blocked", "Subscription allowance exhausted.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.source_transcript, "Photosynthesis converts light.")
+        self.assertNotIn("lecture_notes", saved.outputs)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "blocked")
+
+    def test_lecture_analysis_queued_then_retried(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Service unreachable.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["terms"]["state"], "queued")
+
+        def fake_post(kind: str, text: str, language: str | None = None):
+            if kind == "translation":
+                return "ready", {"language": "en", "translation": None}
+            if kind == "topics":
+                return "ready", []
+            if kind == "terms":
+                return "ready", [{"term": "Light", "definition": "Energy."}]
+            if kind == "questions":
+                return "ready", ["What?"]
+            return "ready", "notes text"
+
+        with patch.object(self.daemon, "_analysis_post", side_effect=fake_post):
+            retried = self.daemon.command("retry_analysis", {"session_id": stored.id})
+            self.assertEqual(retried["ok"], "true")
+            import time
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                saved = self.daemon._session_store.get(stored.id)
+                if "key_terms" in saved.outputs:
+                    break
+                time.sleep(0.05)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["key_terms"], [{"term": "Light", "definition": "Energy."}])
+
+    def test_retry_analysis_validates_session(self) -> None:
+        self.assertEqual(self.daemon.command("retry_analysis", {"session_id": ""})["ok"], "false")
+        self.assertEqual(self.daemon.command("retry_analysis", {"session_id": "missing"})["ok"], "false")
+        stored = self.daemon._session_store.create("dictation")
+        self.assertIn(
+            "Lecture", self.daemon.command("retry_analysis", {"session_id": stored.id})["error"]
+        )
+
     def test_long_session_persists_timestamped_transcription_segments(self) -> None:
         delivery = FakeDelivery()
         segments = [{

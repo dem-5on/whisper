@@ -44,7 +44,47 @@ def render_session_markdown(session: StoredSession) -> str:
             f"- {speaker_id.replace('_', ' ').title()}: {name}"
             for speaker_id, name in speaker_names.items()
         )
-    generated_outputs = {key: value for key, value in session.outputs.items() if key != "speaker_names"}
+    generated_outputs = {
+        key: value for key, value in session.outputs.items()
+        if key not in {"speaker_names", "analysis_state"}
+    }
+    lecture_notes = generated_outputs.pop("lecture_notes", "")
+    topic_groups = generated_outputs.pop("topic_groups", [])
+    key_terms = generated_outputs.pop("key_terms", [])
+    review_questions = generated_outputs.pop("review_questions", [])
+    if isinstance(lecture_notes, str) and lecture_notes.strip():
+        lines.extend(["", "## Lecture notes", "", lecture_notes.strip()])
+    if isinstance(topic_groups, list) and topic_groups:
+        lines.extend(["", "## Topics", ""])
+        for topic in topic_groups:
+            if not isinstance(topic, dict):
+                continue
+            title = str(topic.get("title", "")).strip() or "Untitled"
+            lines.append(f"### {title}")
+            summary = str(topic.get("summary", "")).strip()
+            if summary:
+                lines.append(summary)
+            lines.append("")
+    if isinstance(key_terms, list) and key_terms:
+        lines.extend(["", "## Key terms", ""])
+        for term in key_terms:
+            if not isinstance(term, dict):
+                continue
+            name = str(term.get("term", "")).strip()
+            definition = str(term.get("definition", "")).strip()
+            if name and definition:
+                lines.append(f"- **{name}**: {definition}")
+            elif name:
+                lines.append(f"- {name}")
+        lines.append("")
+    if isinstance(review_questions, list) and review_questions:
+        lines.extend(["", "## Review questions", ""])
+        for index, question in enumerate(review_questions, 1):
+            text = question.get("question", "") if isinstance(question, dict) else question
+            text = str(text).strip()
+            if text:
+                lines.append(f"{index}. {text}")
+        lines.append("")
     if generated_outputs:
         lines.extend(["", "## Generated outputs", ""])
         for key, value in generated_outputs.items():
@@ -152,6 +192,46 @@ def export_session_docx(session: StoredSession, output: str | Path) -> Path:
     if session.english_translation:
         document.add_heading("English translation", level=2)
         document.add_paragraph(session.english_translation.strip())
+    outputs = session.outputs if isinstance(session.outputs, dict) else {}
+    notes = outputs.get("lecture_notes", "")
+    if isinstance(notes, str) and notes.strip():
+        document.add_heading("Lecture notes", level=2)
+        for paragraph_text in notes.strip().split("\n"):
+            document.add_paragraph(paragraph_text)
+    topics = outputs.get("topic_groups", [])
+    if isinstance(topics, list) and topics:
+        document.add_heading("Topics", level=2)
+        for topic in topics:
+            if not isinstance(topic, dict):
+                continue
+            title_text = str(topic.get("title", "")).strip() or "Untitled"
+            document.add_heading(title_text, level=3)
+            summary = str(topic.get("summary", "")).strip()
+            if summary:
+                document.add_paragraph(summary)
+    terms = outputs.get("key_terms", [])
+    if isinstance(terms, list) and terms:
+        document.add_heading("Key terms", level=2)
+        for term in terms:
+            if not isinstance(term, dict):
+                continue
+            name = str(term.get("term", "")).strip()
+            definition = str(term.get("definition", "")).strip()
+            if name and definition:
+                paragraph = document.add_paragraph()
+                run = paragraph.add_run(f"{name}: ")
+                run.bold = True
+                paragraph.add_run(definition)
+            elif name:
+                document.add_paragraph(name)
+    questions = outputs.get("review_questions", [])
+    if isinstance(questions, list) and questions:
+        document.add_heading("Review questions", level=2)
+        for index, question in enumerate(questions, 1):
+            text = question.get("question", "") if isinstance(question, dict) else question
+            text = str(text).strip()
+            if text:
+                document.add_paragraph(f"{index}. {text}")
     if session.error:
         document.add_heading("Processing status", level=2)
         document.add_paragraph(session.error)

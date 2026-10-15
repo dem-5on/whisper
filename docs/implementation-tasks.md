@@ -130,9 +130,11 @@ Audit current recording limits and persistence. Support long Lecture/Meeting ses
 
 **Acceptance:** Long-session tests exceed current short-session limits, recover after forced process termination without corrupting prior audio/transcript, and retain audio/transcript until explicit deletion. Dictation remains low-latency and does not inherit long-mode latency.
 
-### P3.2 Lecture post-processing `[ ]`
+### P3.2 Lecture post-processing `[~]`
 
 After capture/transcription, generate structured notes, topic/section grouping, key terms/definitions, and review questions. Keep the source transcript and any translation distinct. Queue cloud-only work during outages and run it only when the user is still entitled.
+
+**Current evidence (2026-10-15, `linux`):** Hosted `POST /v1/analysis` serves notes/topics/terms/questions/translation/summary/actions over the operator OpenRouter key with per-kind entitlement (`lecture_analysis`, `meeting_analysis`, `translation`), bundled quota deductions (placeholder: 1 cloud-minute per stage), and distinct 402 subscription vs quota states. Bundled plan placeholders live in `whisper_service/plans.py` (free: local only; pro: everything, 600 min/month) for the admin portal to edit later. Daemon runs translation (auto when non-English, stored separately), chunked notes, timestamp-linked topics, terms, and questions after the local transcript saves; offline/unconfigured work queues, over-limit/unentitled work blocks, transcript never waits. `retry_analysis` reruns pending stages. Linux History shows each output with queued/blocked states plus retry; Markdown and Word exports include the new sections. 16 service/plan/API tests, daemon pipeline tests (success/blocked/queued/retry/validation), and export tests pass.
 
 **Acceptance:** A full Lecture produces transcript, notes, grouped topics, and study questions linked to the source session; local transcript remains available if cloud processing is unavailable or over limit. User can export and delete associated artifacts.
 
