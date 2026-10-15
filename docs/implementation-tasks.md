@@ -122,9 +122,11 @@ Replace manual owner-only feature grants as the normal production path. Enforce 
 
 ## Priority 3 — Complete Lecture and Meeting as long-form workflows
 
-### P3.1 Durable long-session capture and recovery `[ ]`
+### P3.1 Durable long-session capture and recovery `[~]`
 
 Audit current recording limits and persistence. Support long Lecture/Meeting sessions, retained audio until user deletion, incremental/durable local capture, safe stop/cancel semantics, and recovery after app/daemon/network interruption.
+
+**Current evidence (2026-10-15, `linux`):** Long modes were already uncapped (only Dictation has the 120s auto-stop). Crash-truncated WAV headers measured broken (129,600 real frames behind an 800-frame header) and are now auto-repaired at recovery; cancel on Lecture/Meeting retains audio as interrupted instead of deleting; 512MB pre-start and 256MB ongoing disk guards with graceful early stop; pill/shortcut stops on long sessions confirm first. Daemon 53+ audio/store tests plus new repair/retain/guard tests pass; Rust 15 pass; full Python suite green.
 
 **Acceptance:** Long-session tests exceed current short-session limits, recover after forced process termination without corrupting prior audio/transcript, and retain audio/transcript until explicit deletion. Dictation remains low-latency and does not inherit long-mode latency.
 
