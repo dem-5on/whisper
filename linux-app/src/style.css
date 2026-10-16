@@ -558,3 +558,10 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 .analysis-terms dt { font-weight:700; }
 .analysis-terms dd { margin:0 0 8px; }
 .analysis-section .secondary-button { margin-top:8px; }
+
+/* Meeting speaker correction */
+.speaker-row { display:flex; gap:8px; align-items:center; margin:6px 0; }
+.speaker-row input[type="text"] { flex:1; min-width:0; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; font-size:12px; }
+.speaker-row select { padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; font-size:12px; background:#fff; }
+.speaker-segments li { margin-bottom:10px; }
+.speaker-segments .segment-assign { display:block; margin-top:4px; padding:6px 8px; border:1px solid #e5e7eb; border-radius:7px; font-size:11px; background:#fff; }

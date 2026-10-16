@@ -521,6 +521,7 @@ async function loadSession(id) {
     transcript.textContent = session.source_transcript || "No transcript is available for this recording.";
     ui.sessionDetail.append(header, transcript);
     if (session.mode === "lecture") renderLectureAnalysis(session);
+    if (session.mode === "meeting") renderMeetingAnalysis(session);
     document.querySelectorAll(".session-row").forEach((row) => row.classList.toggle("selected", row.dataset.sessionId === id));
   } catch (error) { notify(error.message, true); }
 }
@@ -622,6 +623,276 @@ function renderLectureAnalysis(session) {
     const state = states[key] && states[key].state;
     return state === "queued" || state === "blocked";
   });
+  if (actionable) {
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = "Run analysis";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        await request("retry_analysis", { session_id: session.id });
+        notify("Analysis queued. Results appear here when ready.");
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        retry.disabled = false;
+      }
+    });
+    section.append(retry);
+  }
+  ui.sessionDetail.append(section);
+}
+
+function speakerDisplayName(session, speakerId) {
+  const names = session.outputs && typeof session.outputs === "object" ? session.outputs.speaker_names : null;
+  if (names && typeof names === "object" && names[speakerId]) return names[speakerId];
+  if (typeof speakerId === "string" && speakerId) return speakerId.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return "Unlabeled";
+}
+
+function meetingSpeakerIds(session) {
+  const ids = new Set();
+  for (const segment of session.segments || []) {
+    if (segment && typeof segment.speaker_id === "string" && segment.speaker_id) ids.add(segment.speaker_id);
+  }
+  const stored = session.outputs && typeof session.outputs === "object" && Array.isArray(session.outputs.speaker_ids)
+    ? session.outputs.speaker_ids : [];
+  for (const id of stored) ids.add(id);
+  return [...ids].sort();
+}
+
+async function refreshSessionDetail(id) {
+  try {
+    const { session } = await request("get_session", { session_id: id });
+    await loadSession(id);
+    void session;
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
+}
+
+function renderMeetingAnalysis(session) {
+  const outputs = session.outputs && typeof session.outputs === "object" ? session.outputs : {};
+  const section = document.createElement("section");
+  section.className = "analysis-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Speakers & meeting record";
+  section.append(heading);
+
+  const diarization = outputs.diarization_state && typeof outputs.diarization_state === "object"
+    ? outputs.diarization_state : {};
+  const diarizationState = diarization.state;
+  if (diarizationState && diarizationState !== "ready") {
+    const note = document.createElement("p");
+    note.className = "analysis-pending";
+    note.textContent = diarizationState === "blocked" && diarization.message
+      ? `Speaker detection unavailable: ${diarization.message}`
+      : "Speaker detection is still running — the transcript stays readable meanwhile.";
+    section.append(note);
+  }
+  if (diarizationState === "queued" || diarizationState === "failed" || diarizationState === "blocked") {
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = "Retry speaker analysis";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        await request("retry_diarization", { session_id: session.id });
+        notify("Speaker analysis queued. Labels appear here when ready.");
+        await refreshSessionDetail(session.id);
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        retry.disabled = false;
+      }
+    });
+    section.append(retry);
+  }
+
+  const speakers = meetingSpeakerIds(session);
+  if (speakers.length > 0) {
+    const label = document.createElement("h4");
+    label.textContent = "Speakers";
+    section.append(label);
+    for (const speakerId of speakers) {
+      const row = document.createElement("div");
+      row.className = "speaker-row";
+      const name = document.createElement("input");
+      name.type = "text";
+      name.maxLength = 80;
+      name.value = (outputs.speaker_names && outputs.speaker_names[speakerId]) || "";
+      name.placeholder = speakerDisplayName(session, speakerId);
+      name.setAttribute("aria-label", `Name for ${speakerDisplayName(session, speakerId)}`);
+      const save = document.createElement("button");
+      save.className = "small-button";
+      save.type = "button";
+      save.textContent = "Rename";
+      save.addEventListener("click", async () => {
+        if (!name.value.trim()) {
+          notify("Type a name first.", true);
+          return;
+        }
+        try {
+          await request("rename_speaker", { session_id: session.id, speaker_id: speakerId, name: name.value.trim() });
+          notify("Speaker renamed.");
+          await refreshSessionDetail(session.id);
+        } catch (error) {
+          notify(error && error.message ? error.message : String(error), true);
+        }
+      });
+      row.append(name, save);
+      section.append(row);
+    }
+    if (speakers.length > 1) {
+      const mergeRow = document.createElement("div");
+      mergeRow.className = "speaker-row";
+      const from = document.createElement("select");
+      const to = document.createElement("select");
+      for (const select of [from, to]) {
+        for (const speakerId of speakers) {
+          const option = document.createElement("option");
+          option.value = speakerId;
+          option.textContent = speakerDisplayName(session, speakerId);
+          select.append(option);
+        }
+      }
+      to.selectedIndex = 1;
+      const merge = document.createElement("button");
+      merge.className = "small-button";
+      merge.type = "button";
+      merge.textContent = "Merge into →";
+      merge.title = "Merge the first speaker into the second";
+      merge.addEventListener("click", async () => {
+        if (from.value === to.value) {
+          notify("Pick two different speakers to merge.", true);
+          return;
+        }
+        try {
+          await request("merge_speakers", { session_id: session.id, source_id: from.value, target_id: to.value });
+          notify("Speakers merged.");
+          await refreshSessionDetail(session.id);
+        } catch (error) {
+          notify(error && error.message ? error.message : String(error), true);
+        }
+      });
+      mergeRow.append(from, to, merge);
+      section.append(mergeRow);
+    }
+  }
+
+  if (Array.isArray(session.segments) && session.segments.length > 0) {
+    const label = document.createElement("h4");
+    label.textContent = "Speaker-labeled transcript";
+    section.append(label);
+    const list = document.createElement("ol");
+    list.className = "analysis-list speaker-segments";
+    session.segments.forEach((segment, index) => {
+      const item = document.createElement("li");
+      const who = document.createElement("strong");
+      who.textContent = speakerDisplayName(session, segment.speaker_id) + " ";
+      const text = document.createElement("span");
+      text.textContent = segment.text || "";
+      const assign = document.createElement("select");
+      assign.className = "segment-assign";
+      assign.setAttribute("aria-label", `Speaker for segment ${index + 1}`);
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "Unlabeled";
+      assign.append(none);
+      for (const speakerId of speakers) {
+        const option = document.createElement("option");
+        option.value = speakerId;
+        option.textContent = speakerDisplayName(session, speakerId);
+        if (segment.speaker_id === speakerId) option.selected = true;
+        assign.append(option);
+      }
+      if (segment.speaker_id && !speakers.includes(segment.speaker_id)) {
+        const option = document.createElement("option");
+        option.value = segment.speaker_id;
+        option.textContent = speakerDisplayName(session, segment.speaker_id);
+        option.selected = true;
+        assign.append(option);
+      }
+      assign.addEventListener("change", async () => {
+        try {
+          await request("assign_segment_speaker", {
+            session_id: session.id,
+            segment_index: index,
+            speaker_id: assign.value || null,
+          });
+          await refreshSessionDetail(session.id);
+        } catch (error) {
+          notify(error && error.message ? error.message : String(error), true);
+        }
+      });
+      item.append(who, text, assign);
+      list.append(item);
+    });
+    section.append(list);
+  }
+
+  if (session.english_translation) {
+    const label = document.createElement("h4");
+    label.textContent = "English translation" + (
+      outputs.source_language ? ` (from ${outputs.source_language})` : "");
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = session.english_translation;
+    section.append(label, body);
+  }
+
+  const states = outputs.analysis_state && typeof outputs.analysis_state === "object"
+    ? outputs.analysis_state : {};
+  const meetingStage = (key, title, build) => {
+    const state = states[key] && states[key].state;
+    if (state !== "ready" && state !== "queued" && state !== "blocked") return;
+    const label = document.createElement("h4");
+    label.textContent = title;
+    section.append(label);
+    if (state === "ready") {
+      build();
+      return;
+    }
+    const note = document.createElement("p");
+    note.className = "analysis-pending";
+    note.textContent = state === "blocked" && states[key].message
+      ? `Unavailable right now: ${states[key].message}`
+      : "Still processing — check back shortly.";
+    section.append(note);
+  };
+  meetingStage("summary", "Summary", () => {
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = outputs.meeting_summary || "";
+    section.append(body);
+  });
+  meetingStage("decisions", "Decisions", () => {
+    const list = document.createElement("ol");
+    list.className = "analysis-list";
+    for (const decision of outputs.meeting_decisions || []) {
+      const item = document.createElement("li");
+      item.textContent = typeof decision === "string" ? decision : (decision && decision.decision) || "";
+      list.append(item);
+    }
+    section.append(list);
+  });
+  meetingStage("actions", "Action items", () => {
+    const list = document.createElement("ul");
+    list.className = "analysis-list";
+    for (const entry of outputs.action_items || []) {
+      const item = document.createElement("li");
+      const action = typeof entry === "string" ? entry : (entry && entry.action) || "";
+      const owner = entry && typeof entry === "object" && entry.owner ? ` — ${entry.owner}` : "";
+      item.textContent = action + owner;
+      list.append(item);
+    }
+    section.append(list);
+  });
+
+  const actionable = ["translation", "summary", "decisions", "actions"].some((key) => {
+    const state = states[key] && states[key].state;
+    return state === "queued" || state === "blocked";
+  }) || diarizationState === "queued" || diarizationState === "failed";
   if (actionable) {
     const retry = document.createElement("button");
     retry.className = "secondary-button";

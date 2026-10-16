@@ -142,11 +142,15 @@ After capture/transcription, generate structured notes, topic/section grouping, 
 
 Connect the authenticated self-hosted diarization API to desktop Meeting sessions with upload limits, durable job IDs, retry/poll/backoff, cancellation/expiry behavior, and entitlement checks. Keep initial transcript visible without waiting for diarization. Then generate summary, decisions, action items, owners, and follow-ups.
 
+**Current evidence (2026-10-16, `linux`):** Daemon submits bounded WAV to `POST /v1/diarization/jobs` then polls in a detached worker (transcript saves and goes IDLE first), aligns turns via majority-overlap without touching user overrides, then runs summary/decisions/actions/translation text stages. Diarization submissions are metered against the bundled allowance at audio-minute cost (402 quota distinct from 402 subscription). New `decisions` analysis kind; `retry_diarization` resubmits. Linux UI shows speaker-labeled spans, processing states, summary/decisions/actions, and per-stage retry. Markdown and Word exports include speakers, summary, decisions, and actions.
+
 **Acceptance:** Transcript appears before speaker analysis. A restarted client/server can recover or clearly fail/retry a job. Offline/over-limit states never fabricate speaker assignments. Successful labels align to timestamps and user edits persist.
 
 ### P3.4 Speaker correction and safe retention `[~]`
 
 Support provisional “Speaker 1/2” labels, rename, reassign transcript spans, merge speakers, and preserve edits against later processing. Define and test deletion of local originals and temporary server copies.
+
+**Current evidence (2026-10-16, `linux`):** Inline rename, per-segment reassignment (including explicit unlabeling), and merge-duplicates controls in the Linux History detail view, wired to the daemon ops; corrections persist across restarts and survive later analysis passes. Server deletes uploaded audio after processing; local deletion removes audio+transcript together.
 
 **Acceptance:** Mislabel corrections survive app restarts and are reflected in regenerated meeting outputs. Failure states are clear; the product does not imply perfect identity recognition.
 

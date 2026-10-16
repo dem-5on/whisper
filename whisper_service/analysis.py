@@ -34,6 +34,7 @@ MAX_TOPICS = 20
 MAX_TERMS = 30
 MAX_QUESTIONS = 10
 MAX_ACTIONS = 20
+MAX_DECISIONS = 20
 
 
 def split_transcript(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
@@ -111,6 +112,14 @@ def build_prompt(kind: str, text: str, *, language: str | None = None) -> tuple[
             f"At most {MAX_ACTIONS} entries.",
             text,
         )
+    if kind == "decisions":
+        return (
+            "Extract the decisions made in this meeting transcript. Return a "
+            "JSON array of strings and nothing else. Each entry states one "
+            "decision plainly. Omit anything merely discussed without agreement. "
+            f"At most {MAX_DECISIONS} entries.",
+            text,
+        )
     raise AnalysisError(f"Unknown analysis kind: {kind}")
 
 
@@ -140,6 +149,17 @@ def parse_result(kind: str, text: str, *, segment_count: int | None = None) -> A
         payload = json.loads(_strip_fences(text))
     except ValueError as exc:
         raise AnalysisError("The analysis provider returned invalid JSON") from exc
+    if kind == "decisions":
+        decisions = []
+        for entry in _as_list(payload)[:MAX_DECISIONS]:
+            if isinstance(entry, dict):
+                entry = entry.get("decision", "")
+            decision = str(entry).strip()
+            if decision:
+                decisions.append(decision[:500])
+        if not decisions:
+            raise AnalysisError("The analysis provider returned no usable decisions")
+        return decisions
     if kind == "topics":
         topics = []
         for entry in _as_list(payload)[:MAX_TOPICS]:
@@ -235,7 +255,7 @@ class OpenRouterAnalysisModel(AnalysisModel):
         self, kind: str, text: str, *, language: str | None = None,
         model: str | None = None,
     ) -> tuple[str, str]:
-        if kind not in ("notes", "topics", "terms", "questions", "translation", "summary", "actions"):
+        if kind not in ("notes", "topics", "terms", "questions", "translation", "summary", "actions", "decisions"):
             raise AnalysisError(f"Unknown analysis kind: {kind}")
         if not text.strip():
             raise AnalysisError("There is no transcript to analyze")

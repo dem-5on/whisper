@@ -188,5 +188,72 @@ class DiarizationHttpApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status, 404)
 
+
+class DiarizationMeteringTests(unittest.IsolatedAsyncioTestCase):
+    PERIOD_END = "2030-01-01T00:00:00+00:00"
+    MAPPING = {"pro-monthly": (
+        ("cloud_transcription", "diarization", "meeting_analysis"), 10,
+    )}
+
+    async def asyncSetUp(self) -> None:
+        from datetime import UTC, datetime
+
+        from whisper_service.billing import BillingStore
+
+        class Worker:
+            async def diarize(self, _audio):
+                return []
+
+        self.tempdir = tempfile.TemporaryDirectory()
+        billing_path = Path(self.tempdir.name) / "billing.sqlite3"
+        store = BillingStore(billing_path)
+        store.apply_verified_event(
+            provider="paystack", event_id="evt-1", subscription_id="SUB-1",
+            user_id="user-a", plan_id="pro-monthly", status="active",
+            current_period_end=self.PERIOD_END,
+            now=datetime(2026, 10, 11, tzinfo=UTC),
+        )
+        self.store = BillingStore(billing_path)
+        self.manager = DiarizationJobManager(Worker(), temp_dir=Path(self.tempdir.name))
+        await self.manager.start()
+        entitlement_path = Path(self.tempdir.name) / "entitlements.json"
+        grant_feature(entitlement_path, "user-a", "diarization")
+        auth = TokenAuthenticator({
+            hashlib.sha256(b"user-a-token").hexdigest(): "user-a",
+        })
+        self.client = TestClient(TestServer(make_app(
+            auth, self.manager, EntitlementStore(entitlement_path),
+            billing_store=self.store, usage_plans=dict(self.MAPPING),
+        )))
+        await self.client.start_server()
+
+    async def asyncTearDown(self) -> None:
+        await self.client.close()
+        await self.manager.close()
+        self.tempdir.cleanup()
+
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": "Bearer user-a-token"}
+
+    async def test_submit_deducts_audio_minutes(self) -> None:
+        response = await self.client.post(
+            JOBS_PATH, data=wav_bytes(frames=16_000),
+            headers={**self._headers(), "Content-Type": "audio/wav"},
+        )
+        self.assertEqual(response.status, 202)
+        budget = self.store.cloud_usage_budget("user-a", dict(self.MAPPING))
+        assert budget is not None
+        self.assertEqual(budget["used_milliseconds"], 1000)
+        self.assertEqual(budget["remaining_milliseconds"], 10 * 60_000 - 1000)
+
+    async def test_exhausted_allowance_blocks_submit(self) -> None:
+        self.store.record_cloud_usage("user-a", "pro-monthly", self.PERIOD_END, 10 * 60_000)
+        response = await self.client.post(
+            JOBS_PATH, data=wav_bytes(frames=160),
+            headers={**self._headers(), "Content-Type": "audio/wav"},
+        )
+        self.assertEqual(response.status, 402)
+        self.assertEqual((await response.json())["error"], "quota_exhausted")
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,6 +54,7 @@ KIND_FEATURE: dict[str, str] = {
     "translation": "translation",
     "summary": "meeting_analysis",
     "actions": "meeting_analysis",
+    "decisions": "meeting_analysis",
 }
 
 ANALYSIS_KINDS: tuple[str, ...] = tuple(KIND_FEATURE)

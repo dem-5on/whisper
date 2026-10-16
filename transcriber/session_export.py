@@ -52,6 +52,9 @@ def render_session_markdown(session: StoredSession) -> str:
     topic_groups = generated_outputs.pop("topic_groups", [])
     key_terms = generated_outputs.pop("key_terms", [])
     review_questions = generated_outputs.pop("review_questions", [])
+    meeting_summary = generated_outputs.pop("meeting_summary", "")
+    meeting_decisions = generated_outputs.pop("meeting_decisions", [])
+    action_items = generated_outputs.pop("action_items", [])
     if isinstance(lecture_notes, str) and lecture_notes.strip():
         lines.extend(["", "## Lecture notes", "", lecture_notes.strip()])
     if isinstance(topic_groups, list) and topic_groups:
@@ -84,6 +87,29 @@ def render_session_markdown(session: StoredSession) -> str:
             text = str(text).strip()
             if text:
                 lines.append(f"{index}. {text}")
+        lines.append("")
+    if isinstance(meeting_summary, str) and meeting_summary.strip():
+        lines.extend(["", "## Meeting summary", "", meeting_summary.strip()])
+    if isinstance(meeting_decisions, list) and meeting_decisions:
+        lines.extend(["", "## Decisions", ""])
+        for decision in meeting_decisions:
+            text = decision.get("decision", "") if isinstance(decision, dict) else decision
+            text = str(text).strip()
+            if text:
+                lines.append(f"- {text}")
+        lines.append("")
+    if isinstance(action_items, list) and action_items:
+        lines.extend(["", "## Action items", ""])
+        for entry in action_items:
+            if isinstance(entry, dict):
+                action = str(entry.get("action", "")).strip()
+                owner = str(entry.get("owner", "")).strip()
+                if action and owner:
+                    lines.append(f"- {action} ({owner})")
+                elif action:
+                    lines.append(f"- {action}")
+            elif str(entry).strip():
+                lines.append(f"- {str(entry).strip()}")
         lines.append("")
     if generated_outputs:
         lines.extend(["", "## Generated outputs", ""])
@@ -232,6 +258,31 @@ def export_session_docx(session: StoredSession, output: str | Path) -> Path:
             text = str(text).strip()
             if text:
                 document.add_paragraph(f"{index}. {text}")
+    summary = outputs.get("meeting_summary", "")
+    if isinstance(summary, str) and summary.strip():
+        document.add_heading("Meeting summary", level=2)
+        for paragraph_text in summary.strip().split("\n"):
+            document.add_paragraph(paragraph_text)
+    decisions = outputs.get("meeting_decisions", [])
+    if isinstance(decisions, list) and decisions:
+        document.add_heading("Decisions", level=2)
+        for decision in decisions:
+            text = decision.get("decision", "") if isinstance(decision, dict) else decision
+            text = str(text).strip()
+            if text:
+                document.add_paragraph(text, style="List Bullet")
+    actions = outputs.get("action_items", [])
+    if isinstance(actions, list) and actions:
+        document.add_heading("Action items", level=2)
+        for entry in actions:
+            if isinstance(entry, dict):
+                action = str(entry.get("action", "")).strip()
+                owner = str(entry.get("owner", "")).strip()
+                text = f"{action} ({owner})" if action and owner else action
+            else:
+                text = str(entry).strip()
+            if text:
+                document.add_paragraph(text, style="List Bullet")
     if session.error:
         document.add_heading("Processing status", level=2)
         document.add_paragraph(session.error)

@@ -13,7 +13,7 @@ from whisper_service.analysis import (
 
 class AnalysisUnitTests(unittest.TestCase):
     def test_prompts_cover_every_planned_kind(self) -> None:
-        for kind in ("notes", "topics", "terms", "questions", "translation", "summary", "actions"):
+        for kind in ("notes", "topics", "terms", "questions", "translation", "summary", "actions", "decisions"):
             system, user = build_prompt(kind, "hello world", language="twi")
             self.assertTrue(system.strip())
             self.assertEqual(user, "hello world")
@@ -59,6 +59,10 @@ class AnalysisUnitTests(unittest.TestCase):
         self.assertEqual(questions, ["Why?", "How?"])
         actions = parse_result("actions", '["Ship it", {"action": "Call Ama", "owner": "Kwame"}]')
         self.assertEqual(actions, [{"action": "Ship it", "owner": ""}, {"action": "Call Ama", "owner": "Kwame"}])
+        decisions = parse_result("decisions", '["Ship Friday", {"decision": "Delay launch"}]')
+        self.assertEqual(decisions, ["Ship Friday", "Delay launch"])
+        with self.assertRaises(AnalysisError):
+            parse_result("decisions", "[]")
         with self.assertRaises(AnalysisError):
             parse_result("actions", "[]")
         with self.assertRaises(AnalysisError):

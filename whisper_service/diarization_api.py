@@ -109,7 +109,32 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                         return web.json_response({"error": "upload_too_large"}, status=413)
                     output.write(chunk)
             _validate_wav(audio_path)
+            audio_ms = _wav_milliseconds(audio_path)
+            budget_plan = None
+            if billing_store is not None and usage_plans:
+                try:
+                    budget = await asyncio.to_thread(
+                        billing_store.cloud_usage_budget, request["user_id"], usage_plans,
+                    )
+                except BillingStoreError as exc:
+                    logger.error("Diarization budget check unavailable (%s)", type(exc).__name__)
+                    return web.json_response({"error": "entitlement_unavailable"}, status=503)
+                if budget is None or (budget["remaining_milliseconds"] is not None
+                                      and int(budget["remaining_milliseconds"]) < audio_ms):
+                    return web.json_response({
+                        "error": "quota_exhausted",
+                        "message": "The subscription allowance is exhausted. Speaker analysis resumes after renewal or upgrade.",
+                    }, status=402)
+                budget_plan = budget
             job_id = await jobs.submit(request["user_id"], audio_path)
+            if budget_plan is not None and billing_store is not None and audio_ms > 0:
+                try:
+                    await asyncio.to_thread(
+                        billing_store.record_cloud_usage, request["user_id"],
+                        str(budget_plan["plan_id"]), str(budget_plan["period_end"]), audio_ms,
+                    )
+                except BillingStoreError as exc:
+                    logger.error("Diarization usage record unavailable (%s)", type(exc).__name__)
             return web.json_response({"job_id": job_id, "state": "queued"}, status=202)
         except ServiceError as exc:
             return web.json_response({"error": exc.code, "message": exc.message},
@@ -636,6 +661,17 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
         app.router.add_post(OAUTH_CALLBACK_PATH, oauth_callback)
         app.router.add_post(OAUTH_EXCHANGE_PATH, exchange_oauth_session)
     return app
+
+
+def _wav_milliseconds(path: Path) -> int:
+    """Audio minutes for bundled metering, from validated WAV geometry."""
+    try:
+        with wave.open(str(path), "rb") as source:
+            frames = source.getnframes()
+            rate = source.getframerate() or 16_000
+            return max(0, int(frames / rate * 1000))
+    except (wave.Error, EOFError, OSError):
+        return 0
 
 
 def _validate_wav(path: Path) -> None:
