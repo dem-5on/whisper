@@ -20,7 +20,11 @@ docs/*
 # Local configuration and credentials
 config.yaml
 keys.env
+# Every .env file is a secret, including per-environment variants. The committed
+# example (deploy/*/.env.example) is the only exception.
 .env
+.env.*
+!.env.example
 
 # Local logs and retained recordings/transcripts
 stderr.txt

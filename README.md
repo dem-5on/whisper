@@ -362,6 +362,17 @@ provider's transcription-capable models (cached 24h) for `groq`/`openrouter`.
 Configuration lives in the daemon config file; the only UI
 display option is `ui.show_last_transcript` (default off).
 
+## Deploying the hosted service
+
+Every application on a server keeps its own env file, and this repository
+commits only the example: `deploy/whisper-service/.env.example` lists each
+variable grouped by feature, and `.env` is git-ignored (a test enforces it).
+Production wires that file in through systemd `EnvironmentFile=`; development
+can `set -a; . ./.env; set +a`. Values already present in the real environment
+always win, and only variable names — never values — are logged. See
+`deploy/whisper-service/README.md` for the unit file, the `HF_TOKEN` and
+OpenRouter setup, and the first-token/grant commands.
+
 ## Safety and privacy
 
 Local transcription is the default. Groq and OpenRouter are opt-in and read their credentials only from `GROQ_API_KEY` and `OPENROUTER_API_KEY`; credentials and transcript text are never written to logs. `submit_after_insert` defaults to `false`, so text is inserted but Enter is not pressed. The last recording (`~/.local/share/transcriber/last.wav`) and transcript (`last.txt`) are kept on disk for retry/copy recovery.
