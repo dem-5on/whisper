@@ -80,6 +80,12 @@ DISK_CHECK_INTERVAL_SECONDS = 60.0
 #: on a timer would hammer a quota that only renews monthly.
 ANALYSIS_SWEEP_INTERVAL_SECONDS = 300.0
 
+#: Transient analysis failures retried per stage before the stage gives up. At
+#: the sweep cadence above that is roughly two hours of trying, after which the
+#: stage is marked failed and waits for an explicit user retry. Promising "will
+#: retry" forever is how a permanently broken endpoint looked healthy.
+MAX_ANALYSIS_ATTEMPTS = 24
+
 _VALID_BACKENDS = ("local", "groq", "openrouter", "openai")
 _LOCAL_MODEL_PRESETS = ("tiny", "base", "small", "medium", "large-v3", "turbo")
 _OPENAI_MODEL_PRESETS = ("gpt-transcribe", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1")
@@ -862,11 +868,7 @@ class TranscriberDaemon:
         if stored.state != "error":
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "Only an interrupted or failed session can be retried"}
-        try:
-            has_audio = stored.audio_path.is_file() and stored.audio_path.stat().st_size > 44
-        except OSError:
-            has_audio = False
-        if not has_audio:
+        if not self._diarization_audio_usable(stored.audio_path):
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "The saved session recording is missing or empty"}
         with self._lock:
@@ -973,9 +975,34 @@ class TranscriberDaemon:
             return "queued", "Analysis service returned an unusable result."
         return "ready", result
 
+    def _analysis_attempt(
+        self, states: dict[str, Any], kind: str, state: str, message: str,
+    ) -> tuple[str, str, int]:
+        """Count transient failures and stop after the retry budget.
+
+        Returns the state and message to store plus the attempt count. A stage
+        that exhausts its budget becomes "failed" so the user sees a truthful
+        reason instead of a permanent "still processing".
+        """
+        entry = states.get(kind) if isinstance(states.get(kind), dict) else {}
+        attempts = entry.get("attempts", 0)
+        if not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 0:
+            attempts = 0
+        if state == "queued":
+            attempts += 1
+            if attempts >= MAX_ANALYSIS_ATTEMPTS:
+                return (
+                    "failed",
+                    f"Gave up after {attempts} tries because the analysis service "
+                    f"never answered. Use Run analysis once the service is reachable.",
+                    attempts,
+                )
+            return "queued", message, attempts
+        return state, message, 0 if state == "ready" else attempts
+
     def _store_analysis_stage(
         self, session_id: str, kind: str, state: str,
-        result: Any = None, message: str = "",
+        result: Any = None, message: str = "", count_attempt: bool = True,
     ) -> None:
         from .lecture import OUTPUT_KEYS
 
@@ -986,7 +1013,14 @@ class TranscriberDaemon:
             return
         outputs = dict(stored.outputs) if isinstance(stored.outputs, dict) else {}
         states = dict(outputs.get("analysis_state", {})) if isinstance(outputs.get("analysis_state"), dict) else {}
-        states[kind] = {"state": state, "message": message}
+        if count_attempt:
+            state, message, attempts = self._analysis_attempt(states, kind, state, message)
+        else:
+            attempts = 0
+        entry: dict[str, Any] = {"state": state, "message": message}
+        if attempts:
+            entry["attempts"] = attempts
+        states[kind] = entry
         outputs["analysis_state"] = states
         update: dict[str, Any] = {"outputs": outputs}
         translation: str | None = None
@@ -1032,13 +1066,18 @@ class TranscriberDaemon:
             entry = existing.get(kind)
             return isinstance(entry, dict) and entry.get("state") == "ready"
 
+        def is_done(kind: str) -> bool:
+            """Ready or gave up; an exhausted stage waits for the user."""
+            entry = existing.get(kind)
+            return isinstance(entry, dict) and entry.get("state") in {"ready", "failed"}
+
         if all(is_ready(kind) for kind in LECTURE_STAGES):
             return
 
         numbered, total = numbered_utterances(segments, transcript)
         merged_notes: list[str] = []
 
-        if not is_ready("translation"):
+        if not is_done("translation"):
             state, result = self._analysis_post(
                 "translation", transcript[:MAX_STAGE_CHARS], language=None,
             )
@@ -1062,7 +1101,7 @@ class TranscriberDaemon:
         stored_notes = outputs.get("lecture_notes") if is_ready("notes") else ""
         if isinstance(stored_notes, str) and stored_notes:
             merged_notes = [stored_notes]
-        elif not is_ready("notes"):
+        elif not is_done("notes"):
             chunks = split_text(transcript)
             for index, chunk in enumerate(chunks):
                 state, result = self._analysis_post("notes", chunk)
@@ -1074,12 +1113,17 @@ class TranscriberDaemon:
                 )
             else:
                 self._store_analysis_stage(session_id, "notes", "ready", result="\n\n".join(merged_notes))
-        if not merged_notes and not is_ready("notes"):
+        if not merged_notes and not is_done("notes"):
             for kind in ("topics", "terms", "questions"):
-                self._store_analysis_stage(session_id, kind, "queued", message="Waiting on lecture notes.")
+                # These stages never called the service, so they must not spend
+                # an attempt from the retry budget.
+                self._store_analysis_stage(
+                    session_id, kind, "queued",
+                    message="Waiting on lecture notes.", count_attempt=False,
+                )
             return
 
-        if not is_ready("topics"):
+        if not is_done("topics"):
             numbered_chunks = split_text(numbered, MAX_STAGE_CHARS)
             all_topics: list[dict[str, Any]] = []
             topics_failed: tuple[str, str] | None = None
@@ -1099,7 +1143,7 @@ class TranscriberDaemon:
 
         detail_source = "\n\n".join(merged_notes) if merged_notes else transcript[:MAX_STAGE_CHARS]
         for kind in ("terms", "questions"):
-            if is_ready(kind):
+            if is_done(kind):
                 continue
             state, result = self._analysis_post(kind, detail_source)
             self._store_analysis_stage(
@@ -1135,8 +1179,10 @@ class TranscriberDaemon:
             return "queued", "Speaker analysis service is not configured."
         try:
             data = audio.read_bytes()
+        except FileNotFoundError:
+            return "failed", "The saved recording is missing, so speakers cannot be detected."
         except OSError:
-            return "queued", "Saved recording is unreadable right now."
+            return "queued", "The saved recording could not be read; will retry."
         if len(data) > 4 * 3600 * 16000 * 2:
             return "failed", "Recording exceeds the 4-hour speaker-analysis limit."
         request = urllib.request.Request(
@@ -1274,9 +1320,10 @@ class TranscriberDaemon:
             if not isinstance(diarization, dict):
                 diarization = {}
 
-            def text_ready(kind: str) -> bool:
+            def text_done(kind: str) -> bool:
+                """Ready or gave up: either way this run must not touch it."""
                 entry = existing_analysis.get(kind)
-                return isinstance(entry, dict) and entry.get("state") == "ready"
+                return isinstance(entry, dict) and entry.get("state") in {"ready", "failed"}
 
             speaker_cancelled = diarization.get("state") == "cancelled"
             speaker_turns_done = bool(diarization.get("turns_applied"))
@@ -1288,6 +1335,12 @@ class TranscriberDaemon:
                 if job_id is None:
                     if attempts >= MAX_DIARIZATION_ATTEMPTS:
                         self._store_diarization_state(session_id, "failed", "Speaker analysis gave up after retries.", attempts=attempts)
+                    elif not self._diarization_audio_usable(stored.audio_path):
+                        # Nothing to analyse, and no retry can fix a missing file.
+                        self._store_diarization_state(
+                            session_id, "failed",
+                            "The saved recording is missing, so speakers cannot be detected.",
+                        )
                     else:
                         try:
                             audio_bytes = stored.audio_path.stat().st_size
@@ -1345,7 +1398,7 @@ class TranscriberDaemon:
             existing_analysis = outputs.get("analysis_state", {})
             if not isinstance(existing_analysis, dict):
                 existing_analysis = {}
-            if not text_ready("translation"):
+            if not text_done("translation"):
                 state, result = self._analysis_post("translation", transcript[:45000], language=None)
                 self._store_translation_result(session_id, state, result)
                 if state == "blocked":
@@ -1353,8 +1406,7 @@ class TranscriberDaemon:
                         self._store_meeting_stage(session_id, kind, "blocked", message=str(result))
                     return
             for kind in ("summary", "decisions", "actions"):
-                entry = existing_analysis.get(kind)
-                if isinstance(entry, dict) and entry.get("state") == "ready":
+                if text_done(kind):
                     continue
                 state, result = self._analysis_post(kind, detail_source)
                 self._store_meeting_stage(
@@ -1372,32 +1424,33 @@ class TranscriberDaemon:
             return
         outputs = dict(stored.outputs) if isinstance(stored.outputs, dict) else {}
         states = dict(outputs.get("analysis_state", {})) if isinstance(outputs.get("analysis_state"), dict) else {}
-        update: dict[str, object] = {}
-        if state == "ready" and isinstance(result, dict):
-            language = str(result.get("language", "")).strip().lower()
-            text = result.get("translation")
-            outputs["source_language"] = language
-            states["translation"] = {"state": "ready", "message": ""}
-            outputs["analysis_state"] = states
-            update["outputs"] = outputs
-            if language and language not in {"en", "english"} and isinstance(text, str) and text.strip():
-                update["english_translation"] = text.strip()
-        elif state == "ready":
-            states["translation"] = {"state": "ready", "message": ""}
-            outputs["analysis_state"] = states
-            update["outputs"] = outputs
-            if isinstance(result, str) and result.strip():
+        state, message, attempts = self._analysis_attempt(
+            states, "translation", state, str(result) if state != "ready" else "",
+        )
+        translation_entry: dict[str, Any] = {"state": state, "message": message}
+        if attempts:
+            translation_entry["attempts"] = attempts
+        states["translation"] = translation_entry
+        outputs["analysis_state"] = states
+        update: dict[str, object] = {"outputs": outputs}
+        if state == "ready":
+            if isinstance(result, dict):
+                language = str(result.get("language", "")).strip().lower()
+                text = result.get("translation")
+                outputs["source_language"] = language
+                if language and language not in {"en", "english"} and isinstance(text, str) and text.strip():
+                    update["english_translation"] = text.strip()
+            elif isinstance(result, str) and result.strip():
                 update["english_translation"] = result.strip()
-        else:
-            states["translation"] = {"state": state, "message": str(result)}
-            outputs["analysis_state"] = states
-            update["outputs"] = outputs
         try:
             self._session_store.update(session_id, **update)
         except (SessionStoreError, KeyError, ValueError):
             LOG.error("Could not persist meeting translation")
 
-    def _store_meeting_stage(self, session_id: str, kind: str, state: str, result: object = None, message: str = "") -> None:
+    def _store_meeting_stage(
+        self, session_id: str, kind: str, state: str, result: object = None,
+        message: str = "", count_attempt: bool = True,
+    ) -> None:
         from .meeting import MEETING_OUTPUT_KEYS
 
         try:
@@ -1406,7 +1459,14 @@ class TranscriberDaemon:
             return
         outputs = dict(stored.outputs) if isinstance(stored.outputs, dict) else {}
         states = dict(outputs.get("analysis_state", {})) if isinstance(outputs.get("analysis_state"), dict) else {}
-        states[kind] = {"state": state, "message": message}
+        if count_attempt:
+            state, message, attempts = self._analysis_attempt(states, kind, state, message)
+        else:
+            attempts = 0
+        entry: dict[str, Any] = {"state": state, "message": message}
+        if attempts:
+            entry["attempts"] = attempts
+        states[kind] = entry
         outputs["analysis_state"] = states
         if state == "ready" and kind in MEETING_OUTPUT_KEYS:
             outputs[MEETING_OUTPUT_KEYS[kind]] = result
@@ -1414,6 +1474,13 @@ class TranscriberDaemon:
             self._session_store.update(session_id, outputs=outputs)
         except (SessionStoreError, KeyError, ValueError):
             LOG.error("Could not persist meeting stage")
+
+    def _diarization_audio_usable(self, audio: Path) -> bool:
+        """True when the retained recording exists and can carry audio."""
+        try:
+            return audio.is_file() and audio.stat().st_size > 44
+        except OSError:
+            return False
 
     def _diarization_delete(self, job_id: str) -> tuple[str, str]:
         """Ask the service to stop a job. Returns (state, message)."""
@@ -1447,6 +1514,31 @@ class TranscriberDaemon:
         if state == "cancelled":
             return "cancelled", ""
         return "error", "Speaker service did not confirm the cancellation."
+
+    def _revive_analysis_stages(self, session_id: str) -> None:
+        """Re-queue every unfinished analysis stage with a fresh attempt budget."""
+        try:
+            stored = self._session_store.get(session_id)
+        except (KeyError, SessionStoreError):
+            return
+        outputs = dict(stored.outputs) if isinstance(stored.outputs, dict) else {}
+        states = outputs.get("analysis_state")
+        if not isinstance(states, dict) or not states:
+            return
+        revived: dict[str, Any] = {}
+        for kind, entry in states.items():
+            if not isinstance(entry, dict):
+                revived[kind] = entry
+                continue
+            if entry.get("state") == "ready":
+                revived[kind] = entry
+                continue
+            revived[kind] = {"state": "queued", "message": "Queued for a fresh attempt."}
+        outputs["analysis_state"] = revived
+        try:
+            self._session_store.update(session_id, outputs=outputs)
+        except (SessionStoreError, KeyError, ValueError):
+            LOG.error("Could not revive analysis stages")
 
     def _cancel_diarization(self, session_id: str) -> dict[str, Any]:
         if not session_id:
@@ -1508,11 +1600,7 @@ class TranscriberDaemon:
         if stored.mode != "meeting":
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "Only Meeting sessions can retry speaker analysis"}
-        try:
-            has_audio = stored.audio_path.is_file() and stored.audio_path.stat().st_size > 44
-        except OSError:
-            has_audio = False
-        if not has_audio:
+        if not self._diarization_audio_usable(stored.audio_path):
             with self._lock:
                 return {**self._status_locked(), "ok": "false", "error": "The saved session recording is missing or empty"}
         with self._lock:
@@ -1556,6 +1644,12 @@ class TranscriberDaemon:
         with self._lock:
             if self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}:
                 return {**self._status_locked(), "ok": "false", "error": "Another recording or transcription is in progress"}
+        if self._stopping.is_set():
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Wicx is shutting down"}
+        # Asking again is a fresh start: revive exhausted stages and clear their
+        # attempt counts so the retry budget applies to this attempt only.
+        self._revive_analysis_stages(session_id)
         worker = threading.Thread(
             target=self._run_lecture_analysis if stored.mode == "lecture" else self._run_meeting_analysis,
             args=(session_id,),

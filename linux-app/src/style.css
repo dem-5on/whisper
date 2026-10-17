@@ -572,3 +572,6 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 .speaker-corrections[open] > summary { border-bottom:1px solid #f1f3f6; margin-bottom:8px; }
 .speaker-corrections h4 { margin:12px 0 4px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:#6b7280; }
 .speaker-corrections > h4:first-of-type { margin-top:8px; }
+
+/* A stage that gave up must never read like work still in progress. */
+.analysis-failed { color:#9a3412; background:#fff7ed; border-left:3px solid #f97316; padding:8px 10px; border-radius:6px; margin:4px 0; font-size:12px; }

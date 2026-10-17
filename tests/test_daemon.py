@@ -595,8 +595,16 @@ class DaemonTests(unittest.TestCase):
         saved = self.daemon._session_store.get(pending.id)
         self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "queued")
 
-    def _make_meeting_session(self):
+    def _make_meeting_session(self, *, audio: bool = True):
+        import wave
+
         stored = self.daemon._session_store.create("meeting")
+        if audio:
+            with wave.open(str(stored.audio_path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(b"\x01\x02" * 16000)
         return self.daemon._session_store.update(
             stored.id, state="ready",
             source_transcript="Kwame: Let us ship Friday. Ama: Agreed.",
@@ -821,6 +829,89 @@ class DaemonTests(unittest.TestCase):
         urlopen.assert_not_called()
         self.assertEqual(state, "queued")
         self.assertIn("paused", str(message))
+
+    def test_missing_recording_fails_speaker_analysis_without_retrying(self) -> None:
+        stored = self._make_meeting_session(audio=False)
+        with patch.object(
+            self.daemon, "_diarization_post_submit",
+            side_effect=AssertionError("must not upload a missing recording"),
+        ) as submit, patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        submit.assert_not_called()
+        saved = self.daemon._session_store.get(stored.id)
+        diarization = saved.outputs["diarization_state"]
+        self.assertEqual(diarization["state"], "failed")
+        self.assertIn("missing", diarization["message"])
+        self.assertNotIn("attempts", diarization)
+        self.assertIsNone(saved.segments[0]["speaker_id"])
+        # The transcript stages still run: only speakers depend on the audio.
+        self.assertIn("Shipped Friday", saved.outputs["meeting_summary"])
+        # A retry must refuse honestly rather than pretend it can work.
+        retry = self.daemon.command("retry_diarization", {"session_id": stored.id})
+        self.assertEqual(retry["ok"], "false")
+        self.assertIn("missing", retry["error"])
+
+    def test_analysis_stage_gives_up_after_the_attempt_budget(self) -> None:
+        from transcriber.daemon import MAX_ANALYSIS_ATTEMPTS
+
+        stored = self._make_meeting_session()
+        with patch.object(
+            self.daemon, "_diarization_post_submit", return_value=("failed", "Speaker analysis failed on the service."),
+        ), patch.object(
+            self.daemon, "_analysis_post",
+            return_value=("queued", "Analysis service is unreachable; will retry when online."),
+        ) as post:
+            for _ in range(MAX_ANALYSIS_ATTEMPTS):
+                self.daemon._run_meeting_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        summary = saved.outputs["analysis_state"]["summary"]
+        self.assertEqual(summary["state"], "failed")
+        self.assertEqual(summary["attempts"], MAX_ANALYSIS_ATTEMPTS)
+        self.assertIn("Gave up", summary["message"])
+
+        # A spent stage is not retried behind the user's back...
+        attempts_before = post.call_count
+        self.daemon._run_meeting_analysis(stored.id)
+        self.assertEqual(post.call_count, attempts_before)
+
+        # ...but asking again gives it a fresh budget.
+        with patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            retried = self.daemon.command("retry_analysis", {"session_id": stored.id})
+            self.assertEqual(retried["ok"], "true")
+            import time
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                saved = self.daemon._session_store.get(stored.id)
+                if saved.outputs.get("analysis_state", {}).get("summary", {}).get("state") == "ready":
+                    break
+                time.sleep(0.05)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["summary"]["state"], "ready")
+        self.assertNotIn("attempts", saved.outputs["analysis_state"]["summary"])
+
+    def test_waiting_stages_do_not_spend_the_attempt_budget(self) -> None:
+        from transcriber.daemon import MAX_ANALYSIS_ATTEMPTS
+
+        lecture = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Analysis service is unreachable; will retry when online."),
+        ):
+            for _ in range(2):
+                self.daemon._run_lecture_analysis(lecture.id)
+        saved = self.daemon._session_store.get(lecture.id)
+        notes = saved.outputs["analysis_state"]["notes"]
+        self.assertEqual(notes["state"], "queued")
+        # Dependent stages are told to wait, not charged for an attempt.
+        self.assertLess(notes["attempts"], MAX_ANALYSIS_ATTEMPTS)
+        for kind in ("topics", "terms", "questions"):
+            entry = saved.outputs["analysis_state"][kind]
+            self.assertEqual(entry["state"], "queued")
+            self.assertNotIn("attempts", entry)
 
     def test_service_api_url_override_targets_a_local_service(self) -> None:
         import os

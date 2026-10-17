@@ -566,7 +566,7 @@ function renderLectureAnalysis(session) {
 
   const stage = (key, build) => {
     const state = states[key] && states[key].state;
-    if (state !== "ready" && state !== "queued" && state !== "blocked") return;
+    if (!["ready", "queued", "blocked", "failed"].includes(state)) return;
     const label = document.createElement("h4");
     label.textContent = LECTURE_STAGE_LABELS[key] || key;
     section.append(label);
@@ -574,11 +574,16 @@ function renderLectureAnalysis(session) {
       build();
       return;
     }
+    // The daemon stores the real reason; showing our own wording instead of it
+    // is how a blocked service looked healthy for hours.
+    const stored = (states[key].message || "").trim();
     const note = document.createElement("p");
-    note.className = "analysis-pending";
-    note.textContent = state === "blocked"
-      ? `Unavailable right now${states[key].message ? `: ${states[key].message}` : "."}`
-      : "Still processing — check back shortly.";
+    note.className = state === "failed" ? "analysis-failed" : "analysis-pending";
+    note.textContent = stored || (state === "failed"
+      ? "This stage gave up after repeated failures."
+      : state === "blocked"
+        ? "Unavailable right now."
+        : "Still processing — check back shortly.");
     section.append(note);
   };
 
@@ -631,7 +636,7 @@ function renderLectureAnalysis(session) {
 
   const actionable = ["translation", "notes", "topics", "terms", "questions"].some((key) => {
     const state = states[key] && states[key].state;
-    return state === "queued" || state === "blocked";
+    return state === "queued" || state === "blocked" || state === "failed";
   });
   if (actionable) {
     const retry = document.createElement("button");
@@ -717,7 +722,7 @@ function renderMeetingAnalysis(session) {
   const diarizationState = diarization.state;
   if (diarizationState && diarizationState !== "ready") {
     const note = document.createElement("p");
-    note.className = "analysis-pending";
+    note.className = diarizationState === "failed" ? "analysis-failed" : "analysis-pending";
     // The daemon already knows why: refused, unreachable, not configured.
     // Showing our own wording instead of that reason is how "still running"
     // hid a Cloudflare block for hours.
@@ -920,7 +925,7 @@ function renderMeetingAnalysis(session) {
     ? outputs.analysis_state : {};
   const meetingStage = (key, title, build) => {
     const state = states[key] && states[key].state;
-    if (state !== "ready" && state !== "queued" && state !== "blocked") return;
+    if (!["ready", "queued", "blocked", "failed"].includes(state)) return;
     const label = document.createElement("h4");
     label.textContent = title;
     section.append(label);
@@ -929,11 +934,13 @@ function renderMeetingAnalysis(session) {
       return;
     }
     const note = document.createElement("p");
-    note.className = "analysis-pending";
+    note.className = state === "failed" ? "analysis-failed" : "analysis-pending";
     note.textContent = (states[key].message || "").trim()
-      || (state === "blocked"
-        ? "Unavailable right now."
-        : "Still processing — check back shortly.");
+      || (state === "failed"
+        ? "This stage gave up after repeated failures."
+        : state === "blocked"
+          ? "Unavailable right now."
+          : "Still processing — check back shortly.");
     section.append(note);
   };
   meetingStage("summary", "Summary", () => {
@@ -967,7 +974,7 @@ function renderMeetingAnalysis(session) {
 
   const actionable = ["translation", "summary", "decisions", "actions"].some((key) => {
     const state = states[key] && states[key].state;
-    return state === "queued" || state === "blocked";
+    return state === "queued" || state === "blocked" || state === "failed";
   }) || diarizationState === "queued" || diarizationState === "failed";
   if (actionable) {
     const retry = document.createElement("button");
