@@ -16,12 +16,16 @@ from .auth import CombinedAuthenticator, TokenAuthenticator, add_user_token, rev
 from .accounts import AccountStore
 from .billing import BillingStore
 from .entitlements import grant_feature, list_features, revoke_feature
+from .env_file import load_env_file
 from .hardware import HardwareDetectionError, detect_hardware
 from .paystack import PaystackPlan
 from .sessions import ModelProfile, SessionLimits, SessionManager
 
 
 def main() -> None:
+    # Load this app's env file before argparse evaluates any default that reads
+    # the environment. Real environment variables always win.
+    load_env_file()
     parser = argparse.ArgumentParser(prog="whisper-server", description="Whisper hosted-service diagnostics")
     subparsers = parser.add_subparsers(dest="command", required=True)
     hardware = subparsers.add_parser("hardware", help="detect the inference device/runtime")
