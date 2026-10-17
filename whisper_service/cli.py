@@ -41,12 +41,12 @@ def main() -> None:
     entitlement_commands = entitlement.add_subparsers(dest="entitlement_command", required=True)
     grant = entitlement_commands.add_parser("grant", help="grant one feature to a user")
     grant.add_argument("--user", required=True)
-    grant.add_argument("--feature", choices=("cloud_transcription", "cloud_rewrite", "diarization"), required=True)
+    grant.add_argument("--feature", choices=("cloud_transcription", "cloud_rewrite", "diarization", "lecture_analysis", "meeting_analysis", "translation"), required=True)
     grant.add_argument("--expires-at", help="optional ISO-8601 expiry, e.g. 2026-12-31T23:59:59Z")
     grant.add_argument("--file", type=Path, default=_default_entitlement_file())
     entitlement_revoke = entitlement_commands.add_parser("revoke", help="revoke one feature from a user")
     entitlement_revoke.add_argument("--user", required=True)
-    entitlement_revoke.add_argument("--feature", choices=("cloud_transcription", "cloud_rewrite", "diarization"), required=True)
+    entitlement_revoke.add_argument("--feature", choices=("cloud_transcription", "cloud_rewrite", "diarization", "lecture_analysis", "meeting_analysis", "translation"), required=True)
     entitlement_revoke.add_argument("--file", type=Path, default=_default_entitlement_file())
     entitlement_list = entitlement_commands.add_parser("list", help="list feature grants")
     entitlement_list.add_argument("--user")
@@ -77,6 +77,9 @@ def main() -> None:
     serve.add_argument("--enable-rewrite", action="store_true",
                        default=os.environ.get("WHISPER_ENABLE_REWRITE", "").lower() in {"1", "true", "yes"},
                        help="enable the subscription-gated OpenRouter text-rewrite API")
+    serve.add_argument("--enable-analysis", action="store_true",
+                       default=os.environ.get("WHISPER_ENABLE_ANALYSIS", "").lower() in {"1", "true", "yes"},
+                       help="enable the subscription-gated lecture/meeting analysis API")
     serve.add_argument("--http-host", default=None, help="diarization API bind address (defaults to --host)")
     serve.add_argument("--http-port", type=int, default=8766)
     serve.add_argument("--diarization-device", choices=("cpu", "cuda"), default="cpu")
@@ -212,6 +215,17 @@ async def _run_service(args: argparse.Namespace) -> None:
         rewrite_model = OpenRouterRewriteModel(api_key, models)
         http_entitlements = entitlements
 
+    analysis_model = None
+    if args.enable_analysis:
+        from .analysis import OpenRouterAnalysisModel
+
+        api_key = os.environ.get("WHISPER_OPENROUTER_API_KEY", "")
+        models = tuple(item.strip() for item in os.environ.get("WHISPER_ANALYSIS_MODELS", "openai/gpt-4o-mini").split(",") if item.strip())
+        if not api_key:
+            raise RuntimeError("WHISPER_OPENROUTER_API_KEY is required when analysis is enabled")
+        analysis_model = OpenRouterAnalysisModel(api_key, models)
+        http_entitlements = entitlements
+
     oauth_transactions = None
     oauth_providers = None
     oauth_app_redirect = "wicx://auth/callback"
@@ -238,6 +252,9 @@ async def _run_service(args: argparse.Namespace) -> None:
                    account_store=account_store if args.enable_oauth else None,
                    oauth_providers=oauth_providers,
                    rewrite_model=rewrite_model,
+                   analysis_model=analysis_model,
+                   usage_plans=({key: (plan.features, plan.cloud_minutes) for key, plan in paystack_plans.items()}
+                               if args.enable_billing else None),
                    oauth_app_redirect=oauth_app_redirect,
                    host=args.http_host or args.host, port=args.http_port),
     )

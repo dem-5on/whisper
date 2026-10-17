@@ -122,15 +122,19 @@ Replace manual owner-only feature grants as the normal production path. Enforce 
 
 ## Priority 3 — Complete Lecture and Meeting as long-form workflows
 
-### P3.1 Durable long-session capture and recovery `[ ]`
+### P3.1 Durable long-session capture and recovery `[~]`
 
 Audit current recording limits and persistence. Support long Lecture/Meeting sessions, retained audio until user deletion, incremental/durable local capture, safe stop/cancel semantics, and recovery after app/daemon/network interruption.
 
+**Current evidence (2026-10-15, `linux`):** Long modes were already uncapped (only Dictation has the 120s auto-stop). Crash-truncated WAV headers measured broken (129,600 real frames behind an 800-frame header) and are now auto-repaired at recovery; cancel on Lecture/Meeting retains audio as interrupted instead of deleting; 512MB pre-start and 256MB ongoing disk guards with graceful early stop; pill/shortcut stops on long sessions confirm first. Daemon 53+ audio/store tests plus new repair/retain/guard tests pass; Rust 15 pass; full Python suite green.
+
 **Acceptance:** Long-session tests exceed current short-session limits, recover after forced process termination without corrupting prior audio/transcript, and retain audio/transcript until explicit deletion. Dictation remains low-latency and does not inherit long-mode latency.
 
-### P3.2 Lecture post-processing `[ ]`
+### P3.2 Lecture post-processing `[~]`
 
 After capture/transcription, generate structured notes, topic/section grouping, key terms/definitions, and review questions. Keep the source transcript and any translation distinct. Queue cloud-only work during outages and run it only when the user is still entitled.
+
+**Current evidence (2026-10-15, `linux`):** Hosted `POST /v1/analysis` serves notes/topics/terms/questions/translation/summary/actions over the operator OpenRouter key with per-kind entitlement (`lecture_analysis`, `meeting_analysis`, `translation`), bundled quota deductions (placeholder: 1 cloud-minute per stage), and distinct 402 subscription vs quota states. Bundled plan placeholders live in `whisper_service/plans.py` (free: local only; pro: everything, 600 min/month) for the admin portal to edit later. Daemon runs translation (auto when non-English, stored separately), chunked notes, timestamp-linked topics, terms, and questions after the local transcript saves; offline/unconfigured work queues, over-limit/unentitled work blocks, transcript never waits. `retry_analysis` reruns pending stages, and a 5-minute sweeper retries queued (never blocked) stages on reconnect. Lecture quality is gated by `evals/lecture_eval.py` fixtures with property checks plus the `evals/audio_eval.py` microphone protocol — no accuracy claims without a measured run. Linux History shows each output with queued/blocked states plus retry; Markdown and Word exports include the new sections. 16 service/plan/API tests, daemon pipeline tests (success/blocked/queued/retry/validation/sweep), eval contract tests, and export tests pass.
 
 **Acceptance:** A full Lecture produces transcript, notes, grouped topics, and study questions linked to the source session; local transcript remains available if cloud processing is unavailable or over limit. User can export and delete associated artifacts.
 
@@ -138,11 +142,15 @@ After capture/transcription, generate structured notes, topic/section grouping, 
 
 Connect the authenticated self-hosted diarization API to desktop Meeting sessions with upload limits, durable job IDs, retry/poll/backoff, cancellation/expiry behavior, and entitlement checks. Keep initial transcript visible without waiting for diarization. Then generate summary, decisions, action items, owners, and follow-ups.
 
+**Current evidence (2026-10-17, `linux`):** Daemon submits bounded WAV to `POST /v1/diarization/jobs` then polls in a detached worker (transcript saves and goes IDLE first), aligns turns via majority-overlap without touching user overrides, then runs summary/decisions/actions/translation text stages. Diarization submissions are metered against the bundled allowance at audio-minute cost (402 quota distinct from 402 subscription). New `decisions` analysis kind. `retry_diarization` resubmits (fresh job, attempts reset, works after a cancel); `cancel_diarization` calls the new owner-scoped `DELETE /v1/diarization/jobs/{job_id}` (queued audio dropped at once, in-flight result discarded, terminal jobs answer 409), and a cancelled session is never resubmitted until the user asks again. Linux UI shows the labeled transcript inline with timestamps, processing states, summary/decisions/actions, a collapsible correction panel (rename, per-segment reassignment, merge), Stop/Retry speaker analysis, and speaker counts in History. Markdown and Word exports include speakers, summary, decisions, and actions. Meeting quality is gated by `evals/meeting_eval.py` fixtures (summary/decisions/actions/translation grounding plus alignment, provisional naming, and correction-survival checks).
+
 **Acceptance:** Transcript appears before speaker analysis. A restarted client/server can recover or clearly fail/retry a job. Offline/over-limit states never fabricate speaker assignments. Successful labels align to timestamps and user edits persist.
 
 ### P3.4 Speaker correction and safe retention `[~]`
 
 Support provisional “Speaker 1/2” labels, rename, reassign transcript spans, merge speakers, and preserve edits against later processing. Define and test deletion of local originals and temporary server copies.
+
+**Current evidence (2026-10-17, `linux`):** Rename, per-segment reassignment (including explicit unlabeling), and merge-duplicates live in a collapsible "Correct speaker labels" panel in the Linux History detail view, wired to the daemon ops; corrections persist across restarts and survive later analysis passes (checked by `evals/meeting_eval.py`). Server deletes uploaded audio once a job stops, including on cancel, and local deletion removes audio+transcript together. Failure states name the reason (unreachable, refused, exhausted, failed, cancelled) and never fabricate labels.
 
 **Acceptance:** Mislabel corrections survive app restarts and are reflected in regenerated meeting outputs. Failure states are clear; the product does not imply perfect identity recognition.
 

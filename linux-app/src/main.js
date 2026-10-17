@@ -7,7 +7,6 @@ console.timeStamp("wicx: frontend module start");
 
 const preview = !window.__TAURI_INTERNALS__;
 const ui = {
-  connection: document.querySelector("#service-status"),
   feedback: document.querySelector("#feedback"),
   pages: [...document.querySelectorAll(".page")],
   nav: [...document.querySelectorAll("[data-page]")],
@@ -52,6 +51,24 @@ let previousState = "IDLE";
 function notify(text = "", error = false) {
   ui.feedback.textContent = text;
   ui.feedback.dataset.error = String(error);
+}
+
+let toastTimer;
+function showToast(message, ms) {
+  const toast = document.querySelector("#toast");
+  if (!toast) {
+    notify(message);
+    return;
+  }
+  toast.textContent = message;
+  toast.hidden = false;
+  toast.classList.remove("show");
+  void toast.offsetWidth;
+  toast.classList.add("show");
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toast.hidden = true;
+  }, ms || 2400);
 }
 
 async function request(command, params = {}) {
@@ -105,8 +122,6 @@ function updateStatus(status) {
   if (!status || typeof status !== "object") return;
   mockStatus = { ...mockStatus, ...status };
   const ready = status.ok !== "false";
-  ui.connection.dataset.ready = String(ready);
-  ui.connection.querySelector("span").textContent = preview ? "Preview" : ready ? "Ready" : "Offline";
   const busy = ["RECORDING", "PROCESSING", "DELIVERING"].includes(status.state);
   const activeMode = status.session_mode || mockStatus.session_mode || "dictation";
   const recording = status.state === "RECORDING";
@@ -116,7 +131,6 @@ function updateStatus(status) {
   void syncRecordingPill(status, busy, activeMode, recording);
   ui.hidePill.checked = status.hide_recording_pill === true;
   ui.rewrite.checked = status.rewrite_enabled === true;
-  document.querySelector("#model-name").textContent = `${status.backend === "local" ? "Local" : status.backend || "Local"} · ${status.effective_model || status.model || "base"}`;
   const activeMic = availableMics.find((mic) => mic.id === status.mic);
   document.querySelector("#mic-name").textContent = activeMic?.name || (status.mic && status.mic !== "default" ? status.mic : "System default");
   ui.micButton.disabled = busy;
@@ -156,8 +170,6 @@ async function syncRecordingPill(status, busy, activeMode, recording) {
 async function refreshStatus() {
   try { updateStatus(await request("status")); }
   catch (error) {
-    ui.connection.dataset.ready = "false";
-    ui.connection.querySelector("span").textContent = preview ? "Preview" : "Offline";
     if (!preview) notify(error.message, true);
   }
 }
@@ -288,10 +300,97 @@ function showSessionPlaceholder() {
   ui.sessionDetail.innerHTML = '<div class="detail-placeholder"><span>◷</span><h3>Choose a recording</h3><p>Select a session to read its transcript and details.</p></div>';
 }
 
+const SESSION_PAGE_SIZE = 20;
+let sessionOffset = 0;
+let sessionHasMore = false;
+let sessionLoadingMore = false;
+
+function sessionQuery(offset) {
+  return {
+    limit: SESSION_PAGE_SIZE,
+    offset,
+    mode: historyFilter === "all" ? undefined : historyFilter,
+    search: ui.historySearch.value.trim() || undefined,
+  };
+}
+
+function appendSessionRows(sessions) {
+  for (const session of sessions) {
+    const row = document.createElement("div");
+    row.className = `session-row${session.id === selectedSessionId ? " selected" : ""}`;
+    row.dataset.sessionId = session.id;
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    const open = () => void loadSession(session.id);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        open();
+      }
+    });
+    const title = document.createElement("strong");
+    title.textContent = `${session.mode[0].toUpperCase()}${session.mode.slice(1)} · ${new Date(session.created_at).toLocaleString()}`;
+    const meta = document.createElement("small");
+    const speakerCount = session.mode === "meeting"
+      ? (session.outputs && Array.isArray(session.outputs.speaker_ids) ? session.outputs.speaker_ids.length : 0)
+      : 0;
+    meta.textContent = [
+      session.state,
+      session.audio_available ? "Audio saved" : "No audio",
+      speakerCount > 0 ? `${speakerCount} speaker${speakerCount === 1 ? "" : "s"}` : "",
+    ].filter(Boolean).join(" · ");
+    const previewText = document.createElement("p");
+    previewText.textContent = session.source_transcript || "Transcript not available yet.";
+    const del = document.createElement("button");
+    del.className = "row-delete";
+    del.type = "button";
+    del.title = "Delete session";
+    del.setAttribute("aria-label", `Delete ${session.mode} session`);
+    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m-9 0 1 13h10l1-13"/></svg>';
+    del.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const confirmed = await confirmDialog(
+        "Delete session",
+        "Delete this recording, transcript, and saved audio from this device? This cannot be undone.",
+        "Delete",
+      );
+      if (!confirmed) return;
+      try {
+        await request("delete_session", { session_id: session.id });
+        if (selectedSessionId === session.id) {
+          selectedSessionId = "";
+          showSessionPlaceholder();
+        }
+        showToast("Recording deleted.");
+        await loadSessions();
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+      }
+    });
+    row.append(title, meta, previewText, del);
+    ui.sessionList.append(row);
+  }
+}
+
+function renderLoadMore() {
+  document.querySelector("#load-more-sessions")?.remove();
+  if (!sessionHasMore) return;
+  const button = document.createElement("button");
+  button.id = "load-more-sessions";
+  button.className = "secondary-button load-more";
+  button.type = "button";
+  button.textContent = "Load more";
+  button.addEventListener("click", () => void loadMoreSessions());
+  ui.sessionList.append(button);
+}
+
 async function loadSessions() {
+  sessionOffset = 0;
+  sessionHasMore = false;
   ui.sessionList.innerHTML = '<div class="empty-state">Loading recordings…</div>';
   try {
-    const response = await request("sessions", { limit: 100, offset: 0, mode: historyFilter === "all" ? undefined : historyFilter, search: ui.historySearch.value.trim() || undefined });
+    const response = await request("sessions", sessionQuery(0));
     const sessions = Array.isArray(response.sessions) ? response.sessions : [];
     ui.sessionList.replaceChildren();
     if (!sessions.length) {
@@ -299,25 +398,33 @@ async function loadSessions() {
       showSessionPlaceholder();
       return;
     }
-    sessions.forEach((session) => {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = `session-row${session.id === selectedSessionId ? " selected" : ""}`;
-      row.dataset.sessionId = session.id;
-      row.addEventListener("click", () => void loadSession(session.id));
-      const title = document.createElement("strong");
-      title.textContent = `${session.mode[0].toUpperCase()}${session.mode.slice(1)} · ${new Date(session.created_at).toLocaleString()}`;
-      const meta = document.createElement("small");
-      meta.textContent = `${session.state} · ${session.audio_available ? "Audio saved" : "No audio"}`;
-      const previewText = document.createElement("p");
-      previewText.textContent = session.source_transcript || "Transcript not available yet.";
-      row.append(title, meta, previewText);
-      ui.sessionList.append(row);
-    });
+    appendSessionRows(sessions);
+    sessionOffset = sessions.length;
+    sessionHasMore = response.has_more === true;
+    renderLoadMore();
     if (selectedSessionId && sessions.some((session) => session.id === selectedSessionId)) await loadSession(selectedSessionId);
     else showSessionPlaceholder();
   } catch (error) {
     ui.sessionList.innerHTML = `<div class="empty-state">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadMoreSessions() {
+  if (sessionLoadingMore || !sessionHasMore) return;
+  sessionLoadingMore = true;
+  document.querySelector("#load-more-sessions")?.remove();
+  try {
+    const response = await request("sessions", sessionQuery(sessionOffset));
+    const sessions = Array.isArray(response.sessions) ? response.sessions : [];
+    appendSessionRows(sessions);
+    sessionOffset += sessions.length;
+    sessionHasMore = response.has_more === true;
+    renderLoadMore();
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+    renderLoadMore();
+  } finally {
+    sessionLoadingMore = false;
   }
 }
 
@@ -401,45 +508,585 @@ async function loadSession(id) {
     copy.disabled = !session.source_transcript;
     copy.addEventListener("click", async () => {
       try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(session.source_transcript || "");
+        const copyText = labeledTranscriptText(session) || session.source_transcript || "";
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(copyText);
         else throw new Error("Clipboard is unavailable.");
-        notify("Transcript copied.");
+        showToast("Transcript copied.");
       } catch { notify("Could not copy the transcript.", true); }
     });
     const exportTranscript = document.createElement("button");
     exportTranscript.className = "small-button";
     exportTranscript.textContent = "Export transcript";
     exportTranscript.disabled = !session.source_transcript;
-    exportTranscript.addEventListener("click", () => {
-      const created = new Date(session.created_at);
-      const filename = `wicx-${session.mode}-${created.toISOString().slice(0, 10)}.txt`;
-      const contents = `Wicx ${session.mode} transcript\n${created.toLocaleString()}\n\n${session.source_transcript || ""}\n`;
-      const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      notify("Transcript exported as a text file.");
+    exportTranscript.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleExportMenu(session, exportTranscript);
     });
-    const remove = document.createElement("button");
-    remove.className = "small-button danger";
-    remove.textContent = "Delete";
-    remove.addEventListener("click", async () => {
-      if (!window.confirm("Delete this recording, transcript, and saved audio from this device? This cannot be undone.")) return;
-      try { await request("delete_session", { session_id: id }); selectedSessionId = ""; notify("Recording deleted from this device."); await loadSessions(); }
-      catch (error) { notify(error.message, true); }
-    });
-    actions.append(copy, exportTranscript, remove);
+    actions.append(copy, exportTranscript);
     header.append(info, actions);
     const transcript = document.createElement("div");
     transcript.className = "transcript-body";
-    transcript.textContent = session.source_transcript || "No transcript is available for this recording.";
+    const labeled = labeledTranscriptText(session);
+    transcript.textContent = labeled || session.source_transcript
+      || "No transcript is available for this recording.";
     ui.sessionDetail.append(header, transcript);
+    if (session.mode === "lecture") renderLectureAnalysis(session);
+    if (session.mode === "meeting") renderMeetingAnalysis(session);
     document.querySelectorAll(".session-row").forEach((row) => row.classList.toggle("selected", row.dataset.sessionId === id));
   } catch (error) { notify(error.message, true); }
+}
+
+const LECTURE_STAGE_LABELS = {
+  translation: "Translation",
+  notes: "Lecture notes",
+  topics: "Topics",
+  terms: "Key terms",
+  questions: "Review questions",
+};
+
+function renderLectureAnalysis(session) {
+  const outputs = session.outputs && typeof session.outputs === "object" ? session.outputs : {};
+  const states = outputs.analysis_state && typeof outputs.analysis_state === "object"
+    ? outputs.analysis_state : {};
+  const section = document.createElement("section");
+  section.className = "analysis-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Session analysis";
+  section.append(heading);
+
+  if (session.english_translation) {
+    const label = document.createElement("h4");
+    label.textContent = "English translation" + (
+      outputs.source_language ? ` (from ${outputs.source_language})` : "");
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = session.english_translation;
+    section.append(label, body);
+  }
+
+  const stage = (key, build) => {
+    const state = states[key] && states[key].state;
+    if (state !== "ready" && state !== "queued" && state !== "blocked") return;
+    const label = document.createElement("h4");
+    label.textContent = LECTURE_STAGE_LABELS[key] || key;
+    section.append(label);
+    if (state === "ready") {
+      build();
+      return;
+    }
+    const note = document.createElement("p");
+    note.className = "analysis-pending";
+    note.textContent = state === "blocked"
+      ? `Unavailable right now${states[key].message ? `: ${states[key].message}` : "."}`
+      : "Still processing — check back shortly.";
+    section.append(note);
+  };
+
+  stage("notes", () => {
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = outputs.lecture_notes || "";
+    section.append(body);
+  });
+  stage("topics", () => {
+    const list = document.createElement("ul");
+    list.className = "analysis-list";
+    for (const topic of outputs.topic_groups || []) {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      title.textContent = topic.title || "Untitled";
+      item.append(title);
+      if (topic.summary) {
+        const summary = document.createElement("p");
+        summary.textContent = topic.summary;
+        item.append(summary);
+      }
+      list.append(item);
+    }
+    section.append(list);
+  });
+  stage("terms", () => {
+    const list = document.createElement("dl");
+    list.className = "analysis-terms";
+    for (const term of outputs.key_terms || []) {
+      const name = document.createElement("dt");
+      name.textContent = term.term || "";
+      const definition = document.createElement("dd");
+      definition.textContent = term.definition || "";
+      list.append(name, definition);
+    }
+    section.append(list);
+  });
+  stage("questions", () => {
+    const list = document.createElement("ol");
+    list.className = "analysis-list";
+    for (const question of outputs.review_questions || []) {
+      const item = document.createElement("li");
+      item.textContent = typeof question === "string" ? question
+        : (question && question.question) || "";
+      list.append(item);
+    }
+    section.append(list);
+  });
+
+  const actionable = ["translation", "notes", "topics", "terms", "questions"].some((key) => {
+    const state = states[key] && states[key].state;
+    return state === "queued" || state === "blocked";
+  });
+  if (actionable) {
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = "Run analysis";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        await request("retry_analysis", { session_id: session.id });
+        notify("Analysis queued. Results appear here when ready.");
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        retry.disabled = false;
+      }
+    });
+    section.append(retry);
+  }
+  ui.sessionDetail.append(section);
+}
+
+function formatTimestamp(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) * 1000) || 0);
+  const hours = Math.floor(total / 3600000);
+  const minutes = Math.floor(total / 60000) % 60;
+  const rest = Math.floor(total / 1000) % 60;
+  const pad = (value) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${pad(minutes)}:${pad(rest)}`;
+}
+
+function labeledTranscriptText(session) {
+  const segments = Array.isArray(session.segments) ? session.segments : [];
+  if (segments.length === 0 || session.mode !== "meeting") return "";
+  if (!segments.some((segment) => segment && segment.speaker_id)) return "";
+  return segments
+    .map((segment) => {
+      const stamp = typeof segment.start_seconds === "number"
+        ? `[${formatTimestamp(segment.start_seconds)}] ` : "";
+      const who = segment.speaker_id ? `${speakerDisplayName(session, segment.speaker_id)}: ` : "";
+      return `${stamp}${who}${(segment.text || "").trim()}`.trim();
+    })
+    .join("\n");
+}
+
+function speakerDisplayName(session, speakerId) {
+  const names = session.outputs && typeof session.outputs === "object" ? session.outputs.speaker_names : null;
+  if (names && typeof names === "object" && names[speakerId]) return names[speakerId];
+  if (typeof speakerId === "string" && speakerId) return speakerId.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return "Unlabeled";
+}
+
+function meetingSpeakerIds(session) {
+  const ids = new Set();
+  for (const segment of session.segments || []) {
+    if (segment && typeof segment.speaker_id === "string" && segment.speaker_id) ids.add(segment.speaker_id);
+  }
+  const stored = session.outputs && typeof session.outputs === "object" && Array.isArray(session.outputs.speaker_ids)
+    ? session.outputs.speaker_ids : [];
+  for (const id of stored) ids.add(id);
+  return [...ids].sort();
+}
+
+async function refreshSessionDetail(id) {
+  try {
+    const { session } = await request("get_session", { session_id: id });
+    await loadSession(id);
+    void session;
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
+}
+
+function renderMeetingAnalysis(session) {
+  const outputs = session.outputs && typeof session.outputs === "object" ? session.outputs : {};
+  const section = document.createElement("section");
+  section.className = "analysis-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Speakers & meeting record";
+  section.append(heading);
+
+  const diarization = outputs.diarization_state && typeof outputs.diarization_state === "object"
+    ? outputs.diarization_state : {};
+  const diarizationState = diarization.state;
+  if (diarizationState && diarizationState !== "ready") {
+    const note = document.createElement("p");
+    note.className = "analysis-pending";
+    const pendingCopy = {
+      blocked: `Speaker detection unavailable: ${diarization.message || "subscription required"}`,
+      failed: diarization.message || "Speaker detection failed. The transcript is unaffected.",
+      cancelled: diarization.message || "Speaker detection was cancelled. The transcript is unaffected.",
+      queued: "Speaker detection is still running — the transcript stays readable meanwhile.",
+    };
+    note.textContent = pendingCopy[diarizationState] || "Speaker detection is still running.";
+    section.append(note);
+  }
+  if (diarizationState === "queued") {
+    const stop = document.createElement("button");
+    stop.className = "secondary-button";
+    stop.type = "button";
+    stop.textContent = "Stop speaker analysis";
+    stop.title = "Cancel speaker detection and delete the uploaded copy on the service";
+    stop.addEventListener("click", async () => {
+      stop.disabled = true;
+      try {
+        await request("cancel_diarization", { session_id: session.id });
+        notify("Speaker analysis stopped.");
+        await refreshSessionDetail(session.id);
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        stop.disabled = false;
+      }
+    });
+    section.append(stop);
+  }
+  if (diarizationState === "queued" || diarizationState === "failed"
+      || diarizationState === "blocked" || diarizationState === "cancelled") {
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = "Retry speaker analysis";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        await request("retry_diarization", { session_id: session.id });
+        notify("Speaker analysis queued. Labels appear here when ready.");
+        await refreshSessionDetail(session.id);
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        retry.disabled = false;
+      }
+    });
+    section.append(retry);
+  }
+
+  const speakers = meetingSpeakerIds(session);
+  // The correction panel only appears when there is something to correct.
+  const correctionPanel = document.createElement("details");
+  correctionPanel.className = "speaker-corrections";
+  const correctionSummary = document.createElement("summary");
+  correctionSummary.textContent = speakers.length > 1
+    ? `Correct speaker labels (${speakers.length} speakers)`
+    : "Correct speaker labels";
+  correctionPanel.append(correctionSummary);
+  let correctionMounted = false;
+  const addToCorrections = (node) => {
+    if (!correctionMounted) {
+      section.append(correctionPanel);
+      correctionMounted = true;
+    }
+    correctionPanel.append(node);
+  };
+  if (speakers.length > 0) {
+    for (const speakerId of speakers) {
+      const row = document.createElement("div");
+      row.className = "speaker-row";
+      const name = document.createElement("input");
+      name.type = "text";
+      name.maxLength = 80;
+      name.value = (outputs.speaker_names && outputs.speaker_names[speakerId]) || "";
+      name.placeholder = speakerDisplayName(session, speakerId);
+      name.setAttribute("aria-label", `Name for ${speakerDisplayName(session, speakerId)}`);
+      const save = document.createElement("button");
+      save.className = "small-button";
+      save.type = "button";
+      save.textContent = "Rename";
+      save.addEventListener("click", async () => {
+        if (!name.value.trim()) {
+          notify("Type a name first.", true);
+          return;
+        }
+        try {
+          await request("rename_speaker", { session_id: session.id, speaker_id: speakerId, name: name.value.trim() });
+          notify("Speaker renamed.");
+          await refreshSessionDetail(session.id);
+        } catch (error) {
+          notify(error && error.message ? error.message : String(error), true);
+        }
+      });
+      row.append(name, save);
+      addToCorrections(row);
+    }
+    if (speakers.length > 1) {
+      const mergeRow = document.createElement("div");
+      mergeRow.className = "speaker-row";
+      const from = document.createElement("select");
+      const to = document.createElement("select");
+      for (const select of [from, to]) {
+        for (const speakerId of speakers) {
+          const option = document.createElement("option");
+          option.value = speakerId;
+          option.textContent = speakerDisplayName(session, speakerId);
+          select.append(option);
+        }
+      }
+      to.selectedIndex = 1;
+      const merge = document.createElement("button");
+      merge.className = "small-button";
+      merge.type = "button";
+      merge.textContent = "Merge into →";
+      merge.title = "Merge the first speaker into the second";
+      merge.addEventListener("click", async () => {
+        if (from.value === to.value) {
+          notify("Pick two different speakers to merge.", true);
+          return;
+        }
+        try {
+          await request("merge_speakers", { session_id: session.id, source_id: from.value, target_id: to.value });
+          notify("Speakers merged.");
+          await refreshSessionDetail(session.id);
+        } catch (error) {
+          notify(error && error.message ? error.message : String(error), true);
+        }
+      });
+      mergeRow.append(from, to, merge);
+      addToCorrections(mergeRow);
+    }
+  }
+
+  if (Array.isArray(session.segments) && session.segments.length > 0) {
+    const label = document.createElement("h4");
+    label.textContent = "Fix a wrong speaker";
+    addToCorrections(label);
+    const list = document.createElement("ol");
+    list.className = "analysis-list speaker-segments";
+    session.segments.forEach((segment, index) => {
+      const item = document.createElement("li");
+      const who = document.createElement("strong");
+      who.textContent = speakerDisplayName(session, segment.speaker_id) + " ";
+      const text = document.createElement("span");
+      text.textContent = segment.text || "";
+      const assign = document.createElement("select");
+      assign.className = "segment-assign";
+      assign.setAttribute("aria-label", `Speaker for segment ${index + 1}`);
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "Unlabeled";
+      assign.append(none);
+      for (const speakerId of speakers) {
+        const option = document.createElement("option");
+        option.value = speakerId;
+        option.textContent = speakerDisplayName(session, speakerId);
+        if (segment.speaker_id === speakerId) option.selected = true;
+        assign.append(option);
+      }
+      if (segment.speaker_id && !speakers.includes(segment.speaker_id)) {
+        const option = document.createElement("option");
+        option.value = segment.speaker_id;
+        option.textContent = speakerDisplayName(session, segment.speaker_id);
+        option.selected = true;
+        assign.append(option);
+      }
+      assign.addEventListener("change", async () => {
+        try {
+          await request("assign_segment_speaker", {
+            session_id: session.id,
+            segment_index: index,
+            speaker_id: assign.value || null,
+          });
+          await refreshSessionDetail(session.id);
+        } catch (error) {
+          notify(error && error.message ? error.message : String(error), true);
+        }
+      });
+      item.append(who, text, assign);
+      list.append(item);
+    });
+    addToCorrections(list);
+  }
+
+  if (session.english_translation) {
+    const label = document.createElement("h4");
+    label.textContent = "English translation" + (
+      outputs.source_language ? ` (from ${outputs.source_language})` : "");
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = session.english_translation;
+    section.append(label, body);
+  }
+
+  const states = outputs.analysis_state && typeof outputs.analysis_state === "object"
+    ? outputs.analysis_state : {};
+  const meetingStage = (key, title, build) => {
+    const state = states[key] && states[key].state;
+    if (state !== "ready" && state !== "queued" && state !== "blocked") return;
+    const label = document.createElement("h4");
+    label.textContent = title;
+    section.append(label);
+    if (state === "ready") {
+      build();
+      return;
+    }
+    const note = document.createElement("p");
+    note.className = "analysis-pending";
+    note.textContent = state === "blocked" && states[key].message
+      ? `Unavailable right now: ${states[key].message}`
+      : "Still processing — check back shortly.";
+    section.append(note);
+  };
+  meetingStage("summary", "Summary", () => {
+    const body = document.createElement("div");
+    body.className = "transcript-body";
+    body.textContent = outputs.meeting_summary || "";
+    section.append(body);
+  });
+  meetingStage("decisions", "Decisions", () => {
+    const list = document.createElement("ol");
+    list.className = "analysis-list";
+    for (const decision of outputs.meeting_decisions || []) {
+      const item = document.createElement("li");
+      item.textContent = typeof decision === "string" ? decision : (decision && decision.decision) || "";
+      list.append(item);
+    }
+    section.append(list);
+  });
+  meetingStage("actions", "Action items", () => {
+    const list = document.createElement("ul");
+    list.className = "analysis-list";
+    for (const entry of outputs.action_items || []) {
+      const item = document.createElement("li");
+      const action = typeof entry === "string" ? entry : (entry && entry.action) || "";
+      const owner = entry && typeof entry === "object" && entry.owner ? ` — ${entry.owner}` : "";
+      item.textContent = action + owner;
+      list.append(item);
+    }
+    section.append(list);
+  });
+
+  const actionable = ["translation", "summary", "decisions", "actions"].some((key) => {
+    const state = states[key] && states[key].state;
+    return state === "queued" || state === "blocked";
+  }) || diarizationState === "queued" || diarizationState === "failed";
+  if (actionable) {
+    const retry = document.createElement("button");
+    retry.className = "secondary-button";
+    retry.type = "button";
+    retry.textContent = "Run analysis";
+    retry.addEventListener("click", async () => {
+      retry.disabled = true;
+      try {
+        await request("retry_analysis", { session_id: session.id });
+        notify("Analysis queued. Results appear here when ready.");
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        retry.disabled = false;
+      }
+    });
+    section.append(retry);
+  }
+  ui.sessionDetail.append(section);
+}
+
+function closeExportMenu() {
+  document.querySelector("#export-menu")?.remove();
+  document.removeEventListener("keydown", closeExportMenuOnEscape);
+}
+
+function closeExportMenuOnEscape(event) {
+  if (event.code === "Escape") closeExportMenu();
+}
+
+function toggleExportMenu(session, anchor) {
+  const existing = document.querySelector("#export-menu");
+  if (existing) {
+    closeExportMenu();
+    return;
+  }
+  const menu = document.createElement("div");
+  menu.className = "export-menu";
+  menu.id = "export-menu";
+  const options = [
+    ["Text (.txt)", () => exportText(session)],
+    ["PDF (print)", () => exportPdf(session)],
+    ["Word (.docx)", () => exportWord(session)],
+  ];
+  for (const [label, run] of options) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.textContent = label;
+    item.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      closeExportMenu();
+      await run();
+    });
+    menu.append(item);
+  }
+  document.body.append(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 6 + window.scrollY}px`;
+  menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 220))}px`;
+  window.setTimeout(() => document.addEventListener("click", closeExportMenu), 0);
+  document.addEventListener("keydown", closeExportMenuOnEscape);
+}
+
+function exportText(session) {
+  const created = new Date(session.created_at);
+  const filename = `wicx-${session.mode}-${created.toISOString().slice(0, 10)}.txt`;
+  const contents = `Wicx ${session.mode} transcript\n${created.toLocaleString()}\n\n${session.source_transcript || ""}\n`;
+  const url = URL.createObjectURL(new Blob([contents], { type: "text/plain;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Transcript exported as a text file.");
+}
+
+function exportPdf(session) {
+  const area = document.querySelector("#print-area");
+  if (!area) {
+    notify("Printing is unavailable in this window.", true);
+    return;
+  }
+  const created = new Date(session.created_at);
+  const mode = `${session.mode[0].toUpperCase()}${session.mode.slice(1)}`;
+  area.replaceChildren();
+  const title = document.createElement("h1");
+  title.textContent = `Wicx ${mode} transcript`;
+  const date = document.createElement("p");
+  date.textContent = created.toLocaleString();
+  const body = document.createElement("div");
+  for (const line of String(session.source_transcript || "No transcript available.").split("\n")) {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = line;
+    body.append(paragraph);
+  }
+  area.append(title, date, body);
+  window.print();
+}
+
+async function exportWord(session) {
+  try {
+    const response = await request("export_session", { session_id: session.id, format: "docx" });
+    notify(`Word document saved to ${response.export_path || "your Documents folder"}.`);
+  } catch (error) {
+    notify(error && error.message ? error.message : String(error), true);
+  }
+}
+
+function confirmDialog(title, message, confirmLabel) {
+  const dialog = document.querySelector("#confirm-dialog");
+  if (!dialog) return Promise.resolve(window.confirm(message));
+  document.querySelector("#confirm-title").textContent = title;
+  document.querySelector("#confirm-message").textContent = message;
+  document.querySelector("#confirm-ok").textContent = confirmLabel || "Confirm";
+  return new Promise((resolve) => {
+    const done = (value) => {
+      dialog.removeEventListener("close", onClose);
+      resolve(value);
+    };
+    const onClose = () => done(dialog.returnValue === "confirm");
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+  });
 }
 
 async function loadDictionary() {
@@ -519,11 +1166,28 @@ document.querySelector("#add-term-form").addEventListener("submit", async (event
   try { const term = input.value.trim(); renderTerms((await request("dictionary", { action: "add", term })).terms || []); notify(`Added “${term}” to your dictionary.`); input.value = ""; }
   catch (error) { notify(error.message, true); }
 });
-document.querySelectorAll("[data-history-filter]").forEach((button) => button.addEventListener("click", () => {
-  historyFilter = button.dataset.historyFilter;
-  document.querySelectorAll("[data-history-filter]").forEach((chip) => chip.classList.toggle("selected", chip === button));
+function applyHistoryFilter(mode) {
+  historyFilter = mode;
+  document.querySelectorAll("[data-history-filter]").forEach((chip) => {
+    chip.classList.toggle("selected", chip.dataset.historyFilter === mode);
+  });
   void loadSessions();
+}
+
+document.querySelectorAll("[data-history-filter]").forEach((button) => button.addEventListener("click", () => {
+  applyHistoryFilter(button.dataset.historyFilter);
 }));
+
+document.querySelectorAll(".mode-card").forEach((card) => {
+  card.style.cursor = "pointer";
+  card.addEventListener("click", (event) => {
+    if (event.target.closest("button")) return;
+    const mode = card.classList.contains("lecture-mode") ? "lecture"
+      : card.classList.contains("meeting-mode") ? "meeting" : "dictation";
+    openPage("history");
+    applyHistoryFilter(mode);
+  });
+});
 ui.historySearch.addEventListener("input", () => {
   window.clearTimeout(historyTimer);
   historyTimer = window.setTimeout(() => void loadSessions(), 250);
@@ -550,8 +1214,8 @@ void loadActivityStats();
 const SHORTCUT_ACTIONS = ["dictation", "meeting", "lecture"];
 const SHORTCUT_DEFAULTS = {
   dictation: { display: "Right Alt", accelerator: "RightAlt" },
-  meeting: { display: "", accelerator: null },
-  lecture: { display: "", accelerator: null },
+  meeting: { display: "Right Alt + M", accelerator: "Alt+KeyM" },
+  lecture: { display: "Right Alt + L", accelerator: "Alt+KeyL" },
 };
 const SHORTCUT_BLURB = {
   dictation: "Speak into whatever app you're using.",
@@ -567,8 +1231,8 @@ const ROLES = [
 let mockShortcuts = {
   bindings: {
     dictation: { display: "Right Alt", accelerator: "RightAlt", register_error: null },
-    meeting: { display: "", accelerator: null, register_error: null },
-    lecture: { display: "", accelerator: null, register_error: null },
+    meeting: { display: "Right Alt + M", accelerator: "Alt+KeyM", register_error: null },
+    lecture: { display: "Right Alt + L", accelerator: "Alt+KeyL", register_error: null },
   },
   long_consent: false,
   setup_completed: false,
@@ -579,6 +1243,7 @@ let setupRole = "";
 let setupScreen = "welcome";
 let capturingAction = null;
 let pressedCodes = new Set();
+let seenMods = new Set();
 let testedAction = { dictation: false, meeting: false, lecture: false };
 let setupMic = "default";
 let setupMicChoices = [];
@@ -630,19 +1295,45 @@ function codeToKeyName(code) {
   return map[code] ? { display: map[code], code } : null;
 }
 
+function modOf(code) {
+  if (code === "AltRight" || code === "AltLeft") return { display: "Alt", code: "Alt" };
+  if (code === "ControlLeft" || code === "ControlRight") return { display: "Ctrl", code: "Control" };
+  if (code === "ShiftLeft" || code === "ShiftRight") return { display: "Shift", code: "Shift" };
+  if (code === "MetaLeft" || code === "MetaRight") return { display: "Super", code: "Super" };
+  return null;
+}
+
 function describeCapture() {
   const mods = [];
+  const seen = new Set();
   let rightAlt = false;
   let leftAlt = false;
+  const note = (mod) => {
+    if (!seen.has(mod.code)) {
+      seen.add(mod.code);
+      mods.push(mod);
+    }
+  };
   for (const code of pressedCodes) {
     if (code === "AltRight") rightAlt = true;
     else if (code === "AltLeft") leftAlt = true;
-    else if (code === "ControlLeft" || code === "ControlRight") mods.push({ display: "Ctrl", code: "Control" });
-    else if (code === "ShiftLeft" || code === "ShiftRight") mods.push({ display: "Shift", code: "Shift" });
-    else if (code === "MetaLeft" || code === "MetaRight") mods.push({ display: "Super", code: "Super" });
+    else {
+      const mod = modOf(code);
+      if (mod) note(mod);
+    }
+  }
+  for (const code of seenMods) {
+    const mod = modOf(code);
+    if (mod) note(mod);
   }
   const mains = [...pressedCodes].map(codeToKeyName).filter(Boolean);
   return { mods, rightAlt, leftAlt, mains };
+}
+
+function clearCaptureState() {
+  capturingAction = null;
+  pressedCodes.clear();
+  seenMods.clear();
 }
 
 function renderCapture(action, interim) {
@@ -677,8 +1368,7 @@ function tryCommitCapture() {
   const main = mains[0];
   const commit = (display, accelerator) => {
     shortcutDraft[action] = { display, accelerator };
-    capturingAction = null;
-    pressedCodes.clear();
+    clearCaptureState();
     testedAction[action] = false;
     renderSingleCards();
     void shortcutInvoke("set_shortcut", { action, display, accelerator })
@@ -686,7 +1376,8 @@ function tryCommitCapture() {
       .catch((error) => captureError(action, error && error.message ? error.message : String(error)));
   };
   if (!main) {
-    if (rightAlt && !leftAlt && mods.length === 0) {
+    const onlyAlt = mods.every((mod) => mod.code === "Alt");
+    if (rightAlt && !leftAlt && onlyAlt) {
       if (action !== "dictation") {
         captureError(action, "Right Alt alone is reserved for Dictation. Pick a combination.");
         return;
@@ -697,8 +1388,8 @@ function tryCommitCapture() {
   }
   const displays = [];
   const codes = [];
-  if (rightAlt || leftAlt) {
-    displays.push("Alt");
+  if ((rightAlt || leftAlt) && !mods.some((mod) => mod.code === "Alt")) {
+    displays.push(rightAlt && !leftAlt ? "Right Alt" : "Alt");
     codes.push("Alt");
   }
   for (const mod of mods) {
@@ -711,10 +1402,19 @@ function tryCommitCapture() {
 }
 
 function startCapture(action) {
+  const def = SHORTCUT_DEFAULTS[action] || { display: "", accelerator: null };
+  shortcutDraft[action] = { display: def.display, accelerator: def.accelerator };
+  testedAction[action] = false;
+  renderSingleCards();
+  void shortcutInvoke("set_shortcut", {
+    action, display: def.display || "", accelerator: def.accelerator,
+  }).then(renderShortcutErrors).catch(() => {});
   capturingAction = action;
   pressedCodes.clear();
+  seenMods.clear();
   const status = document.querySelector("#teststatus-" + action);
-  if (status) status.textContent = "Press keys now… (Esc cancels)";
+  if (status) status.textContent = "Press your shortcut now — the key lights up when seen. (Esc cancels)";
+  refreshYesButtons();
 }
 
 document.addEventListener("keydown", (event) => {
@@ -722,22 +1422,21 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
   event.stopPropagation();
   if (event.code === "Escape") {
-    const action = capturingAction;
-    capturingAction = null;
-    pressedCodes.clear();
-    renderCapture(action, null);
+    clearCaptureState();
+    renderSingleCards();
     return;
   }
   if (event.repeat) return;
   if ((event.code === "Backspace" || event.code === "Delete") && pressedCodes.size === 0) {
     shortcutDraft[capturingAction] = { display: "", accelerator: null };
     const action = capturingAction;
-    capturingAction = null;
+    clearCaptureState();
     renderCapture(action, null);
     renderSingleCards();
     return;
   }
   pressedCodes.add(event.code);
+  if (modOf(event.code)) seenMods.add(event.code);
   tryCommitCapture();
 }, true);
 
@@ -754,14 +1453,13 @@ const SETUP_PHASE = {
   intro: "experience", exercise: "experience", summary: "experience",
 };
 
-let longConsentDraft = false;
-
 function isShortcutScreen() {
   return setupScreen === "shortcut-dictation" || setupScreen === "shortcut-meeting" || setupScreen === "shortcut-lecture";
 }
 
 function showSetup(name) {
   if (!SETUP_PHASE[name]) return;
+  clearCaptureState();
   setupScreen = name;
   const head = document.querySelector("#setup-head");
   if (head) head.hidden = !isShortcutScreen();
@@ -774,7 +1472,10 @@ function showSetup(name) {
   void setTestMode(isShortcutScreen() || name === "mic");
   void setupBgControl();
   if (isShortcutScreen()) renderSingleCards();
-  if (name === "mic") void renderSetupMics();
+  if (name === "mic") {
+    ensureMicBars();
+    void renderSetupMics();
+  }
   if (name === "role") renderRoleGrid();
   if (name === "exercise") {
     const box = document.querySelector("#exercise-box");
@@ -822,26 +1523,28 @@ function renderSingleCards() {
     keycap.className = "test-keycap test-keycap-big";
     keycap.id = "testkey-" + action;
     keycap.textContent = draft.display || "Not set";
+    if (testedAction[action]) keycap.classList.add("lit");
     visual.append(keycap);
-    const status = document.createElement("p");
-    status.className = "capture-hint";
+    const row = document.createElement("div");
+    row.className = "capture-row";
+    const status = document.createElement("span");
+    status.className = "capture-hint test-status-inline";
     status.id = "teststatus-" + action;
     status.textContent = testedAction[action]
       ? "Working. Press it anytime."
       : "Press " + (draft.display || "your shortcut") + " now — the key lights up when seen.";
-    const row = document.createElement("div");
-    row.className = "capture-row";
     const change = document.createElement("button");
     change.className = "secondary-button";
     change.type = "button";
     change.textContent = "Change";
     change.addEventListener("click", () => startCapture(action));
-    row.append(change);
+    row.append(change, status);
     const error = document.createElement("p");
     error.className = "capture-error";
     error.id = "error-" + action;
     error.hidden = true;
-    card.append(head, visual, status, row, error);
+    card.append(head, visual, row, error);
+    card.id = "testcard-" + action;
     mount.append(card);
   }
   refreshYesButtons();
@@ -873,15 +1576,17 @@ function checkDuplicates() {
   return null;
 }
 
+function setKeycapLit(action, on) {
+  const keycap = document.querySelector("#testkey-" + action);
+  if (!keycap) return;
+  keycap.classList.toggle("lit", on === true);
+}
+
 async function verifyTestPress(action) {
   if (!isShortcutScreen() || capturingAction) return;
   const draft = shortcutDraft[action];
   if (!draft.accelerator) return;
-  const keycap = document.querySelector("#testkey-" + action);
-  if (keycap) {
-    keycap.classList.add("lit");
-    window.setTimeout(() => keycap.classList.remove("lit"), 700);
-  }
+  setKeycapLit(action, true);
   try {
     const state = await shortcutInvoke("set_shortcut", {
       action, display: draft.display || "", accelerator: draft.accelerator,
@@ -889,12 +1594,15 @@ async function verifyTestPress(action) {
     renderShortcutErrors(state);
     const refused = state.bindings?.[action]?.register_error;
     if (refused) {
+      setKeycapLit(action, false);
       captureError(action, refused);
       return;
     }
     testedAction[action] = true;
     renderSingleCards();
+    setKeycapLit(action, true);
   } catch (error) {
+    setKeycapLit(action, false);
     captureError(action, error && error.message ? error.message : String(error));
   }
 }
@@ -918,8 +1626,6 @@ function comboFromEvent(event) {
 
 document.addEventListener("keydown", (event) => {
   if (!isShortcutScreen()) return;
-  const seen = document.querySelector("#last-key-seen");
-  if (seen) seen.textContent = "Last key seen: " + event.code + " (" + event.key + ")";
   if (capturingAction || event.repeat) return;
   const hit = comboFromEvent(event);
   if (hit.matched) void verifyTestPress(hit.action);
@@ -933,6 +1639,21 @@ if (!preview) {
   listen("shortcut-needs-consent", (event) => {
     const mode = String(event.payload || "");
     if (mode === "lecture" || mode === "meeting") beginSession(mode);
+  }).catch(() => {});
+  listen("shortcut-stop-request", (event) => {
+    const mode = String(event.payload || "");
+    if (mode !== "lecture" && mode !== "meeting") return;
+    const label = mode === "lecture" ? "Lecture" : "Meeting";
+    void confirmDialog(
+      `Stop ${mode} recording?`,
+      `${label} is still capturing. Stopping now ends the session and keeps everything recorded so far.`,
+      "Stop recording",
+    ).then((confirmed) => {
+      if (!confirmed) return;
+      invoke("daemon_request", { command: "stop_session", params: {} })
+        .then(updateStatus)
+        .catch((error) => notify(error && error.message ? error.message : String(error), true));
+    });
   }).catch(() => {});
 }
 
@@ -963,23 +1684,28 @@ async function renderSetupMics() {
     }
     setupMicChoices = mics;
     box.replaceChildren();
+    const select = document.createElement("select");
+    select.id = "setup-mic-select";
+    select.setAttribute("aria-label", "Choose microphone");
     for (const mic of mics) {
-      const label = document.createElement("label");
-      label.className = "mic-option";
-      const radio = document.createElement("input");
-      radio.type = "radio";
-      radio.name = "setup-mic";
-      radio.value = mic.id;
-      radio.checked = setupMic === mic.id;
-      radio.addEventListener("change", () => {
-        setupMic = mic.id;
-        if (!preview) invoke("daemon_request", { command: "set_mic", params: { device: mic.id } }).catch(() => {});
-      });
-      const text = document.createElement("span");
-      text.textContent = mic.name;
-      label.append(radio, text);
-      box.append(label);
+      const option = document.createElement("option");
+      option.value = mic.id;
+      option.textContent = mic.name;
+      if (setupMic === mic.id) option.selected = true;
+      select.append(option);
     }
+    if (!mics.some((mic) => mic.id === setupMic)) {
+      const option = document.createElement("option");
+      option.value = setupMic;
+      option.textContent = setupMicLabel(setupMic);
+      option.selected = true;
+      select.prepend(option);
+    }
+    select.addEventListener("change", () => {
+      setupMic = select.value;
+      if (!preview) invoke("daemon_request", { command: "set_mic", params: { device: setupMic } }).catch(() => {});
+    });
+    box.append(select);
   } catch (error) {
     box.innerHTML = '<div class="empty-state">Could not list microphones. You can pick one later.</div>';
   }
@@ -987,37 +1713,33 @@ async function renderSetupMics() {
 
 function ensureMicBars() {
   const box = document.querySelector("#mic-test-bars");
-  if (!box || box.dataset.built === "true") return;
-  box.dataset.built = "true";
-  for (let i = 0; i < 12; i += 1) {
-    const bar = document.createElement("span");
-    box.append(bar);
-  }
+  if (!box || box.childElementCount === 12) return;
+  box.replaceChildren();
+  for (let i = 0; i < 12; i += 1) box.append(document.createElement("span"));
 }
 
 function setupLiveStatus(status) {
-  ensureMicBars();
-  if (setupScreen !== "mic" || !micTesting) return;
-  if (status.state !== "RECORDING") return;
+  const box = document.querySelector("#mic-test-bars");
+  if (!box) return;
+  const live = setupScreen === "mic" && micTesting && status.state === "RECORDING";
+  box.classList.toggle("live", live);
+  if (!live) {
+    box.querySelectorAll("span").forEach((bar) => { bar.style.height = ""; });
+    return;
+  }
   const samples = Array.isArray(status.audio_waveform) ? status.audio_waveform : [];
   let peak = 0;
-  const bars = document.querySelectorAll("#mic-test-bars span");
-  samples.forEach((sample, index) => {
-    const value = Math.abs(Number(sample) || 0);
-    if (index < 12 * 2 && index % 2 === 0 && value > peak) peak = value;
-  });
-  if (peak > micMaxPeak) micMaxPeak = peak;
-  const pairs = [];
+  const bars = box.querySelectorAll("span");
   for (let i = 0; i < 12; i += 1) {
-    const a = Math.abs(Number(samples[i * 2]) || 0);
-    const b = Math.abs(Number(samples[i * 2 + 1]) || 0);
-    pairs.push(Math.max(a, b));
+    const value = Math.max(
+      Math.abs(Number(samples[i * 2]) || 0),
+      Math.abs(Number(samples[i * 2 + 1]) || 0),
+    );
+    if (value > peak) peak = value;
+    const bar = bars[i];
+    if (bar) bar.style.height = (4 + Math.pow(value, 0.4) * 34).toFixed(1) + "px";
   }
-  bars.forEach((bar, index) => {
-    const value = pairs[index] || 0;
-    bar.style.height = (value < 0.002 ? 3 : 3 + Math.pow(value, 0.4) * 30).toFixed(1) + "px";
-    bar.classList.toggle("hot", value >= 0.02);
-  });
+  if (peak > micMaxPeak) micMaxPeak = peak;
 }
 
 async function toggleMicTest() {
@@ -1026,6 +1748,8 @@ async function toggleMicTest() {
   if (!micTesting) {
     micTesting = true;
     micMaxPeak = 0;
+    const yes = document.querySelector("#mic-test-yes");
+    if (yes) yes.disabled = true;
     if (error) error.hidden = true;
     if (button) button.textContent = "Stop & discard";
     try {
@@ -1052,7 +1776,7 @@ async function toggleMicTest() {
     if (yes) yes.disabled = false;
     notify("Microphone responds. Continue when ready.");
   } else if (error) {
-    error.textContent = "No speech detected — check the selected input and try again.";
+    error.textContent = "No speech detected — try choosing your Built-in Audio input explicitly, then test again.";
     error.hidden = false;
   }
 }
@@ -1125,19 +1849,12 @@ function advanceFromLongMode(action, next) {
     notify("Press the shortcut once to verify it first, or clear it to skip.", true);
     return;
   }
-  if (shortcutDraft[action].accelerator && !longConsentDraft) {
-    notify("Check the recording-consent box to enable this shortcut.", true);
-    return;
-  }
   const dup = checkDuplicates();
   if (dup) {
     captureError(dup, "Same shortcut as another mode. Press a different combination.");
     notify("Two modes share one shortcut. Give each its own.", true);
     showSetup("shortcut-dictation");
     return;
-  }
-  if (shortcutDraft[action].accelerator) {
-    void shortcutInvoke("set_long_consent", { consented: true }).catch(() => {});
   }
   showSetup(next);
 }
@@ -1154,16 +1871,13 @@ function renderShortcutState(state) {
     }
     renderShortcutErrors(state);
   }
-  longConsentDraft = state.long_consent === true;
-  document.querySelectorAll(".setup-consent-box").forEach((box) => {
-    box.checked = longConsentDraft;
-  });
   if (state.role) {
     setupRole = String(state.role);
     const go = document.querySelector("#role-continue");
     if (go && setupRole) go.disabled = false;
   }
   renderSingleCards();
+  renderHomeShortcuts(state);
 }
 
 function renderShortcutErrors(state) {
@@ -1189,6 +1903,163 @@ async function finishSetup() {
   }
 }
 
+const HOME_BLURB = {
+  dictation: "Speak naturally — your words go straight into the app you're using.",
+  meeting: "Capture a discussion with speaker labels and outcomes.",
+  lecture: "Capture a class with audio and transcript together.",
+};
+
+let keyDialogAction = null;
+let keyDialogCodes = new Set();
+let keyDialogSeen = new Set();
+let keyDialogDraft = { display: "", accelerator: null };
+
+function renderHomeShortcuts(state) {
+  const box = document.querySelector("#home-shortcuts");
+  if (!box) return;
+  box.replaceChildren();
+  for (const action of SHORTCUT_ACTIONS) {
+    const entry = state && state.bindings ? state.bindings[action] : null;
+    const display = (entry && entry.display) || shortcutDraft[action].display || "Not set";
+    const row = document.createElement("button");
+    row.className = "shortcut-row home-shortcut-row";
+    row.type = "button";
+    const copy = document.createElement("div");
+    copy.className = "shortcut-copy";
+    const name = document.createElement("strong");
+    name.textContent = action.charAt(0).toUpperCase() + action.slice(1);
+    const blurb = document.createElement("p");
+    blurb.textContent = HOME_BLURB[action];
+    copy.append(name, blurb);
+    const binding = document.createElement("div");
+    binding.className = "shortcut-binding";
+    const chip = document.createElement("code");
+    chip.className = "home-keycap";
+    chip.textContent = display;
+    binding.append(chip);
+    row.append(copy, binding);
+    row.addEventListener("click", () => openKeyDialog(action));
+    box.append(row);
+  }
+}
+
+function openKeyDialog(action) {
+  keyDialogAction = action;
+  keyDialogCodes.clear();
+  keyDialogSeen.clear();
+  const draft = shortcutDraft[action] || { display: "", accelerator: null };
+  keyDialogDraft = { display: draft.display || "", accelerator: draft.accelerator || null };
+  const title = document.querySelector("#key-dialog-title");
+  if (title) title.textContent = "Change " + action + " shortcut";
+  const keycap = document.querySelector("#key-dialog-keycap");
+  if (keycap) keycap.textContent = keyDialogDraft.display || "Not set";
+  const error = document.querySelector("#key-dialog-error");
+  if (error) error.hidden = true;
+  const dialog = document.querySelector("#key-dialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function keyDialogCommit(display, accelerator) {
+  keyDialogDraft = { display, accelerator };
+  const keycap = document.querySelector("#key-dialog-keycap");
+  if (keycap) keycap.textContent = display;
+  const error = document.querySelector("#key-dialog-error");
+  if (error) error.hidden = true;
+}
+
+document.addEventListener("keydown", (event) => {
+  const dialog = document.querySelector("#key-dialog");
+  if (!keyDialogAction || !dialog || !dialog.open) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (event.repeat) return;
+  if ((event.code === "Backspace" || event.code === "Delete") && keyDialogCodes.size === 0) {
+    keyDialogCommit("", null);
+    return;
+  }
+  keyDialogCodes.add(event.code);
+  const mod = modOf(event.code);
+  if (mod) keyDialogSeen.add(event.code);
+  const codes = [...keyDialogCodes];
+  const rightAlt = codes.includes("AltRight");
+  const leftAlt = codes.includes("AltLeft");
+  const mains = codes.map(codeToKeyName).filter(Boolean);
+  const main = mains[0];
+  const seen = new Set();
+  const mods = [];
+  const push = (display, code) => {
+    if (!seen.has(code)) {
+      seen.add(code);
+      mods.push({ display, code });
+    }
+  };
+  for (const code of [...keyDialogCodes, ...keyDialogSeen]) {
+    const m = modOf(code);
+    if (m) push(m.display, m.code);
+  }
+  if (!main) {
+    if (rightAlt && !leftAlt && mods.length === 1 && mods[0].code === "Alt") {
+      if (keyDialogAction !== "dictation") {
+        const error = document.querySelector("#key-dialog-error");
+        if (error) {
+          error.textContent = "Right Alt alone is reserved for Dictation. Pick a combination.";
+          error.hidden = false;
+        }
+        return;
+      }
+      keyDialogCommit("Right Alt", "RightAlt");
+    }
+    return;
+  }
+  const displays = [];
+  const accels = [];
+  for (const mod of mods) {
+    displays.push(mod.display === "Alt" && rightAlt && !leftAlt ? "Right Alt" : mod.display);
+    accels.push(mod.code);
+  }
+  displays.push(main.display);
+  accels.push(main.code);
+  keyDialogCommit(displays.join(" + "), accels.join("+"));
+}, true);
+
+document.querySelector("#key-dialog")?.addEventListener("close", () => {
+  keyDialogAction = null;
+  keyDialogCodes.clear();
+  keyDialogSeen.clear();
+});
+
+document.querySelector("#key-dialog-save")?.addEventListener("click", async () => {
+  if (!keyDialogAction) return;
+  const action = keyDialogAction;
+  try {
+    const state = await shortcutInvoke("set_shortcut", {
+      action, display: keyDialogDraft.display || "", accelerator: keyDialogDraft.accelerator,
+    });
+    const refused = state.bindings?.[action]?.register_error;
+    const error = document.querySelector("#key-dialog-error");
+    if (refused) {
+      if (error) {
+        error.textContent = refused;
+        error.hidden = false;
+      }
+      return;
+    }
+    shortcutDraft[action] = { ...keyDialogDraft };
+    testedAction[action] = false;
+    renderSingleCards();
+    renderHomeShortcuts(state);
+    const dialog = document.querySelector("#key-dialog");
+    if (dialog && dialog.open) dialog.close();
+    notify(action.charAt(0).toUpperCase() + action.slice(1) + " shortcut saved.");
+  } catch (error) {
+    const box = document.querySelector("#key-dialog-error");
+    if (box) {
+      box.textContent = error && error.message ? error.message : String(error);
+      box.hidden = false;
+    }
+  }
+});
+
 async function bootShortcuts() {
   try {
     const state = await shortcutInvoke("get_shortcuts", {});
@@ -1205,15 +2076,6 @@ async function bootShortcuts() {
 document.querySelector("#yes-dictation")?.addEventListener("click", advanceFromDictation);
 document.querySelector("#yes-meeting")?.addEventListener("click", () => advanceFromLongMode("meeting", "shortcut-lecture"));
 document.querySelector("#yes-lecture")?.addEventListener("click", () => advanceFromLongMode("lecture", "mic"));
-document.querySelectorAll(".setup-consent-box").forEach((box) => {
-  box.addEventListener("change", () => {
-    longConsentDraft = box.checked;
-    document.querySelectorAll(".setup-consent-box").forEach((other) => {
-      other.checked = longConsentDraft;
-    });
-    refreshYesButtons();
-  });
-});
 document.querySelector("#mic-test-btn")?.addEventListener("click", () => void toggleMicTest());
 document.querySelector("#mic-test-yes")?.addEventListener("click", () => showSetup("role"));
 document.querySelector("#role-continue")?.addEventListener("click", () => void saveRoleAndContinue());
@@ -1304,4 +2166,10 @@ document.addEventListener("visibilitychange", () => {
 });
 console.timeStamp("wicx: frontend boot calls issued");
 void bootShortcuts();
+if (!preview) {
+  window.clearTimeout(statusTimer);
+  void pollStatus();
+} else {
+  void refreshStatus();
+}
 

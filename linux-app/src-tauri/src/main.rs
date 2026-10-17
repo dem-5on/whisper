@@ -8,7 +8,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
-use tauri::{Emitter, Manager, PhysicalPosition};
+use tauri::{Emitter, Manager, PhysicalPosition, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
 mod shortcuts;
@@ -37,7 +37,7 @@ fn bottom_center_pill_position(
     scale_factor: f64,
 ) -> (i32, i32) {
     let x = monitor_position.0 + (monitor_size.0 as i32 - pill_size.0 as i32) / 2;
-    let bottom_gap = (36.0 * scale_factor) as i32;
+    let bottom_gap = (8.0 * scale_factor) as i32;
     let y = monitor_position.1 + monitor_size.1 as i32 - pill_size.1 as i32 - bottom_gap;
     (x, y)
 }
@@ -53,6 +53,13 @@ fn daemon_request(command: String, params: Option<Value>) -> Result<Value, Strin
         "get_session",
         "delete_session",
         "dictionary",
+        "export_session",
+        "retry_analysis",
+        "retry_diarization",
+        "cancel_diarization",
+        "rename_speaker",
+        "assign_segment_speaker",
+        "merge_speakers",
         "start_session",
         "stop_session",
         "set_rewrite",
@@ -106,6 +113,56 @@ pub fn send_daemon(command: &str, params: Map<String, Value>) -> Result<Value, S
     Ok(response)
 }
 
+fn anchor_pill(app: &tauri::AppHandle, pill: &tauri::WebviewWindow, loud: bool) {
+    // Position only after the surface is visible/realized. Runs on every
+    // update while visible so late compositor moves get corrected. On X11
+    // this anchors the compact pill above the bottom edge; Wayland
+    // compositors retain final placement authority and may ignore requests.
+    let monitor = pill
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    match monitor {
+        Some(monitor) => match pill.scale_factor() {
+            Ok(scale) => {
+                // The pill window has a fixed size (see tauri.conf.json); the
+                // runtime outer_size read is unreliable on some stacks, so
+                // anchor from the configured size instead of measuring.
+                const PILL_WIDTH: f64 = 194.0;
+                const PILL_HEIGHT: f64 = 52.0;
+                let monitor_position = monitor.position();
+                let monitor_size = monitor.size();
+                let (x, y) = bottom_center_pill_position(
+                    (monitor_position.x, monitor_position.y),
+                    (monitor_size.width, monitor_size.height),
+                    (
+                        (PILL_WIDTH * scale) as u32,
+                        (PILL_HEIGHT * scale) as u32,
+                    ),
+                    scale,
+                );
+                if loud {
+                    eprintln!(
+                        "wicx: pill pos monitor=({},{}) size={}x{} scale={scale} -> ({x},{y})",
+                        monitor_position.x,
+                        monitor_position.y,
+                        monitor_size.width,
+                        monitor_size.height,
+                    );
+                }
+                if let Err(error) = pill.set_position(PhysicalPosition::new(x, y)) {
+                    eprintln!("wicx: pill set_position failed: {error}");
+                }
+            }
+            _ => {
+                eprintln!("wicx: pill size/scale unavailable, keeping compositor placement")
+            }
+        },
+        None => eprintln!("wicx: no monitor found, keeping compositor placement"),
+    }
+}
+
 #[tauri::command]
 fn update_recording_pill(
     app: tauri::AppHandle,
@@ -123,26 +180,13 @@ fn update_recording_pill(
         if visible {
             pill.show()
                 .map_err(|error| format!("Could not show recording pill: {error}"))?;
-            // Position only after the surface is visible/realized. On X11 this
-            // anchors the compact pill above the bottom edge; Wayland compositors
-            // retain final placement authority and may ignore client requests.
-            if let Ok(Some(monitor)) = pill.current_monitor() {
-                if let (Ok(window_size), Ok(scale)) = (pill.outer_size(), pill.scale_factor()) {
-                    let monitor_position = monitor.position();
-                    let monitor_size = monitor.size();
-                    let (x, y) = bottom_center_pill_position(
-                        (monitor_position.x, monitor_position.y),
-                        (monitor_size.width, monitor_size.height),
-                        (window_size.width, window_size.height),
-                        scale,
-                    );
-                    let _ = pill.set_position(PhysicalPosition::new(x, y));
-                }
-            }
+            anchor_pill(&app, &pill, true);
         } else {
             pill.hide()
                 .map_err(|error| format!("Could not hide recording pill: {error}"))?;
         }
+    } else if visible {
+        anchor_pill(&app, &pill, false);
     }
 
     app.emit_to("recording-pill", "recording-status", status)
@@ -164,6 +208,11 @@ fn main() {
 
     tauri::Builder::default()
         .manage(shortcuts::ShortcutState_::new())
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(focused) = event {
+                eprintln!("wicx: window '{}' focused={focused}", window.label());
+            }
+        })
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -187,6 +236,7 @@ fn main() {
             shortcuts::set_long_consent,
             shortcuts::set_role,
             shortcuts::set_shortcut_test,
+            shortcuts::request_stop_session,
             shortcuts::complete_setup
         ])
         .run(tauri::generate_context!())
@@ -201,7 +251,7 @@ mod tests {
     fn pill_is_centered_and_inset_from_bottom() {
         assert_eq!(
             bottom_center_pill_position((0, 0), (1920, 1080), (400, 74), 1.0),
-            (760, 970),
+            (760, 998),
         );
     }
 
@@ -209,7 +259,7 @@ mod tests {
     fn pill_position_respects_negative_monitor_origin() {
         assert_eq!(
             bottom_center_pill_position((-1920, -200), (1920, 1080), (400, 74), 1.0),
-            (-1160, 770),
+            (-1160, 798),
         );
     }
 
@@ -217,7 +267,7 @@ mod tests {
     fn bottom_inset_scales_with_display_density() {
         assert_eq!(
             bottom_center_pill_position((50, 100), (1440, 900), (400, 72), 1.5),
-            (570, 874),
+            (570, 916),
         );
     }
 }

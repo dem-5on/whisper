@@ -109,6 +109,14 @@ class DaemonTests(unittest.TestCase):
         self.daemon.recorder = self.recorder  # type: ignore[assignment]
 
     def tearDown(self) -> None:
+        # Detached analysis workers write session files, so let them finish
+        # before the temporary data directory disappears underneath them.
+        for _ in range(300):
+            with self.daemon._lock:
+                active = bool(getattr(self.daemon, "_analysis_active", set()))
+            if not active:
+                break
+            time.sleep(0.01)
         self.tmp.cleanup()
 
     def wait_for(self, *states: State) -> None:
@@ -270,6 +278,48 @@ class DaemonTests(unittest.TestCase):
         backend.assert_not_called()
         self.assertEqual(self.daemon.command("history")["history"], [])
 
+    def test_cancel_retains_long_session_audio(self) -> None:
+        started = self.daemon.command("start_session", {
+            "mode": "lecture", "consent_acknowledged": True,
+        })
+        self.assertEqual(started["state"], "RECORDING")
+        session_id = self.daemon._stored_session_id
+        self.assertIsNotNone(session_id)
+        response = self.daemon.command("cancel")
+        self.assertEqual(response["state"], "IDLE")
+        assert session_id is not None
+        saved = self.daemon._session_store.get(session_id)
+        self.assertEqual(saved.state, "error")
+        self.assertIn("retained", saved.error)
+        self.assertEqual(len(self.daemon.command("sessions")["sessions"]), 1)
+
+    def test_restart_repairs_truncated_long_recording(self) -> None:
+        import wave
+
+        stored = self.daemon._session_store.create("lecture")
+        frames = b"\x01\x02" * 8000
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(frames)
+        with open(stored.audio_path, "r+b") as stream:
+            stream.seek(0, 2)
+            stream.write(frames)
+        recovered = self.daemon._recover_interrupted_sessions()
+        self.assertEqual(recovered, [stored.id])
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.state, "error")
+        with wave.open(str(stored.audio_path), "rb") as wav:
+            self.assertEqual(wav.getnframes(), 16000)
+
+    def test_low_disk_refuses_new_recording(self) -> None:
+        with patch.object(self.daemon, "_disk_free_bytes", return_value=1):
+            refused = self.daemon.command("toggle")
+        self.assertEqual(refused["ok"], "false")
+        self.assertIn("disk space", refused["error"])
+        self.assertFalse(self.recorder.started)
+
     def test_history_rejects_invalid_limit(self) -> None:
         response = self.daemon.command("history", {"limit": 0})
         self.assertEqual(response["ok"], "false")
@@ -319,6 +369,25 @@ class DaemonTests(unittest.TestCase):
         })
         self.assertEqual(refused["ok"], "false")
         self.assertIn("already exists", refused["error"])
+
+    def test_export_session_docx_uses_default_documents_path(self) -> None:
+        from unittest.mock import patch
+
+        stored = self.daemon._session_store.create("dictation")
+        self.daemon._session_store.update(
+            stored.id, state="ready", source_transcript="Docx please.", finished=True,
+        )
+        with patch("transcriber.session_export.Path.home", return_value=self.data):
+            exported = self.daemon.command("export_session", {
+                "session_id": stored.id, "format": "docx",
+            })
+        self.assertEqual(exported["ok"], "true")
+        self.assertTrue(exported["export_path"].endswith(".docx"))
+        self.assertTrue(exported["export_path"].startswith(str(self.data)))
+        bad = self.daemon.command("export_session", {
+            "session_id": stored.id, "format": "pdf",
+        })
+        self.assertEqual(bad["ok"], "false")
 
     def test_dictionary_commands_persist_terms_and_supply_local_recognition_hint(self) -> None:
         added = self.daemon.command("dictionary", {"action": "add", "term": "CTranslate2"})
@@ -384,6 +453,387 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(session_list[0]["mode"], "meeting")
         self.assertTrue(session_list[0]["audio_available"])
         self.assertEqual(audio_path.read_bytes(), b"wav")
+
+    def _make_lecture_session(self, transcript="Photosynthesis converts light."):
+        stored = self.daemon._session_store.create("lecture")
+        return self.daemon._session_store.update(
+            stored.id, state="ready", source_transcript=transcript, finished=True,
+        )
+
+    def test_lecture_analysis_stores_all_stages(self) -> None:
+        stored = self._make_lecture_session()
+        calls: list[str] = []
+
+        def fake_post(kind: str, text: str, language: str | None = None):
+            calls.append(kind)
+            if kind == "translation":
+                return "ready", {"language": "en", "translation": None}
+            if kind == "topics":
+                return "ready", [{"title": "Intro", "summary": "Start", "start_segment": 0, "end_segment": 0}]
+            if kind == "terms":
+                return "ready", [{"term": "Photosynthesis", "definition": "Plants make food."}]
+            if kind == "questions":
+                return "ready", ["Why do plants need light?"]
+            return "ready", f"# Notes\n- {text[:20]}"
+
+        with patch.object(self.daemon, "_analysis_post", side_effect=fake_post):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.source_transcript, "Photosynthesis converts light.")
+        self.assertTrue(saved.outputs["lecture_notes"].startswith("# Notes"))
+        self.assertEqual(saved.outputs["topic_groups"][0]["title"], "Intro")
+        self.assertEqual(saved.outputs["key_terms"][0]["term"], "Photosynthesis")
+        self.assertEqual(saved.outputs["review_questions"], ["Why do plants need light?"])
+        self.assertEqual(saved.english_translation, "")
+        states = saved.outputs["analysis_state"]
+        self.assertTrue(all(states[kind]["state"] == "ready" for kind in (
+            "translation", "notes", "topics", "terms", "questions")))
+        self.assertEqual(calls[0], "translation")
+
+    def test_lecture_analysis_blocked_keeps_transcript(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("blocked", "Subscription allowance exhausted.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.source_transcript, "Photosynthesis converts light.")
+        self.assertNotIn("lecture_notes", saved.outputs)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "blocked")
+
+    def test_lecture_analysis_queued_then_retried(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Service unreachable.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["terms"]["state"], "queued")
+
+        def fake_post(kind: str, text: str, language: str | None = None):
+            if kind == "translation":
+                return "ready", {"language": "en", "translation": None}
+            if kind == "topics":
+                return "ready", []
+            if kind == "terms":
+                return "ready", [{"term": "Light", "definition": "Energy."}]
+            if kind == "questions":
+                return "ready", ["What?"]
+            return "ready", "notes text"
+
+        with patch.object(self.daemon, "_analysis_post", side_effect=fake_post):
+            retried = self.daemon.command("retry_analysis", {"session_id": stored.id})
+            self.assertEqual(retried["ok"], "true")
+            import time
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                saved = self.daemon._session_store.get(stored.id)
+                if "key_terms" in saved.outputs:
+                    break
+                time.sleep(0.05)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["key_terms"], [{"term": "Light", "definition": "Energy."}])
+
+    def test_sweep_retries_queued_analysis_on_reconnect(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Service unreachable.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "queued")
+
+        def fake_post(kind: str, text: str, language: str | None = None):
+            if kind == "translation":
+                return "ready", {"language": "en", "translation": None}
+            if kind == "topics":
+                return "ready", []
+            if kind == "terms":
+                return "ready", [{"term": "Light", "definition": "Energy."}]
+            if kind == "questions":
+                return "ready", ["What?"]
+            return "ready", "notes text"
+
+        with patch.object(self.daemon, "_analysis_post", side_effect=fake_post):
+            self.daemon._sweep_timer.cancel()
+            self.daemon._sweep_queued_analysis()
+        saved = self.daemon._session_store.get(stored.id)
+        states = saved.outputs["analysis_state"]
+        self.assertTrue(all(states[kind]["state"] == "ready" for kind in (
+            "translation", "notes", "topics", "terms", "questions")))
+        self.assertIn("completed", self.daemon._last_notice)
+
+    def test_sweep_skips_blocked_and_busy(self) -> None:
+        stored = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("blocked", "No subscription.")
+        ):
+            self.daemon._run_lecture_analysis(stored.id)
+        with patch.object(
+            self.daemon, "_analysis_post", side_effect=AssertionError("must not call"),
+        ):
+            self.daemon._sweep_timer.cancel()
+            self.daemon._sweep_queued_analysis()
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "blocked")
+
+        self.daemon._set_state(State.RECORDING)
+        pending = self._make_lecture_session()
+        with patch.object(
+            self.daemon, "_analysis_post", return_value=("queued", "Service unreachable.")
+        ):
+            self.daemon._run_lecture_analysis(pending.id)
+        try:
+            with patch.object(
+                self.daemon, "_analysis_post", side_effect=AssertionError("must not call"),
+            ):
+                self.daemon._sweep_timer.cancel()
+                self.daemon._sweep_queued_analysis()
+        finally:
+            self.daemon._set_state(State.IDLE)
+        saved = self.daemon._session_store.get(pending.id)
+        self.assertEqual(saved.outputs["analysis_state"]["notes"]["state"], "queued")
+
+    def _make_meeting_session(self):
+        stored = self.daemon._session_store.create("meeting")
+        return self.daemon._session_store.update(
+            stored.id, state="ready",
+            source_transcript="Kwame: Let us ship Friday. Ama: Agreed.",
+            segments=[
+                {"start_seconds": 0.0, "end_seconds": 5.0, "text": "Let us ship Friday.", "speaker_id": None},
+                {"start_seconds": 5.0, "end_seconds": 9.0, "text": "Agreed.", "speaker_id": None},
+            ],
+            finished=True,
+        )
+
+    def _meeting_text_post(self, kind: str, text: str, language: str | None = None):
+        if kind == "translation":
+            return "ready", {"language": "en", "translation": None}
+        if kind == "summary":
+            return "ready", "## Summary\nShipped Friday."
+        if kind == "decisions":
+            return "ready", ["Ship on Friday"]
+        if kind == "actions":
+            return "ready", [{"action": "Cut the release", "owner": "Kwame"}]
+        raise AssertionError(kind)
+
+    def test_meeting_analysis_labels_speakers_and_summarizes(self) -> None:
+        stored = self._make_meeting_session()
+        turns = [
+            {"start_seconds": 0.0, "end_seconds": 5.0, "speaker_id": "speaker_1"},
+            {"start_seconds": 5.0, "end_seconds": 9.0, "speaker_id": "speaker_2"},
+        ]
+        with patch.object(
+            self.daemon, "_diarization_post_submit", return_value=("queued", {"job_id": "job1"}),
+        ), patch.object(
+            self.daemon, "_diarization_poll", return_value=("ready", turns),
+        ), patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+            import time
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                saved = self.daemon._session_store.get(stored.id)
+                states = saved.outputs.get("analysis_state", {})
+                if states.get("summary", {}).get("state") == "ready":
+                    break
+                time.sleep(0.05)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.segments[0]["speaker_id"], "speaker_1")
+        self.assertEqual(saved.segments[1]["speaker_id"], "speaker_2")
+        self.assertEqual(
+            saved.outputs["diarization_state"]["state"], "ready",
+        )
+        self.assertIn("Shipped Friday", saved.outputs["meeting_summary"])
+        self.assertEqual(saved.outputs["meeting_decisions"], ["Ship on Friday"])
+        self.assertEqual(
+            saved.outputs["action_items"], [{"action": "Cut the release", "owner": "Kwame"}],
+        )
+        states = saved.outputs["analysis_state"]
+        self.assertTrue(all(states[kind]["state"] == "ready" for kind in ("summary", "decisions", "actions")))
+
+    def test_meeting_analysis_blocked_keeps_transcript(self) -> None:
+        stored = self._make_meeting_session()
+        with patch.object(
+            self.daemon, "_diarization_post_submit",
+            return_value=("blocked", "Subscription allowance exhausted."),
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertIn("ship Friday", saved.source_transcript)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "blocked")
+        self.assertIsNone(saved.segments[0]["speaker_id"])
+
+    def test_retry_diarization_resubmits_failed_job(self) -> None:
+        import wave
+
+        stored = self._make_meeting_session()
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x01\x02" * 16000)
+        with patch.object(
+            self.daemon, "_diarization_post_submit", return_value=("queued", {"job_id": "job1"}),
+        ), patch.object(
+            self.daemon, "_diarization_poll", return_value=("failed", "Service blew up."),
+        ), patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "failed")
+        turns = [{"start_seconds": 0.0, "end_seconds": 9.0, "speaker_id": "speaker_1"}]
+        with patch.object(
+            self.daemon, "_diarization_post_submit", return_value=("queued", {"job_id": "job2"}),
+        ), patch.object(
+            self.daemon, "_diarization_poll", return_value=("ready", turns),
+        ), patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            retried = self.daemon.command("retry_diarization", {"session_id": stored.id})
+            self.assertEqual(retried["ok"], "true")
+            import time
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                saved = self.daemon._session_store.get(stored.id)
+                if saved.outputs.get("diarization_state", {}).get("state") == "ready":
+                    break
+                time.sleep(0.05)
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "ready")
+
+    def test_cancelled_speaker_analysis_does_not_resubmit(self) -> None:
+        import wave
+
+        stored = self._make_meeting_session()
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x01\x02" * 16000)
+        self.daemon._store_diarization_state(
+            stored.id, "cancelled", "Speaker analysis cancelled.", drop_job=True,
+        )
+        with patch.object(
+            self.daemon, "_diarization_post_submit",
+            side_effect=AssertionError("must not resubmit a cancelled job"),
+        ) as submit, patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        submit.assert_not_called()
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "cancelled")
+        self.assertIsNone(saved.segments[0]["speaker_id"])
+        self.assertIn("Shipped Friday", saved.outputs["meeting_summary"])
+
+    def test_cancel_diarization_stops_the_service_job(self) -> None:
+        import wave
+
+        stored = self._make_meeting_session()
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x01\x02" * 16000)
+        with patch.object(
+            self.daemon, "_diarization_post_submit", return_value=("queued", {"job_id": "job1"}),
+        ), patch.object(
+            self.daemon, "_diarization_poll", return_value=("queued", "still running"),
+        ), patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+            self.assertEqual(
+                self.daemon._session_store.get(stored.id).outputs["diarization_state"]["job_id"],
+                "job1",
+            )
+            with patch.object(
+                self.daemon, "_diarization_delete", return_value=("cancelled", ""),
+            ) as delete:
+                cancelled = self.daemon.command("cancel_diarization", {"session_id": stored.id})
+            delete.assert_called_once_with("job1")
+        self.assertEqual(cancelled["ok"], "true")
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "cancelled")
+        self.assertNotIn("job_id", saved.outputs["diarization_state"])
+
+    def test_cancel_diarization_reports_unreachable_service(self) -> None:
+        stored = self._make_meeting_session()
+        self.daemon._store_diarization_state(
+            stored.id, "queued", "Speaker analysis queued.", job_id="job1",
+        )
+        with patch.object(
+            self.daemon, "_diarization_delete",
+            return_value=("offline", "Speaker service is unreachable; the job keeps running."),
+        ):
+            result = self.daemon.command("cancel_diarization", {"session_id": stored.id})
+        self.assertEqual(result["ok"], "false")
+        self.assertIn("unreachable", result["error"])
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "queued")
+
+    def test_cancel_diarization_validates_session(self) -> None:
+        self.assertEqual(
+            self.daemon.command("cancel_diarization", {"session_id": ""})["ok"], "false"
+        )
+        lecture = self.daemon._session_store.create("lecture")
+        self.assertIn(
+            "Meeting", self.daemon.command("cancel_diarization", {"session_id": lecture.id})["error"],
+        )
+        missing = self.daemon.command("cancel_diarization", {"session_id": "nope"})
+        self.assertIn("not found", missing["error"])
+
+    def test_shutdown_stops_detached_meeting_analysis(self) -> None:
+        stored = self._make_meeting_session()
+        self.daemon._stopping.set()
+        with patch.object(
+            self.daemon, "_diarization_post_submit",
+            side_effect=AssertionError("must not upload during shutdown"),
+        ) as submit, patch.object(
+            self.daemon, "_diarization_poll",
+            side_effect=AssertionError("must not poll during shutdown"),
+        ) as poll, patch.object(
+            self.daemon, "_analysis_post",
+            side_effect=AssertionError("must not analyze during shutdown"),
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        submit.assert_not_called()
+        poll.assert_not_called()
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertNotIn("diarization_state", saved.outputs)
+        self.assertNotIn("meeting_summary", saved.outputs)
+
+    def test_poll_returns_immediately_on_shutdown(self) -> None:
+        import threading
+
+        stop = threading.Event()
+        stop.set()
+        with patch.object(
+            self.daemon, "_analysis_base_url", return_value="https://example.test"
+        ), patch("urllib.request.urlopen") as urlopen:
+            state, message = self.daemon._diarization_poll("job1", 0.0, 5, stop=stop)
+        urlopen.assert_not_called()
+        self.assertEqual(state, "queued")
+        self.assertIn("paused", str(message))
+
+    def test_retry_diarization_validates_session(self) -> None:
+        self.assertEqual(self.daemon.command("retry_diarization", {"session_id": ""})["ok"], "false")
+        lecture = self.daemon._session_store.create("lecture")
+        self.assertIn("Meeting", self.daemon.command("retry_diarization", {"session_id": lecture.id})["error"])
+
+    def test_retry_analysis_validates_session(self) -> None:
+        self.assertEqual(self.daemon.command("retry_analysis", {"session_id": ""})["ok"], "false")
+        self.assertEqual(self.daemon.command("retry_analysis", {"session_id": "missing"})["ok"], "false")
+        stored = self.daemon._session_store.create("dictation")
+        self.assertIn(
+            "Lecture", self.daemon.command("retry_analysis", {"session_id": stored.id})["error"]
+        )
 
     def test_long_session_persists_timestamped_transcription_segments(self) -> None:
         delivery = FakeDelivery()

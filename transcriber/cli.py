@@ -20,7 +20,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Control the Wicx transcription service")
     parser.add_argument(
         "command",
-        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "get-session", "delete-session", "rename-speaker", "label-segment", "merge-speakers", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
+        choices=("toggle", "cancel", "status", "retry", "retranscribe", "last", "history", "sessions", "get-session", "delete-session", "rename-speaker", "label-segment", "merge-speakers", "retry-speakers", "stop-speakers", "retry-session", "export-session", "export-session-audio", "dictionary", "start-session", "stop-session", "mics", "models", "set-provider", "set-model", "set-live-engine", "set-live-model", "set-mic", "set-key", "set-streaming", "events", "subscribe", "autostart", "shutdown"),
     )
     parser.add_argument("autostart_action", nargs="?", choices=("enable", "disable"), help="enable or disable Windows sign-in startup")
     parser.add_argument("--socket", type=Path, default=default_socket_path())
@@ -88,6 +88,16 @@ def main() -> None:
         if not args.session:
             parser.error("retry-session requires --session ID")
         payload["command"] = "retry_session"
+        payload["session_id"] = args.session
+    elif args.command == "retry-speakers":
+        if not args.session:
+            parser.error("retry-speakers requires --session ID")
+        payload["command"] = "retry_diarization"
+        payload["session_id"] = args.session
+    elif args.command == "stop-speakers":
+        if not args.session:
+            parser.error("stop-speakers requires --session ID")
+        payload["command"] = "cancel_diarization"
         payload["session_id"] = args.session
     elif args.command == "rename-speaker":
         if not args.session or not args.speaker_id or not args.name:
@@ -203,6 +213,10 @@ def main() -> None:
             print(f"[{segment.get('start_seconds', 0):.3f}-{segment.get('end_seconds', 0):.3f}] {speaker}: {segment.get('text', '')}")
     elif args.command == "retry-session":
         print("Retry started; local session transcription is processing")
+    elif args.command == "retry-speakers":
+        print("Speaker analysis queued for retry; labels appear when it finishes")
+    elif args.command == "stop-speakers":
+        print("Speaker analysis cancelled")
     elif args.command == "rename-speaker":
         print(f"Renamed {response.get('speaker_id', 'speaker')} to {response.get('name', '')}")
     elif args.command == "label-segment":

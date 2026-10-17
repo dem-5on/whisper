@@ -404,3 +404,171 @@ body.in-setup #page-setup { position:relative; z-index:1; }
 /* Single-key setup pages */
 .setup-single { max-width:720px; margin:0 auto; }
 .test-keycap-big { font-size:22px; padding:18px 34px; }
+
+/* Single-key cards are centered squares; the card itself flashes on detection */
+.setup-single .setup-step { max-width:440px; margin:0 auto; aspect-ratio:1/1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; transition:border-color .15s, box-shadow .15s; }
+.setup-single .setup-step-head { display:block; }
+.setup-single .capture-row { justify-content:center; }
+.setup-single .setup-step.lit { border-color:#2859df; box-shadow:0 0 0 4px #3261e733; }
+.test-binding-line { color:#596170; font-size:13px; }
+
+/* Single-key card: text left, keycap right */
+.setup-single .setup-step { display:grid; grid-template-columns:minmax(0, 1fr) auto; column-gap:28px; max-width:640px; aspect-ratio:auto; text-align:left; align-items:center; }
+.setup-single .test-key-visual { grid-column:2; grid-row:1 / span 5; align-self:center; }
+
+/* Single-key card: Change pins to the bottom-left corner */
+.setup-single .setup-step { min-height:320px; }
+.setup-single .capture-row { grid-column:1; align-self:end; justify-self:start; margin-top:16px; }
+
+/* Single-key card: lower height */
+.setup-single .setup-step { min-height:240px; }
+
+/* Single-key card: status text sits inline before Change */
+.setup-single .capture-row { align-items:center; gap:14px; }
+.setup-single .test-status-inline { margin:0; }
+
+/* Single-key card: trim empty space below the Change row */
+.setup-single .setup-step { min-height:190px; }
+
+/* Test keycap lights visibly on detected press */
+.test-keycap.lit { border-color:#2859df; background:#e4ecff; color:#1e3fae; box-shadow:0 0 0 4px #3261e733; transform:scale(1.03); }
+.test-keycap { transition:border-color .15s, background .15s, transform .15s, box-shadow .15s; }
+
+/* Verified keycap keeps a blue border only */
+.test-keycap.lit { border-color:#2859df; background:initial; box-shadow:none; transform:none; color:inherit; }
+
+/* Walkthrough shortcuts header stands clear of the card */
+body.in-setup #setup-head { margin-bottom:56px; }
+
+/* Walkthrough header text aligns with the card edge */
+body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margin-right:auto; }
+
+/* Consent row: plain inline checkbox, aligned with the card */
+.setup-step-page .setup-consent { display:flex; align-items:center; gap:10px; max-width:640px; width:100%; margin:14px auto 0; padding:0; border:0; background:transparent; }
+
+/* Fallback footnote sits well below the shortcut card */
+.setup-step-page .shortcut-footnote { margin-top:44px; }
+
+/* Fallback footnote lower still */
+.setup-step-page .shortcut-footnote { margin-top:88px; }
+
+/* Mic page: centered heading, dropdown input, live meter on top */
+[data-setup-page="mic"] .setup-h2, [data-setup-page="mic"] .setup-lead { text-align:center; }
+[data-setup-page="mic"] .mic-test-bars { max-width:640px; margin-left:auto; margin-right:auto; }
+#setup-mics { max-width:640px; margin-left:auto; margin-right:auto; }
+#setup-mic-select { width:100%; padding:12px 14px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; font-size:14px; cursor:pointer; }
+
+/* Mic page: compact dropdown without focus ring, meter bars blue while testing */
+#setup-mics { max-width:440px; }
+#setup-mic-select { outline:none; }
+#setup-mic-select:focus { outline:none; border-color:#9aa3b2; }
+.mic-test-bars span { background:#2859df; }
+
+/* Mic page: action row stands clear of the dropdown */
+[data-setup-page="mic"] .dialog-actions { margin-top:30px; }
+
+/* Mic meter: hollow pole outlines at rest, blue fill while testing */
+.mic-test-bars span { height:26px; background:transparent; border:1px solid #cfd4dc; }
+.mic-test-bars.live span { background:#2859df; border:0; }
+
+/* Meter strip is invisible chrome; only the poles show */
+.mic-test-bars { background:transparent; border:0; box-shadow:none; padding-left:0; padding-right:0; }
+
+/* Role screen heading centered like the mic screen */
+[data-setup-page="role"] .setup-h2, [data-setup-page="role"] .setup-lead { text-align:center; }
+
+/* Home shortcut rows open the key dialog */
+.home-shortcut-row { width:100%; text-align:left; cursor:pointer; background:transparent; border:0; border-bottom:1px solid #eff0f2; }
+.home-shortcut-row:hover { background:#f6f8fc; }
+.home-shortcut-row:last-child { border-bottom:0; }
+.home-keycap { white-space:nowrap; }
+#key-dialog .test-key-visual { margin:14px 0 6px; }
+
+/* Home shortcut rows run edge to edge */
+.home-shortcut-row { padding-left:0; padding-right:0; }
+
+/* Home shortcut hover spans the full card width */
+.home-shortcut-row { margin-left:-17px; margin-right:-17px; padding-left:17px; padding-right:17px; }
+@media (max-width:680px) { .home-shortcut-row { margin-left:-12px; margin-right:-12px; padding-left:12px; padding-right:12px; } }
+
+/* Home shortcut rows fill the card; content keeps its inset */
+.shortcut-card.shortcut-list { padding-left:0; padding-right:0; }
+.home-shortcut-row { margin-left:0; margin-right:0; padding:12px 17px; }
+@media (max-width:680px) { .home-shortcut-row { padding-left:12px; padding-right:12px; } }
+
+/* Activity rail stays put while the middle column scrolls */
+.right-rail { position:sticky; top:24px; align-self:start; }
+
+/* Rail must be content-height for sticky to engage */
+.right-rail { min-height:0; }
+
+/* Version footer pins to the window bottom-right regardless of scroll */
+.update-footer { position:fixed; right:clamp(28px, 4.7vw, 68px); bottom:16px; z-index:5; text-align:right; }
+
+/* Mode cards navigate to filtered history */
+.mode-card:hover { border-color:#d5dbea; }
+
+/* History panes stay bounded with many recordings; list pages incrementally */
+@media (min-width:681px) {
+  .history-layout { min-height:0; }
+  .session-list, .session-detail { min-height:200px; max-height:min(62vh, 640px); overflow-y:auto; }
+}
+.load-more { display:block; margin:10px auto; }
+
+/* Toast confirmation */
+#toast { position:fixed; left:50%; bottom:28px; z-index:60; padding:10px 20px; border-radius:999px; color:#fff; background:#1c1e22f2; font-size:13px; font-weight:600; opacity:0; transform:translateX(-50%) translateY(8px); transition:opacity .18s, transform .18s; pointer-events:none; }
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* Session rows are blocks with a hover-only delete icon */
+.session-row { position:relative; }
+.row-delete { position:absolute; top:8px; right:8px; display:grid; width:28px; height:28px; place-items:center; border:1px solid #e5e7eb; border-radius:8px; color:#8a919b; background:#fff; cursor:pointer; opacity:0; transition:opacity .15s; }
+.row-delete svg { width:15px; height:15px; }
+.row-delete:hover { color:#b3261e; border-color:#efc5c5; }
+.session-row:hover .row-delete, .session-row:focus-within .row-delete { opacity:1; }
+.session-row strong { padding-right:32px; }
+
+/* Export format menu */
+.export-menu { position:absolute; z-index:50; display:grid; gap:2px; min-width:180px; padding:6px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; box-shadow:0 12px 32px #11182722; }
+.export-menu button { padding:9px 12px; border:0; border-radius:7px; background:transparent; font-size:13px; text-align:left; cursor:pointer; }
+.export-menu button:hover { background:#f3f5fa; }
+
+/* Print transcript */
+#print-area { display:none; }
+@media print {
+  body > *:not(#print-area) { display:none !important; }
+  #print-area { display:block !important; color:#000; }
+  #print-area h1 { font-size:20px; margin-bottom:4px; }
+  #print-area p { font-size:13px; line-height:1.6; }
+}
+
+/* Destructive confirm dialog */
+.confirm-icon { color:#b3261e; font-size:20px; font-weight:700; }
+.danger-button { background:#b3261e; }
+.danger-button:hover { background:#8f1d17; }
+#confirm-message { margin-bottom:6px; }
+
+/* Lecture analysis sections */
+.analysis-section { margin-top:18px; padding-top:14px; border-top:1px solid #eff0f2; }
+.analysis-section h3 { margin:0 0 10px; font-size:13px; }
+.analysis-section h4 { margin:14px 0 6px; font-size:11px; color:#424851; }
+.analysis-pending { color:#8a919b; font-size:12px; }
+.analysis-list { margin:4px 0 8px; padding-left:20px; color:#505661; font-size:12px; line-height:1.7; }
+.analysis-list p { margin:2px 0 6px; }
+.analysis-terms { margin:4px 0 8px; color:#505661; font-size:12px; }
+.analysis-terms dt { font-weight:700; }
+.analysis-terms dd { margin:0 0 8px; }
+.analysis-section .secondary-button { margin-top:8px; }
+
+/* Meeting speaker correction */
+.speaker-row { display:flex; gap:8px; align-items:center; margin:6px 0; }
+.speaker-row input[type="text"] { flex:1; min-width:0; padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; font-size:12px; }
+.speaker-row select { padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; font-size:12px; background:#fff; }
+.speaker-segments li { margin-bottom:10px; }
+.speaker-segments .segment-assign { display:block; margin-top:4px; padding:6px 8px; border:1px solid #e5e7eb; border-radius:7px; font-size:11px; background:#fff; }
+
+/* Speaker correction panel */
+.speaker-corrections { margin: 10px 0 4px; border:1px solid #e5e7eb; border-radius:10px; padding:0 12px; }
+.speaker-corrections > summary { cursor:pointer; padding:10px 0; font-size:12px; font-weight:600; color:#374151; list-style-position:inside; }
+.speaker-corrections[open] > summary { border-bottom:1px solid #f1f3f6; margin-bottom:8px; }
+.speaker-corrections h4 { margin:12px 0 4px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:#6b7280; }
+.speaker-corrections > h4:first-of-type { margin-top:8px; }

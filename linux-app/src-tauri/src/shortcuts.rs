@@ -90,8 +90,8 @@ fn default_store() -> Value {
         "role": "",
         "bindings": {
             "dictation": {"display": "Right Alt", "accelerator": "RightAlt"},
-            "meeting": {"display": "", "accelerator": null},
-            "lecture": {"display": "", "accelerator": null},
+            "meeting": {"display": "Right Alt + M", "accelerator": "Alt+KeyM"},
+            "lecture": {"display": "Right Alt + L", "accelerator": "Alt+KeyL"},
         },
     })
 }
@@ -160,6 +160,13 @@ pub fn validate_accelerator(accelerator: &str, action: &str) -> Result<(), Strin
     let upper = text.to_uppercase();
     if upper == "ALT" {
         return Err("“Alt” alone cannot be grabbed by apps. Use Alt+Space or a combination — or bind Right Alt in your desktop settings.".to_string());
+    }
+    let mut seen = HashSet::new();
+    for part in text.split('+') {
+        let key = part.trim().to_uppercase();
+        if !seen.insert(key.clone()) {
+            return Err(format!("“{text}” repeats {key}. Press each key once."));
+        }
     }
     for banned in ["CONTROL", "CTRL", "SHIFT", "SUPER", "META", "WIN"] {
         if upper == banned {
@@ -395,7 +402,9 @@ fn toggle_long_session(app: &AppHandle, mode: &str) -> Result<Value, String> {
     let recording_same_mode = status.get("state").and_then(Value::as_str) == Some("RECORDING")
         && status.get("session_mode").and_then(Value::as_str) == Some(mode);
     if recording_same_mode {
-        return send_daemon("stop_session", Map::new());
+        // Long sessions stop only after an explicit confirmation in the main
+        // window; a stray keypress must not end an hour of capture.
+        return request_stop_session(app.clone());
     }
     if status.get("state").and_then(Value::as_str) == Some("RECORDING") {
         return Err("Finish the current recording first.".to_string());
@@ -421,6 +430,34 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     register_all(app);
     ensure_monitor(app);
     Ok(())
+}
+
+fn focus_main_window(app: &AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+}
+
+/// Stop the active recording, asking first for long Lecture/Meeting
+/// sessions. Used by the pill check button and the global-shortcut stop
+/// path. Dictation stays instant; the CLI stop-session command is unaffected.
+#[tauri::command]
+pub fn request_stop_session(app: AppHandle) -> Result<Value, String> {
+    let status = send_daemon("status", Map::new())?;
+    if status.get("state").and_then(Value::as_str) != Some("RECORDING") {
+        return Ok(status);
+    }
+    let mode = status
+        .get("session_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("dictation");
+    if mode == "lecture" || mode == "meeting" {
+        let _ = app.emit("shortcut-stop-request", mode);
+        focus_main_window(&app);
+        return Ok(json!({"stop_confirmation": "requested", "mode": mode}));
+    }
+    send_daemon("toggle", Map::new())
 }
 
 pub fn handle_press(app: &AppHandle, id: &Shortcut) {
@@ -519,10 +556,22 @@ fn starter_pack(role: &str) -> &'static [&'static str] {
         "student" => &["syllabus", "midterm", "thesis", "campus", "GPA"],
         "engineering" => &["API", "GitHub", "TypeScript", "deploy", "dataset"],
         "writer" => &["manuscript", "chapter", "editor", "deadline", "draft"],
-        "healthcare" => &["diagnosis", "prescription", "dosage", "referral", "symptoms"],
+        "healthcare" => &[
+            "diagnosis",
+            "prescription",
+            "dosage",
+            "referral",
+            "symptoms",
+        ],
         "legal" => &["contract", "clause", "plaintiff", "settlement", "affidavit"],
         "finance" => &["invoice", "ledger", "dividend", "forecast", "amortization"],
-        "educator" => &["curriculum", "assignment", "rubric", "enrollment", "classroom"],
+        "educator" => &[
+            "curriculum",
+            "assignment",
+            "rubric",
+            "enrollment",
+            "classroom",
+        ],
         "marketing" => &["campaign", "SEO", "conversion", "brand", "analytics"],
         "sales" => &["pipeline", "quota", "prospect", "CRM", "discount"],
         "creator" => &["thumbnail", "upload", "subscribers", "episode", "sponsor"],
@@ -611,6 +660,12 @@ mod tests {
     fn bare_alt_alone_is_rejected_with_guidance() {
         let error = validate_accelerator("Alt", "dictation").unwrap_err();
         assert!(error.contains("Alt+Space"), "unexpected message: {error}");
+    }
+
+    #[test]
+    fn repeated_modifier_is_rejected() {
+        let error = validate_accelerator("Alt+Alt+KeyM", "meeting").unwrap_err();
+        assert!(error.contains("repeats"), "unexpected message: {error}");
     }
 
     #[test]

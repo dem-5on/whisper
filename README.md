@@ -104,6 +104,8 @@ wicx delete-session --session <id>  # permanently delete that local history reco
 wicx rename-speaker --session <id> --speaker-id speaker_1 --name "Dr. Mensah"  # name a detected Meeting speaker
 wicx label-segment --session <id> --segment-index 4 --speaker-id speaker_2  # correct one Meeting segment; omit speaker ID to clear
 wicx merge-speakers --session <id> --speaker-id speaker_2 --target-speaker-id speaker_1  # merge duplicate Meeting identities
+wicx retry-speakers --session <id>  # re-run hosted speaker analysis for a Meeting
+wicx stop-speakers --session <id>   # cancel it and drop the uploaded copy on the service
 wicx retry-session --session <id>  # explicitly retry a failed Lecture/Meeting from its saved audio
 wicx export-session --session <id> --output ./lecture.md  # export transcript and generated outputs as Markdown
 wicx export-session-audio --session <id> --output ./lecture.wav  # copy the retained Lecture/Meeting recording
@@ -205,10 +207,14 @@ HTTP job API; it does not enter the live-dictation path. The initial worker uses
 pyannote Community-1, which is intentionally optional. To enable it, build with
 `WHISPER_DIARIZATION_BUILD=1`, accept the model conditions on Hugging Face, and
 set `HF_TOKEN` for the service. Set `WHISPER_ENABLE_DIARIZATION=1` to expose
-`POST /v1/diarization/jobs` and `GET /v1/diarization/jobs/{job_id}` on port 8766
+`POST /v1/diarization/jobs`, `GET /v1/diarization/jobs/{job_id}`, and
+`DELETE /v1/diarization/jobs/{job_id}` on port 8766
 (Bearer token authentication is the same as the live service). Upload uncompressed
 mono PCM16 WAV at 16 kHz; uploads are capped at 1 GB and four hours, queue size is
-bounded, and audio is deleted once processing finishes. Job state is currently
+bounded, and audio is deleted once processing finishes. Cancelling a job is
+owner-scoped: a queued job drops its uploaded audio immediately, a job already
+inside inference finishes its worker slot but returns no speaker turns, and a
+terminal job answers `409`. Job state is currently
 held in memory, so an interrupted server requires the client to retry the upload.
 Job creation fails closed unless the authenticated user has the `diarization`
 feature grant in the owner-only `/data/entitlements.json` file. The live cloud

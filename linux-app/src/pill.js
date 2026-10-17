@@ -47,6 +47,12 @@ async function send(command) {
 
 cancelButton.addEventListener("click", () => void send("cancel"));
 finishButton.addEventListener("click", async () => {
-  const status = await invoke("daemon_request", { command: "status", params: {} });
-  await send(status.session_mode === "dictation" ? "toggle" : "stop_session");
+  cancelButton.disabled = true;
+  finishButton.disabled = true;
+  try {
+    await invoke("request_stop_session");
+  } finally {
+    cancelButton.disabled = false;
+    finishButton.disabled = false;
+  }
 });

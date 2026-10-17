@@ -268,7 +268,7 @@ class SessionStoreTests(unittest.TestCase):
         self.store.update(ready.id, state="ready", finished=True)
         dictation = self.store.create("dictation")
 
-        self.assertEqual(self.store.recover_interrupted(), 2)
+        self.assertEqual(sorted(self.store.recover_interrupted()), sorted([lecture.id, meeting.id]))
 
         recovered_lecture = self.store.get(lecture.id)
         recovered_meeting = self.store.get(meeting.id)
@@ -279,7 +279,7 @@ class SessionStoreTests(unittest.TestCase):
         self.assertEqual(recovered_meeting.state, "error")
         self.assertEqual(self.store.get(ready.id).state, "ready")
         self.assertEqual(self.store.get(dictation.id).state, "recording")
-        self.assertEqual(self.store.recover_interrupted(), 0)
+        self.assertEqual(self.store.recover_interrupted(), [])
 
     def test_unknown_mode_and_missing_session_are_rejected(self) -> None:
         with self.assertRaises(ValueError):

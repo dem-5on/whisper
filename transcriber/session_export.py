@@ -44,7 +44,73 @@ def render_session_markdown(session: StoredSession) -> str:
             f"- {speaker_id.replace('_', ' ').title()}: {name}"
             for speaker_id, name in speaker_names.items()
         )
-    generated_outputs = {key: value for key, value in session.outputs.items() if key != "speaker_names"}
+    generated_outputs = {
+        key: value for key, value in session.outputs.items()
+        if key not in {"speaker_names", "analysis_state"}
+    }
+    lecture_notes = generated_outputs.pop("lecture_notes", "")
+    topic_groups = generated_outputs.pop("topic_groups", [])
+    key_terms = generated_outputs.pop("key_terms", [])
+    review_questions = generated_outputs.pop("review_questions", [])
+    meeting_summary = generated_outputs.pop("meeting_summary", "")
+    meeting_decisions = generated_outputs.pop("meeting_decisions", [])
+    action_items = generated_outputs.pop("action_items", [])
+    if isinstance(lecture_notes, str) and lecture_notes.strip():
+        lines.extend(["", "## Lecture notes", "", lecture_notes.strip()])
+    if isinstance(topic_groups, list) and topic_groups:
+        lines.extend(["", "## Topics", ""])
+        for topic in topic_groups:
+            if not isinstance(topic, dict):
+                continue
+            title = str(topic.get("title", "")).strip() or "Untitled"
+            lines.append(f"### {title}")
+            summary = str(topic.get("summary", "")).strip()
+            if summary:
+                lines.append(summary)
+            lines.append("")
+    if isinstance(key_terms, list) and key_terms:
+        lines.extend(["", "## Key terms", ""])
+        for term in key_terms:
+            if not isinstance(term, dict):
+                continue
+            name = str(term.get("term", "")).strip()
+            definition = str(term.get("definition", "")).strip()
+            if name and definition:
+                lines.append(f"- **{name}**: {definition}")
+            elif name:
+                lines.append(f"- {name}")
+        lines.append("")
+    if isinstance(review_questions, list) and review_questions:
+        lines.extend(["", "## Review questions", ""])
+        for index, question in enumerate(review_questions, 1):
+            text = question.get("question", "") if isinstance(question, dict) else question
+            text = str(text).strip()
+            if text:
+                lines.append(f"{index}. {text}")
+        lines.append("")
+    if isinstance(meeting_summary, str) and meeting_summary.strip():
+        lines.extend(["", "## Meeting summary", "", meeting_summary.strip()])
+    if isinstance(meeting_decisions, list) and meeting_decisions:
+        lines.extend(["", "## Decisions", ""])
+        for decision in meeting_decisions:
+            text = decision.get("decision", "") if isinstance(decision, dict) else decision
+            text = str(text).strip()
+            if text:
+                lines.append(f"- {text}")
+        lines.append("")
+    if isinstance(action_items, list) and action_items:
+        lines.extend(["", "## Action items", ""])
+        for entry in action_items:
+            if isinstance(entry, dict):
+                action = str(entry.get("action", "")).strip()
+                owner = str(entry.get("owner", "")).strip()
+                if action and owner:
+                    lines.append(f"- {action} ({owner})")
+                elif action:
+                    lines.append(f"- {action}")
+            elif str(entry).strip():
+                lines.append(f"- {str(entry).strip()}")
+        lines.append("")
     if generated_outputs:
         lines.extend(["", "## Generated outputs", ""])
         for key, value in generated_outputs.items():
@@ -82,6 +148,147 @@ def export_session_markdown(session: StoredSession, output: str | Path) -> Path:
     except OSError:
         # If writing failed after exclusive creation, remove only the partial
         # file this call created; never touch a pre-existing export.
+        if target.exists():
+            try:
+                target.unlink()
+            except OSError:
+                pass
+        raise
+    return target
+
+
+def default_export_path(session: StoredSession, suffix: str) -> Path:
+    """Suggest a non-clobbering export path in the user's Documents folder."""
+    documents = Path.home() / "Documents"
+    try:
+        documents.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        documents = Path.cwd()
+    date = "".join(ch for ch in str(session.created_at)[:10] if ch.isdigit() or ch == "-")
+    stem = f"wicx-{session.mode}-{date or 'session'}"
+    candidate = documents / f"{stem}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = documents / f"{stem}-{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def export_session_docx(session: StoredSession, output: str | Path) -> Path:
+    """Create a Word (.docx) export, refusing to overwrite an existing file."""
+    try:
+        from docx import Document
+        from docx.shared import Pt
+    except ImportError as exc:
+        raise RuntimeError(
+            "Word export needs the 'export' extra: pip install '.[export]'"
+        ) from exc
+    target = Path(output).expanduser()
+    if target.exists():
+        raise FileExistsError(f"Export already exists: {target}")
+    title = {"dictation": "Dictation", "lecture": "Lecture", "meeting": "Meeting"}.get(
+        session.mode, "Wicx session"
+    )
+    document = Document()
+    document.add_heading(title, level=1)
+    document.add_paragraph(f"Recorded: {session.created_at} · Status: {session.state}")
+    document.add_heading("Transcript", level=2)
+    if session.segments:
+        speaker_names = session.outputs.get("speaker_names", {})
+        if not isinstance(speaker_names, dict):
+            speaker_names = {}
+        for segment in session.segments:
+            speaker_id = segment.get("speaker_id")
+            speaker_name = speaker_names.get(speaker_id) if speaker_id else None
+            speaker = speaker_name or (
+                speaker_id.replace("_", " ").title() if speaker_id else ""
+            )
+            timestamp = _format_timestamp(segment.get("start_seconds", 0))
+            paragraph = document.add_paragraph()
+            label = f"[{timestamp}] "
+            if speaker:
+                label += f"{speaker}: "
+            run = paragraph.add_run(label)
+            run.bold = True
+            run.font.size = Pt(9)
+            paragraph.add_run(str(segment.get("text", "")))
+    else:
+        text = session.source_transcript.strip() or "(No transcript available.)"
+        document.add_paragraph(text)
+    if session.english_translation:
+        document.add_heading("English translation", level=2)
+        document.add_paragraph(session.english_translation.strip())
+    outputs = session.outputs if isinstance(session.outputs, dict) else {}
+    notes = outputs.get("lecture_notes", "")
+    if isinstance(notes, str) and notes.strip():
+        document.add_heading("Lecture notes", level=2)
+        for paragraph_text in notes.strip().split("\n"):
+            document.add_paragraph(paragraph_text)
+    topics = outputs.get("topic_groups", [])
+    if isinstance(topics, list) and topics:
+        document.add_heading("Topics", level=2)
+        for topic in topics:
+            if not isinstance(topic, dict):
+                continue
+            title_text = str(topic.get("title", "")).strip() or "Untitled"
+            document.add_heading(title_text, level=3)
+            summary = str(topic.get("summary", "")).strip()
+            if summary:
+                document.add_paragraph(summary)
+    terms = outputs.get("key_terms", [])
+    if isinstance(terms, list) and terms:
+        document.add_heading("Key terms", level=2)
+        for term in terms:
+            if not isinstance(term, dict):
+                continue
+            name = str(term.get("term", "")).strip()
+            definition = str(term.get("definition", "")).strip()
+            if name and definition:
+                paragraph = document.add_paragraph()
+                run = paragraph.add_run(f"{name}: ")
+                run.bold = True
+                paragraph.add_run(definition)
+            elif name:
+                document.add_paragraph(name)
+    questions = outputs.get("review_questions", [])
+    if isinstance(questions, list) and questions:
+        document.add_heading("Review questions", level=2)
+        for index, question in enumerate(questions, 1):
+            text = question.get("question", "") if isinstance(question, dict) else question
+            text = str(text).strip()
+            if text:
+                document.add_paragraph(f"{index}. {text}")
+    summary = outputs.get("meeting_summary", "")
+    if isinstance(summary, str) and summary.strip():
+        document.add_heading("Meeting summary", level=2)
+        for paragraph_text in summary.strip().split("\n"):
+            document.add_paragraph(paragraph_text)
+    decisions = outputs.get("meeting_decisions", [])
+    if isinstance(decisions, list) and decisions:
+        document.add_heading("Decisions", level=2)
+        for decision in decisions:
+            text = decision.get("decision", "") if isinstance(decision, dict) else decision
+            text = str(text).strip()
+            if text:
+                document.add_paragraph(text, style="List Bullet")
+    actions = outputs.get("action_items", [])
+    if isinstance(actions, list) and actions:
+        document.add_heading("Action items", level=2)
+        for entry in actions:
+            if isinstance(entry, dict):
+                action = str(entry.get("action", "")).strip()
+                owner = str(entry.get("owner", "")).strip()
+                text = f"{action} ({owner})" if action and owner else action
+            else:
+                text = str(entry).strip()
+            if text:
+                document.add_paragraph(text, style="List Bullet")
+    if session.error:
+        document.add_heading("Processing status", level=2)
+        document.add_paragraph(session.error)
+    try:
+        document.save(str(target))
+    except OSError:
         if target.exists():
             try:
                 target.unlink()

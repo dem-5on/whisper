@@ -113,7 +113,7 @@ fi
 status "Installing Wicx and transcription dependencies..."
 run_quiet "$PYTHON" -m venv "$VENV_DIR"
 run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet --upgrade pip
-run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet "${APP_DIR}[local,realtime]"
+run_quiet "$VENV_DIR/bin/python" -m pip install --disable-pip-version-check --quiet "${APP_DIR}[local,realtime,export]"
 ln -sfn "$VENV_DIR/bin/wicx" "$BIN_DIR/wicx"
 ln -sfn "$VENV_DIR/bin/wicx-daemon" "$BIN_DIR/wicx-daemon"
 # Keep the former command names working for existing shortcuts and scripts.

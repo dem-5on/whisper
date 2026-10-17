@@ -23,9 +23,11 @@ from .paystack import (
     validate_checkout_request, verified_transaction_matches, verify_paystack_webhook,
 )
 from .accounts import AccountStore, AccountStoreError
+from .analysis import AnalysisError, AnalysisModel, parse_result
 from .oauth import OAuthTransactionError, OAuthTransactionStore, authorization_url
 from .oauth_flow import OAuthProviderConfig, exchange_and_verify
 from .oidc import OIDCVerificationError
+from .plans import KIND_FEATURE
 from .rewrite import RewriteError, RewriteModel
 
 
@@ -41,6 +43,9 @@ OAUTH_CALLBACK_PATH = "/v1/auth/oauth/{provider}/callback"
 OAUTH_EXCHANGE_PATH = "/v1/auth/session/exchange"
 REWRITE_PATH = "/v1/rewrite"
 REWRITE_MODELS_PATH = "/v1/rewrite/models"
+ANALYSIS_PATH = "/v1/analysis"
+ANALYSIS_KINDS_PATH = "/v1/analysis/kinds"
+MAX_ANALYSIS_CHARS = 60_000
 MAX_UPLOAD_BYTES = 1_000_000_000
 MAX_AUDIO_SECONDS = 4 * 60 * 60
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -55,6 +60,9 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
              account_store: AccountStore | None = None,
              oauth_providers: dict[str, OAuthProviderConfig] | None = None,
              rewrite_model: RewriteModel | None = None,
+             analysis_model: AnalysisModel | None = None,
+             analysis_cost_ms: int = 60_000,
+             usage_plans: Any = None,
              oauth_app_redirect: str = "wicx://auth/callback") -> Any:
     try:
         from aiohttp import web
@@ -101,7 +109,32 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
                         return web.json_response({"error": "upload_too_large"}, status=413)
                     output.write(chunk)
             _validate_wav(audio_path)
+            audio_ms = _wav_milliseconds(audio_path)
+            budget_plan = None
+            if billing_store is not None and usage_plans:
+                try:
+                    budget = await asyncio.to_thread(
+                        billing_store.cloud_usage_budget, request["user_id"], usage_plans,
+                    )
+                except BillingStoreError as exc:
+                    logger.error("Diarization budget check unavailable (%s)", type(exc).__name__)
+                    return web.json_response({"error": "entitlement_unavailable"}, status=503)
+                if budget is None or (budget["remaining_milliseconds"] is not None
+                                      and int(budget["remaining_milliseconds"]) < audio_ms):
+                    return web.json_response({
+                        "error": "quota_exhausted",
+                        "message": "The subscription allowance is exhausted. Speaker analysis resumes after renewal or upgrade.",
+                    }, status=402)
+                budget_plan = budget
             job_id = await jobs.submit(request["user_id"], audio_path)
+            if budget_plan is not None and billing_store is not None and audio_ms > 0:
+                try:
+                    await asyncio.to_thread(
+                        billing_store.record_cloud_usage, request["user_id"],
+                        str(budget_plan["plan_id"]), str(budget_plan["period_end"]), audio_ms,
+                    )
+                except BillingStoreError as exc:
+                    logger.error("Diarization usage record unavailable (%s)", type(exc).__name__)
             return web.json_response({"job_id": job_id, "state": "queued"}, status=202)
         except ServiceError as exc:
             return web.json_response({"error": exc.code, "message": exc.message},
@@ -156,6 +189,87 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             return web.json_response({"error": "rewrite_unavailable"}, status=503)
         return web.json_response({"text": rewritten, "model": selected_model})
 
+    async def analyze_text(request: Any) -> Any:
+        if analysis_model is None or entitlements is None:
+            return web.json_response({"error": "analysis_unavailable"}, status=503)
+        if request.content_type != "application/json":
+            return web.json_response({"error": "content_type"}, status=415)
+        try:
+            raw = await request.content.read(MAX_ANALYSIS_CHARS + 1)
+            body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        kind = body.get("kind")
+        text = body.get("text")
+        language = body.get("language")
+        model = body.get("model")
+        if (not isinstance(kind, str) or kind not in KIND_FEATURE
+                or not isinstance(text, str) or not text.strip() or len(text) > MAX_ANALYSIS_CHARS
+                or (language is not None and (not isinstance(language, str) or len(language) > 32))
+                or (model is not None and (not isinstance(model, str) or len(model) > 160))):
+            return web.json_response({"error": "invalid_request"}, status=400)
+        try:
+            entitled = entitlements.has_feature(request["user_id"], KIND_FEATURE[kind])
+        except EntitlementConfigError as exc:
+            logger.error("Analysis entitlement check unavailable (%s)", type(exc).__name__)
+            return web.json_response({"error": "entitlement_unavailable"}, status=503)
+        if not entitled:
+            return web.json_response({
+                "error": "subscription_required",
+                "message": "An active subscription is required for session analysis.",
+            }, status=402)
+        budget_plan = None
+        if billing_store is not None and usage_plans:
+            try:
+                budget = await asyncio.to_thread(
+                    billing_store.cloud_usage_budget, request["user_id"], usage_plans,
+                )
+            except BillingStoreError as exc:
+                logger.error("Analysis budget check unavailable (%s)", type(exc).__name__)
+                return web.json_response({"error": "entitlement_unavailable"}, status=503)
+            if budget is None or (budget["remaining_milliseconds"] is not None
+                                  and int(budget["remaining_milliseconds"]) < analysis_cost_ms):
+                return web.json_response({
+                    "error": "quota_exhausted",
+                    "message": "The subscription allowance is exhausted. Analysis resumes after renewal or upgrade.",
+                }, status=402)
+            budget_plan = budget
+        if model is not None and model not in analysis_model.models:
+            return web.json_response({"error": "unsupported_model"}, status=400)
+        try:
+            content, selected_model = await analysis_model.analyze(
+                kind, text.strip(), language=language, model=model,
+            )
+            result = parse_result(kind, content)
+        except AnalysisError as exc:
+            logger.warning("Cloud analysis failed (%s)", str(exc))
+            return web.json_response({"error": "analysis_unavailable"}, status=503)
+        if budget_plan is not None and billing_store is not None:
+            try:
+                await asyncio.to_thread(
+                    billing_store.record_cloud_usage, request["user_id"],
+                    str(budget_plan["plan_id"]), str(budget_plan["period_end"]), analysis_cost_ms,
+                )
+            except BillingStoreError as exc:
+                logger.error("Analysis usage record unavailable (%s)", type(exc).__name__)
+        return web.json_response({"kind": kind, "result": result, "model": selected_model})
+
+    async def analysis_kinds(request: Any) -> Any:
+        if analysis_model is None or entitlements is None:
+            return web.json_response({"error": "analysis_unavailable"}, status=503)
+        kinds = []
+        for kind, feature in KIND_FEATURE.items():
+            try:
+                entitled = entitlements.has_feature(request["user_id"], feature)
+            except EntitlementConfigError as exc:
+                logger.error("Analysis entitlement check unavailable (%s)", type(exc).__name__)
+                return web.json_response({"error": "entitlement_unavailable"}, status=503)
+            if entitled:
+                kinds.append({"kind": kind, "models": list(analysis_model.models)})
+        return web.json_response({"kinds": kinds, "default_model": analysis_model.models[0]})
+
     async def rewrite_models(request: Any) -> Any:
         if rewrite_model is None or entitlements is None:
             return web.json_response({"error": "rewrite_unavailable"}, status=503)
@@ -179,6 +293,20 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             # Do not disclose whether another user's job ID exists.
             return web.json_response({"error": "not_found"}, status=404)
         return web.json_response(result)
+
+    async def cancel_job(request: Any) -> Any:
+        if jobs is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        job_id = request.match_info["job_id"]
+        if len(job_id) != 32 or any(ch not in "0123456789abcdef" for ch in job_id):
+            return web.json_response({"error": "not_found"}, status=404)
+        state = await jobs.cancel(request["user_id"], job_id)
+        if not state:
+            # Do not disclose whether another user's job ID exists.
+            return web.json_response({"error": "not_found"}, status=404)
+        if state != "cancelled":
+            return web.json_response({"job_id": job_id, "state": state}, status=409)
+        return web.json_response({"job_id": job_id, "state": "cancelled"})
 
     async def paystack_webhook(request: Any) -> Any:
         if billing_store is None or not paystack_secret:
@@ -528,9 +656,13 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
     if jobs is not None:
         app.router.add_post(JOBS_PATH, create_job)
         app.router.add_get(f"{JOBS_PATH}/{{job_id}}", get_job)
+        app.router.add_delete(f"{JOBS_PATH}/{{job_id}}", cancel_job)
     if rewrite_model is not None:
         app.router.add_post(REWRITE_PATH, rewrite_text)
         app.router.add_get(REWRITE_MODELS_PATH, rewrite_models)
+    if analysis_model is not None:
+        app.router.add_post(ANALYSIS_PATH, analyze_text)
+        app.router.add_get(ANALYSIS_KINDS_PATH, analysis_kinds)
     if billing_store is not None:
         app.router.add_post(PAYSTACK_WEBHOOK_PATH, paystack_webhook)
         app.router.add_get(PAYSTACK_STATUS_PATH, billing_status)
@@ -544,6 +676,17 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
         app.router.add_post(OAUTH_CALLBACK_PATH, oauth_callback)
         app.router.add_post(OAUTH_EXCHANGE_PATH, exchange_oauth_session)
     return app
+
+
+def _wav_milliseconds(path: Path) -> int:
+    """Audio minutes for bundled metering, from validated WAV geometry."""
+    try:
+        with wave.open(str(path), "rb") as source:
+            frames = source.getnframes()
+            rate = source.getframerate() or 16_000
+            return max(0, int(frames / rate * 1000))
+    except (wave.Error, EOFError, OSError):
+        return 0
 
 
 def _validate_wav(path: Path) -> None:
@@ -571,6 +714,9 @@ async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobMana
                      account_store: AccountStore | None = None,
                      oauth_providers: dict[str, OAuthProviderConfig] | None = None,
                      rewrite_model: RewriteModel | None = None,
+                     analysis_model: AnalysisModel | None = None,
+                     analysis_cost_ms: int = 60_000,
+                     usage_plans: Any = None,
                      oauth_app_redirect: str = "wicx://auth/callback",
                      host: str = "127.0.0.1", port: int = 8766) -> None:
     try:
@@ -586,6 +732,9 @@ async def serve_http(authenticator: TokenAuthenticator, jobs: DiarizationJobMana
         oauth_transactions=oauth_transactions, account_store=account_store,
         oauth_providers=oauth_providers, oauth_app_redirect=oauth_app_redirect,
         rewrite_model=rewrite_model,
+        analysis_model=analysis_model,
+        analysis_cost_ms=analysis_cost_ms,
+        usage_plans=usage_plans,
     ), access_log=None)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
