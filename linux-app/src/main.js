@@ -332,7 +332,14 @@ function appendSessionRows(sessions) {
     const title = document.createElement("strong");
     title.textContent = `${session.mode[0].toUpperCase()}${session.mode.slice(1)} · ${new Date(session.created_at).toLocaleString()}`;
     const meta = document.createElement("small");
-    meta.textContent = `${session.state} · ${session.audio_available ? "Audio saved" : "No audio"}`;
+    const speakerCount = session.mode === "meeting"
+      ? (session.outputs && Array.isArray(session.outputs.speaker_ids) ? session.outputs.speaker_ids.length : 0)
+      : 0;
+    meta.textContent = [
+      session.state,
+      session.audio_available ? "Audio saved" : "No audio",
+      speakerCount > 0 ? `${speakerCount} speaker${speakerCount === 1 ? "" : "s"}` : "",
+    ].filter(Boolean).join(" · ");
     const previewText = document.createElement("p");
     previewText.textContent = session.source_transcript || "Transcript not available yet.";
     const del = document.createElement("button");
@@ -501,7 +508,8 @@ async function loadSession(id) {
     copy.disabled = !session.source_transcript;
     copy.addEventListener("click", async () => {
       try {
-        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(session.source_transcript || "");
+        const copyText = labeledTranscriptText(session) || session.source_transcript || "";
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(copyText);
         else throw new Error("Clipboard is unavailable.");
         showToast("Transcript copied.");
       } catch { notify("Could not copy the transcript.", true); }
@@ -518,7 +526,9 @@ async function loadSession(id) {
     header.append(info, actions);
     const transcript = document.createElement("div");
     transcript.className = "transcript-body";
-    transcript.textContent = session.source_transcript || "No transcript is available for this recording.";
+    const labeled = labeledTranscriptText(session);
+    transcript.textContent = labeled || session.source_transcript
+      || "No transcript is available for this recording.";
     ui.sessionDetail.append(header, transcript);
     if (session.mode === "lecture") renderLectureAnalysis(session);
     if (session.mode === "meeting") renderMeetingAnalysis(session);
@@ -643,6 +653,29 @@ function renderLectureAnalysis(session) {
   ui.sessionDetail.append(section);
 }
 
+function formatTimestamp(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) * 1000) || 0);
+  const hours = Math.floor(total / 3600000);
+  const minutes = Math.floor(total / 60000) % 60;
+  const rest = Math.floor(total / 1000) % 60;
+  const pad = (value) => String(value).padStart(2, "0");
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(rest)}` : `${pad(minutes)}:${pad(rest)}`;
+}
+
+function labeledTranscriptText(session) {
+  const segments = Array.isArray(session.segments) ? session.segments : [];
+  if (segments.length === 0 || session.mode !== "meeting") return "";
+  if (!segments.some((segment) => segment && segment.speaker_id)) return "";
+  return segments
+    .map((segment) => {
+      const stamp = typeof segment.start_seconds === "number"
+        ? `[${formatTimestamp(segment.start_seconds)}] ` : "";
+      const who = segment.speaker_id ? `${speakerDisplayName(session, segment.speaker_id)}: ` : "";
+      return `${stamp}${who}${(segment.text || "").trim()}`.trim();
+    })
+    .join("\n");
+}
+
 function speakerDisplayName(session, speakerId) {
   const names = session.outputs && typeof session.outputs === "object" ? session.outputs.speaker_names : null;
   if (names && typeof names === "object" && names[speakerId]) return names[speakerId];
@@ -685,12 +718,36 @@ function renderMeetingAnalysis(session) {
   if (diarizationState && diarizationState !== "ready") {
     const note = document.createElement("p");
     note.className = "analysis-pending";
-    note.textContent = diarizationState === "blocked" && diarization.message
-      ? `Speaker detection unavailable: ${diarization.message}`
-      : "Speaker detection is still running — the transcript stays readable meanwhile.";
+    const pendingCopy = {
+      blocked: `Speaker detection unavailable: ${diarization.message || "subscription required"}`,
+      failed: diarization.message || "Speaker detection failed. The transcript is unaffected.",
+      cancelled: diarization.message || "Speaker detection was cancelled. The transcript is unaffected.",
+      queued: "Speaker detection is still running — the transcript stays readable meanwhile.",
+    };
+    note.textContent = pendingCopy[diarizationState] || "Speaker detection is still running.";
     section.append(note);
   }
-  if (diarizationState === "queued" || diarizationState === "failed" || diarizationState === "blocked") {
+  if (diarizationState === "queued") {
+    const stop = document.createElement("button");
+    stop.className = "secondary-button";
+    stop.type = "button";
+    stop.textContent = "Stop speaker analysis";
+    stop.title = "Cancel speaker detection and delete the uploaded copy on the service";
+    stop.addEventListener("click", async () => {
+      stop.disabled = true;
+      try {
+        await request("cancel_diarization", { session_id: session.id });
+        notify("Speaker analysis stopped.");
+        await refreshSessionDetail(session.id);
+      } catch (error) {
+        notify(error && error.message ? error.message : String(error), true);
+        stop.disabled = false;
+      }
+    });
+    section.append(stop);
+  }
+  if (diarizationState === "queued" || diarizationState === "failed"
+      || diarizationState === "blocked" || diarizationState === "cancelled") {
     const retry = document.createElement("button");
     retry.className = "secondary-button";
     retry.type = "button";
@@ -710,10 +767,23 @@ function renderMeetingAnalysis(session) {
   }
 
   const speakers = meetingSpeakerIds(session);
+  // The correction panel only appears when there is something to correct.
+  const correctionPanel = document.createElement("details");
+  correctionPanel.className = "speaker-corrections";
+  const correctionSummary = document.createElement("summary");
+  correctionSummary.textContent = speakers.length > 1
+    ? `Correct speaker labels (${speakers.length} speakers)`
+    : "Correct speaker labels";
+  correctionPanel.append(correctionSummary);
+  let correctionMounted = false;
+  const addToCorrections = (node) => {
+    if (!correctionMounted) {
+      section.append(correctionPanel);
+      correctionMounted = true;
+    }
+    correctionPanel.append(node);
+  };
   if (speakers.length > 0) {
-    const label = document.createElement("h4");
-    label.textContent = "Speakers";
-    section.append(label);
     for (const speakerId of speakers) {
       const row = document.createElement("div");
       row.className = "speaker-row";
@@ -741,7 +811,7 @@ function renderMeetingAnalysis(session) {
         }
       });
       row.append(name, save);
-      section.append(row);
+      addToCorrections(row);
     }
     if (speakers.length > 1) {
       const mergeRow = document.createElement("div");
@@ -776,14 +846,14 @@ function renderMeetingAnalysis(session) {
         }
       });
       mergeRow.append(from, to, merge);
-      section.append(mergeRow);
+      addToCorrections(mergeRow);
     }
   }
 
   if (Array.isArray(session.segments) && session.segments.length > 0) {
     const label = document.createElement("h4");
-    label.textContent = "Speaker-labeled transcript";
-    section.append(label);
+    label.textContent = "Fix a wrong speaker";
+    addToCorrections(label);
     const list = document.createElement("ol");
     list.className = "analysis-list speaker-segments";
     session.segments.forEach((segment, index) => {
@@ -828,7 +898,7 @@ function renderMeetingAnalysis(session) {
       item.append(who, text, assign);
       list.append(item);
     });
-    section.append(list);
+    addToCorrections(list);
   }
 
   if (session.english_translation) {

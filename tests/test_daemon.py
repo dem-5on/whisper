@@ -109,6 +109,14 @@ class DaemonTests(unittest.TestCase):
         self.daemon.recorder = self.recorder  # type: ignore[assignment]
 
     def tearDown(self) -> None:
+        # Detached analysis workers write session files, so let them finish
+        # before the temporary data directory disappears underneath them.
+        for _ in range(300):
+            with self.daemon._lock:
+                active = bool(getattr(self.daemon, "_analysis_active", set()))
+            if not active:
+                break
+            time.sleep(0.01)
         self.tmp.cleanup()
 
     def wait_for(self, *states: State) -> None:
@@ -698,6 +706,121 @@ class DaemonTests(unittest.TestCase):
                 time.sleep(0.05)
         saved = self.daemon._session_store.get(stored.id)
         self.assertEqual(saved.outputs["diarization_state"]["state"], "ready")
+
+    def test_cancelled_speaker_analysis_does_not_resubmit(self) -> None:
+        import wave
+
+        stored = self._make_meeting_session()
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x01\x02" * 16000)
+        self.daemon._store_diarization_state(
+            stored.id, "cancelled", "Speaker analysis cancelled.", drop_job=True,
+        )
+        with patch.object(
+            self.daemon, "_diarization_post_submit",
+            side_effect=AssertionError("must not resubmit a cancelled job"),
+        ) as submit, patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        submit.assert_not_called()
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "cancelled")
+        self.assertIsNone(saved.segments[0]["speaker_id"])
+        self.assertIn("Shipped Friday", saved.outputs["meeting_summary"])
+
+    def test_cancel_diarization_stops_the_service_job(self) -> None:
+        import wave
+
+        stored = self._make_meeting_session()
+        with wave.open(str(stored.audio_path), "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(16000)
+            wav.writeframes(b"\x01\x02" * 16000)
+        with patch.object(
+            self.daemon, "_diarization_post_submit", return_value=("queued", {"job_id": "job1"}),
+        ), patch.object(
+            self.daemon, "_diarization_poll", return_value=("queued", "still running"),
+        ), patch.object(
+            self.daemon, "_analysis_post", side_effect=self._meeting_text_post,
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+            self.assertEqual(
+                self.daemon._session_store.get(stored.id).outputs["diarization_state"]["job_id"],
+                "job1",
+            )
+            with patch.object(
+                self.daemon, "_diarization_delete", return_value=("cancelled", ""),
+            ) as delete:
+                cancelled = self.daemon.command("cancel_diarization", {"session_id": stored.id})
+            delete.assert_called_once_with("job1")
+        self.assertEqual(cancelled["ok"], "true")
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "cancelled")
+        self.assertNotIn("job_id", saved.outputs["diarization_state"])
+
+    def test_cancel_diarization_reports_unreachable_service(self) -> None:
+        stored = self._make_meeting_session()
+        self.daemon._store_diarization_state(
+            stored.id, "queued", "Speaker analysis queued.", job_id="job1",
+        )
+        with patch.object(
+            self.daemon, "_diarization_delete",
+            return_value=("offline", "Speaker service is unreachable; the job keeps running."),
+        ):
+            result = self.daemon.command("cancel_diarization", {"session_id": stored.id})
+        self.assertEqual(result["ok"], "false")
+        self.assertIn("unreachable", result["error"])
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertEqual(saved.outputs["diarization_state"]["state"], "queued")
+
+    def test_cancel_diarization_validates_session(self) -> None:
+        self.assertEqual(
+            self.daemon.command("cancel_diarization", {"session_id": ""})["ok"], "false"
+        )
+        lecture = self.daemon._session_store.create("lecture")
+        self.assertIn(
+            "Meeting", self.daemon.command("cancel_diarization", {"session_id": lecture.id})["error"],
+        )
+        missing = self.daemon.command("cancel_diarization", {"session_id": "nope"})
+        self.assertIn("not found", missing["error"])
+
+    def test_shutdown_stops_detached_meeting_analysis(self) -> None:
+        stored = self._make_meeting_session()
+        self.daemon._stopping.set()
+        with patch.object(
+            self.daemon, "_diarization_post_submit",
+            side_effect=AssertionError("must not upload during shutdown"),
+        ) as submit, patch.object(
+            self.daemon, "_diarization_poll",
+            side_effect=AssertionError("must not poll during shutdown"),
+        ) as poll, patch.object(
+            self.daemon, "_analysis_post",
+            side_effect=AssertionError("must not analyze during shutdown"),
+        ):
+            self.daemon._run_meeting_analysis(stored.id)
+        submit.assert_not_called()
+        poll.assert_not_called()
+        saved = self.daemon._session_store.get(stored.id)
+        self.assertNotIn("diarization_state", saved.outputs)
+        self.assertNotIn("meeting_summary", saved.outputs)
+
+    def test_poll_returns_immediately_on_shutdown(self) -> None:
+        import threading
+
+        stop = threading.Event()
+        stop.set()
+        with patch.object(
+            self.daemon, "_analysis_base_url", return_value="https://example.test"
+        ), patch("urllib.request.urlopen") as urlopen:
+            state, message = self.daemon._diarization_poll("job1", 0.0, 5, stop=stop)
+        urlopen.assert_not_called()
+        self.assertEqual(state, "queued")
+        self.assertIn("paused", str(message))
 
     def test_retry_diarization_validates_session(self) -> None:
         self.assertEqual(self.daemon.command("retry_diarization", {"session_id": ""})["ok"], "false")

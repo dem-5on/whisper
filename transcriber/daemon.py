@@ -162,6 +162,9 @@ class TranscriberDaemon:
         # revision. Partials are panel-only; delivery uses final text only.
         self._session: LiveSession | None = None
         self._live_stop = threading.Event()
+        # Detached analysis workers check this so a shutdown cannot start a paid
+        # upload or keep writing sessions while the process is going away.
+        self._stopping = threading.Event()
         self._live_threads: list[threading.Thread] = []
         self._live_engine: LiveEngine | None = None
         self._hosted_live_session = False
@@ -250,6 +253,8 @@ class TranscriberDaemon:
             return self._retry_analysis(str(params.get("session_id", "")))
         if command == "retry_diarization":
             return self._retry_diarization(str(params.get("session_id", "")))
+        if command == "cancel_diarization":
+            return self._cancel_diarization(str(params.get("session_id", "")))
         if command == "mics":
             return self._get_mics()
         if command == "models":
@@ -1130,6 +1135,7 @@ class TranscriberDaemon:
 
     def _diarization_poll(
         self, job_id: str, poll_interval: float = 5.0, max_polls: int = 720,
+        stop: threading.Event | None = None,
     ) -> tuple[str, object]:
         """Poll one diarization job. Returns (state, turns-or-message)."""
         import os
@@ -1138,6 +1144,10 @@ class TranscriberDaemon:
 
         interval = poll_interval if poll_interval > 0 else DIARIZATION_POLL_SECONDS
         attempts = max_polls if max_polls > 0 else DIARIZATION_MAX_POLLS
+        if stop is not None and stop.is_set():
+            # Shutting down: leave the job id in place so the next run resumes
+            # polling instead of resubmitting.
+            return "queued", "Speaker analysis paused until the app starts again."
         base_url = self._analysis_base_url()
         token = os.environ.get("WHISPER_SERVICE_TOKEN", "").strip()
         if not base_url or not token:
@@ -1171,12 +1181,15 @@ class TranscriberDaemon:
                 return "queued", "Speaker service returned an unusable result."
             if state == "failed":
                 return "failed", "Speaker analysis failed on the service."
+            if state == "cancelled" or body.get("cancelled") is True:
+                return "cancelled", "Speaker analysis was cancelled."
             time.sleep(interval)
         return "queued", "Speaker analysis is still running."
 
     def _store_diarization_state(
         self, session_id: str, state: str, message: str = "",
         job_id: str | None = None, attempts: int | None = None,
+        drop_job: bool = False,
     ) -> None:
         try:
             stored = self._session_store.get(session_id)
@@ -1185,7 +1198,9 @@ class TranscriberDaemon:
             return
         outputs = dict(stored.outputs) if isinstance(stored.outputs, dict) else {}
         entry: dict[str, object] = {"state": state, "message": message}
-        if job_id:
+        if drop_job:
+            pass
+        elif job_id:
             entry["job_id"] = job_id
         if attempts is not None:
             entry["attempts"] = attempts
@@ -1204,7 +1219,7 @@ class TranscriberDaemon:
             MEETING_OUTPUT_KEYS, MEETING_STAGES, speaker_labeled_text,
         )
 
-        if self._analysis_busy(session_id):
+        if self._stopping.is_set() or self._analysis_busy(session_id):
             return
         try:
             try:
@@ -1227,8 +1242,9 @@ class TranscriberDaemon:
                 entry = existing_analysis.get(kind)
                 return isinstance(entry, dict) and entry.get("state") == "ready"
 
+            speaker_cancelled = diarization.get("state") == "cancelled"
             speaker_turns_done = bool(diarization.get("turns_applied"))
-            if not speaker_turns_done:
+            if not speaker_turns_done and not speaker_cancelled:
                 attempts = diarization.get("attempts", 0)
                 if not isinstance(attempts, int):
                     attempts = 0
@@ -1255,7 +1271,9 @@ class TranscriberDaemon:
                                 self._store_diarization_state(session_id, state, str(payload), attempts=attempts + 1)
                                 job_id = None
                 if job_id is not None:
-                    state, payload = self._diarization_poll(job_id, poll_interval, max_polls)
+                    state, payload = self._diarization_poll(
+                        job_id, poll_interval, max_polls, stop=self._stopping,
+                    )
                     if state == "ready" and isinstance(payload, list):
                         try:
                             self._session_store.apply_diarization(session_id, payload)
@@ -1361,6 +1379,84 @@ class TranscriberDaemon:
         except (SessionStoreError, KeyError, ValueError):
             LOG.error("Could not persist meeting stage")
 
+    def _diarization_delete(self, job_id: str) -> tuple[str, str]:
+        """Ask the service to stop a job. Returns (state, message)."""
+        import os
+
+        base_url = self._analysis_base_url()
+        token = os.environ.get("WHISPER_SERVICE_TOKEN", "").strip()
+        if not base_url or not token:
+            return "offline", "Speaker analysis service is not configured."
+        request = urllib.request.Request(
+            base_url.rstrip("/") + f"/v1/diarization/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            method="DELETE",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                # Already finished and dropped, or the service restarted.
+                return "cancelled", ""
+            if exc.code == 409:
+                return "finished", "Speaker analysis already finished; labels are on the way."
+            LOG.warning("Diarization cancel refused (%s)", exc.code)
+            return "error", "Speaker service refused the request."
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return "offline", "Speaker service is unreachable; the job keeps running."
+        except (ValueError, UnicodeDecodeError):
+            return "error", "Speaker service returned an invalid response."
+        state = body.get("state") if isinstance(body, dict) else None
+        if state == "cancelled":
+            return "cancelled", ""
+        return "error", "Speaker service did not confirm the cancellation."
+
+    def _cancel_diarization(self, session_id: str) -> dict[str, Any]:
+        if not session_id:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "A session identifier is required"}
+        try:
+            stored = self._session_store.get(session_id)
+        except KeyError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Session was not found"}
+        except SessionStoreError:
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Could not read local session"}
+        if stored.mode != "meeting":
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Only Meeting sessions have speaker analysis"}
+        outputs = stored.outputs if isinstance(stored.outputs, dict) else {}
+        diarization = outputs.get("diarization_state", {})
+        if not isinstance(diarization, dict):
+            diarization = {}
+        state = diarization.get("state")
+        if state == "ready":
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Speaker analysis already finished"}
+        if state == "cancelled":
+            with self._lock:
+                return {**self._status_locked(), "ok": "true", "cancelled_session_id": session_id}
+        job_id = diarization.get("job_id") if isinstance(diarization.get("job_id"), str) else None
+        message = "Speaker analysis cancelled."
+        if job_id:
+            outcome, detail = self._diarization_delete(job_id)
+            if outcome == "offline":
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": detail}
+            if outcome == "error":
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": detail}
+            if outcome == "finished":
+                # Leave the job id in place so the pending poll still applies it.
+                with self._lock:
+                    return {**self._status_locked(), "ok": "false", "error": detail}
+        self._store_diarization_state(session_id, "cancelled", message)
+        with self._lock:
+            self._last_notice = message
+        return {**self._status_locked(), "ok": "true", "cancelled_session_id": session_id}
+
     def _retry_diarization(self, session_id: str) -> dict[str, Any]:
         if not session_id:
             with self._lock:
@@ -1386,7 +1482,13 @@ class TranscriberDaemon:
         with self._lock:
             if self._state in {State.RECORDING, State.PROCESSING, State.DELIVERING}:
                 return {**self._status_locked(), "ok": "false", "error": "Another recording or transcription is in progress"}
-        self._store_diarization_state(session_id, "queued", "Speaker analysis queued for retry.")
+        if self._stopping.is_set():
+            with self._lock:
+                return {**self._status_locked(), "ok": "false", "error": "Wicx is shutting down"}
+        self._store_diarization_state(
+            session_id, "queued", "Speaker analysis queued for retry.",
+            attempts=0, drop_job=True,
+        )
         worker = threading.Thread(
             target=self._run_meeting_analysis,
             args=(session_id,),
@@ -2167,7 +2269,7 @@ class TranscriberDaemon:
                     self._run_lecture_analysis(session_id)
                 except Exception:
                     LOG.error("Lecture analysis pipeline failed")
-            if mode == "meeting" and session_id:
+            if mode == "meeting" and session_id and not self._stopping.is_set():
                 try:
                     worker = threading.Thread(
                         target=self._run_meeting_analysis,
@@ -2489,6 +2591,7 @@ class TranscriberDaemon:
         with self._lock:
             self._cancel_timer()
             self._live_stop.set()
+            self._stopping.set()
             if self._state == State.RECORDING:
                 try:
                     self.recorder.cancel()

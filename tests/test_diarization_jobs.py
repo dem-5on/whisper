@@ -189,6 +189,128 @@ class DiarizationHttpApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status, 404)
 
 
+class DiarizationCancellationTests(unittest.IsolatedAsyncioTestCase):
+    """Cancelling must never hand back speaker turns for that recording."""
+
+    async def asyncSetUp(self) -> None:
+        release = asyncio.Event()
+        self.release = release
+
+        class GatedWorker:
+            async def diarize(self, _audio):
+                await release.wait()
+                return [{"start_seconds": 0.0, "end_seconds": 1.0, "speaker_id": "speaker_1"}]
+
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.manager = DiarizationJobManager(
+            GatedWorker(), temp_dir=Path(self.tempdir.name), max_jobs=4,
+        )
+        await self.manager.start()
+        self.entitlement_path = Path(self.tempdir.name) / "entitlements.json"
+        grant_feature(self.entitlement_path, "user-a", "diarization")
+        grant_feature(self.entitlement_path, "user-b", "diarization")
+        auth = TokenAuthenticator({
+            hashlib.sha256(b"user-a-token").hexdigest(): "user-a",
+            hashlib.sha256(b"user-b-token").hexdigest(): "user-b",
+        })
+        self.client = TestClient(TestServer(make_app(auth, self.manager, EntitlementStore(self.entitlement_path))))
+        await self.client.start_server()
+
+    async def asyncTearDown(self) -> None:
+        self.release.set()
+        await self.client.close()
+        await self.manager.close()
+        self.tempdir.cleanup()
+
+    def _headers(self, user: str = "user-a") -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {user}-token",
+            "Content-Type": "audio/wav",
+        }
+
+    async def _submit(self, user: str = "user-a") -> tuple[str, Path]:
+        response = await self.client.post(JOBS_PATH, data=wav_bytes(), headers=self._headers(user))
+        self.assertEqual(response.status, 202)
+        job_id = (await response.json())["job_id"]
+        return job_id, self.manager.jobs[job_id].audio_path
+
+    async def _await_state(self, job_id: str, wanted: set[str], user: str = "user-a") -> dict:
+        payload: dict = {}
+        for _ in range(200):
+            status = await self.client.get(f"{JOBS_PATH}/{job_id}", headers=self._headers(user))
+            payload = await status.json()
+            if payload["state"] in wanted:
+                return payload
+            await asyncio.sleep(0.01)
+        self.fail(f"job stayed in {payload.get('state')}")
+
+    async def test_queued_job_cancels_without_ever_running(self) -> None:
+        running_id, _ = await self._submit("user-a")
+        await self._await_state(running_id, {"processing"})
+        # A second user's job waits behind the blocked worker.
+        queued_id, queued_audio = await self._submit("user-b")
+        self.assertEqual(self.manager.jobs[queued_id].state, "queued")
+        self.assertTrue(queued_audio.exists())
+
+        impostor = await self.client.delete(
+            f"{JOBS_PATH}/{queued_id}", headers={"Authorization": "Bearer user-a-token"}
+        )
+        self.assertEqual(impostor.status, 404)
+
+        cancelled = await self.client.delete(
+            f"{JOBS_PATH}/{queued_id}", headers={"Authorization": "Bearer user-b-token"}
+        )
+        self.assertEqual(cancelled.status, 200)
+        self.assertEqual((await cancelled.json())["state"], "cancelled")
+        self.assertFalse(queued_audio.exists())
+
+        payload = await self._await_state(queued_id, {"cancelled"}, user="user-b")
+        self.assertTrue(payload["cancelled"])
+        self.assertNotIn("turns", payload)
+
+        # The cancelled job never reaches inference, so the blocked job still holds the worker.
+        self.assertEqual(self.manager.jobs[running_id].state, "processing")
+
+    async def test_processing_job_cancels_and_discards_turns(self) -> None:
+        job_id, audio = await self._submit()
+        await self._await_state(job_id, {"processing"})
+        cancelled = await self.client.delete(
+            f"{JOBS_PATH}/{job_id}", headers={"Authorization": "Bearer user-a-token"}
+        )
+        self.assertEqual(cancelled.status, 200)
+        self.release.set()
+        payload = await self._await_state(job_id, {"cancelled"})
+        self.assertNotIn("turns", payload)
+        self.assertFalse(audio.exists())
+
+    async def test_cancel_is_owner_scoped_and_terminal_jobs_conflict(self) -> None:
+        job_id, _ = await self._submit()
+        await self._await_state(job_id, {"processing"})
+        other = await self.client.delete(
+            f"{JOBS_PATH}/{job_id}", headers={"Authorization": "Bearer user-b-token"}
+        )
+        self.assertEqual(other.status, 404)
+        unknown = await self.client.delete(
+            f"{JOBS_PATH}/{'a' * 32}", headers={"Authorization": "Bearer user-a-token"}
+        )
+        self.assertEqual(unknown.status, 404)
+        malformed = await self.client.delete(
+            f"{JOBS_PATH}/not-a-job", headers={"Authorization": "Bearer user-a-token"}
+        )
+        self.assertEqual(malformed.status, 404)
+
+        self.release.set()
+        payload = await self._await_state(job_id, {"complete"})
+        self.assertEqual(payload["turns"], [
+            {"start_seconds": 0.0, "end_seconds": 1.0, "speaker_id": "speaker_1"}
+        ])
+        late = await self.client.delete(
+            f"{JOBS_PATH}/{job_id}", headers={"Authorization": "Bearer user-a-token"}
+        )
+        self.assertEqual(late.status, 409)
+        self.assertEqual((await late.json())["state"], "complete")
+
+
 class DiarizationMeteringTests(unittest.IsolatedAsyncioTestCase):
     PERIOD_END = "2030-01-01T00:00:00+00:00"
     MAPPING = {"pro-monthly": (

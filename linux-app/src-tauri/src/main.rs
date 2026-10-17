@@ -56,6 +56,7 @@ fn daemon_request(command: String, params: Option<Value>) -> Result<Value, Strin
         "export_session",
         "retry_analysis",
         "retry_diarization",
+        "cancel_diarization",
         "rename_speaker",
         "assign_segment_speaker",
         "merge_speakers",

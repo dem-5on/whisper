@@ -565,3 +565,10 @@ body.in-setup #setup-head { max-width:640px; width:100%; margin-left:auto; margi
 .speaker-row select { padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; font-size:12px; background:#fff; }
 .speaker-segments li { margin-bottom:10px; }
 .speaker-segments .segment-assign { display:block; margin-top:4px; padding:6px 8px; border:1px solid #e5e7eb; border-radius:7px; font-size:11px; background:#fff; }
+
+/* Speaker correction panel */
+.speaker-corrections { margin: 10px 0 4px; border:1px solid #e5e7eb; border-radius:10px; padding:0 12px; }
+.speaker-corrections > summary { cursor:pointer; padding:10px 0; font-size:12px; font-weight:600; color:#374151; list-style-position:inside; }
+.speaker-corrections[open] > summary { border-bottom:1px solid #f1f3f6; margin-bottom:8px; }
+.speaker-corrections h4 { margin:12px 0 4px; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:#6b7280; }
+.speaker-corrections > h4:first-of-type { margin-top:8px; }

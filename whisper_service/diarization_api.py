@@ -294,6 +294,20 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
             return web.json_response({"error": "not_found"}, status=404)
         return web.json_response(result)
 
+    async def cancel_job(request: Any) -> Any:
+        if jobs is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        job_id = request.match_info["job_id"]
+        if len(job_id) != 32 or any(ch not in "0123456789abcdef" for ch in job_id):
+            return web.json_response({"error": "not_found"}, status=404)
+        state = await jobs.cancel(request["user_id"], job_id)
+        if not state:
+            # Do not disclose whether another user's job ID exists.
+            return web.json_response({"error": "not_found"}, status=404)
+        if state != "cancelled":
+            return web.json_response({"job_id": job_id, "state": state}, status=409)
+        return web.json_response({"job_id": job_id, "state": "cancelled"})
+
     async def paystack_webhook(request: Any) -> Any:
         if billing_store is None or not paystack_secret:
             return web.json_response({"error": "billing_unavailable"}, status=503)
@@ -642,6 +656,7 @@ def make_app(authenticator: TokenAuthenticator, jobs: DiarizationJobManager | No
     if jobs is not None:
         app.router.add_post(JOBS_PATH, create_job)
         app.router.add_get(f"{JOBS_PATH}/{{job_id}}", get_job)
+        app.router.add_delete(f"{JOBS_PATH}/{{job_id}}", cancel_job)
     if rewrite_model is not None:
         app.router.add_post(REWRITE_PATH, rewrite_text)
         app.router.add_get(REWRITE_MODELS_PATH, rewrite_models)
