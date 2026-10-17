@@ -40,10 +40,21 @@ import re
 
 from . import __version__
 from .audio import list_sources, make_recorder, repair_wav_header
-from .config import KEY_ENV, Config, load_config, load_keys_env, resolve_config_path, save_config, write_key
+from .config import (
+    KEY_ENV,
+    SERVICE_API_URL_VARIABLE,
+    SERVICE_USER_AGENT_VARIABLE,
+    Config,
+    load_config,
+    load_keys_env,
+    resolve_config_path,
+    save_config,
+    write_key,
+)
 from .delivery import make_delivery
 from .live_engines import LiveEngine, LiveEngineUnavailable, LocalEngineCallbacks, RemoteLiveCallbacks, make_live_engine
 from .processing import process_transcript
+from .service_identity import service_identity_headers, service_user_agent
 from .state import State
 from .session_store import SessionStore, SessionStoreError
 from .session_export import default_export_path, export_session_audio, export_session_docx, export_session_markdown
@@ -877,8 +888,26 @@ class TranscriberDaemon:
             return self._ok_locked()
 
     def _analysis_base_url(self) -> str | None:
-        """Derive the analysis HTTPS base from the configured live URL."""
+        """Base URL for hosted analysis, diarization, and rewrite calls.
+
+        ``WHISPER_SERVICE_API_URL`` wins so a local service run needs no
+        production hostname; otherwise the base is derived from the configured
+        live WebSocket URL, as before.
+        """
         from urllib.parse import urlsplit
+
+        override = os.environ.get(SERVICE_API_URL_VARIABLE, "").strip()
+        if override:
+            try:
+                parts = urlsplit(override)
+            except ValueError:
+                LOG.warning("%s is not a valid URL; ignoring it", SERVICE_API_URL_VARIABLE)
+            else:
+                if parts.scheme in {"http", "https"} and parts.netloc:
+                    prefix = f"{parts.scheme}://{parts.netloc}"
+                    path = parts.path.strip("/")
+                    return f"{prefix}/{path}" if path else prefix
+                LOG.warning("%s must be an absolute http(s) URL; ignoring it", SERVICE_API_URL_VARIABLE)
 
         raw = (self.config.streaming.server_url or "").strip()
         if not raw:
@@ -895,6 +924,13 @@ class TranscriberDaemon:
             return f"https://{parts.netloc}"
         return None
 
+    def _service_headers(self, token: str, content_type: str | None = None) -> dict[str, str]:
+        """Headers for one hosted-service request, including our User-Agent."""
+        headers = {"Authorization": f"Bearer {token}", **service_identity_headers()}
+        if content_type:
+            headers["Content-Type"] = content_type
+        return headers
+
     def _analysis_post(self, kind: str, text: str, language: str | None = None) -> tuple[str, Any]:
         """Submit one analysis stage. Returns (state, result-or-message).
 
@@ -910,7 +946,7 @@ class TranscriberDaemon:
         request = urllib.request.Request(
             base_url.rstrip("/") + "/v1/analysis",
             data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            headers=self._service_headers(token, "application/json"),
             method="POST",
         )
         try:
@@ -1106,7 +1142,7 @@ class TranscriberDaemon:
         request = urllib.request.Request(
             base_url.rstrip("/") + "/v1/diarization/jobs",
             data=data,
-            headers={"Content-Type": "audio/wav", "Authorization": f"Bearer {token}"},
+            headers=self._service_headers(token, "audio/wav"),
             method="POST",
         )
         try:
@@ -1155,7 +1191,7 @@ class TranscriberDaemon:
         for _ in range(attempts):
             request = urllib.request.Request(
                 base_url.rstrip("/") + f"/v1/diarization/jobs/{job_id}",
-                headers={"Authorization": f"Bearer {token}"},
+                headers=self._service_headers(token),
                 method="GET",
             )
             try:
@@ -1389,7 +1425,7 @@ class TranscriberDaemon:
             return "offline", "Speaker analysis service is not configured."
         request = urllib.request.Request(
             base_url.rstrip("/") + f"/v1/diarization/jobs/{job_id}",
-            headers={"Authorization": f"Bearer {token}"},
+            headers=self._service_headers(token),
             method="DELETE",
         )
         try:
@@ -2415,6 +2451,8 @@ class TranscriberDaemon:
             "has_openrouter_key": bool(os.environ.get("OPENROUTER_API_KEY")),
             "has_openai_key": bool(os.environ.get("OPENAI_API_KEY")),
             "has_whisper_service_token": bool(os.environ.get("WHISPER_SERVICE_TOKEN")),
+            "service_api_url": self._analysis_base_url() or "",
+            "service_user_agent": service_user_agent(),
             "version": __version__,
             "session_id": session.session_id if session else "",
             "live_revision": session.revision if live_active and session else 0,
@@ -2483,10 +2521,18 @@ class TranscriberDaemon:
                 self._soft_error = False
 
     def _cancel_timer(self) -> None:
+        """Cancel the recording and disk-guard timers.
+
+        The queued-analysis sweeper is deliberately left running: stopping a
+        recording must not silently cancel retries of work already accepted.
+        Only shutdown stops it.
+        """
         if self._timer:
             self._timer.cancel()
             self._timer = None
         self._cancel_disk_timer()
+
+    def _cancel_analysis_sweep(self) -> None:
         if self._sweep_timer:
             self._sweep_timer.cancel()
             self._sweep_timer = None
@@ -2590,6 +2636,7 @@ class TranscriberDaemon:
     def shutdown(self) -> None:
         with self._lock:
             self._cancel_timer()
+            self._cancel_analysis_sweep()
             self._live_stop.set()
             self._stopping.set()
             if self._state == State.RECORDING:

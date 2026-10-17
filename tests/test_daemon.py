@@ -822,6 +822,69 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(state, "queued")
         self.assertIn("paused", str(message))
 
+    def test_service_api_url_override_targets_a_local_service(self) -> None:
+        import os
+
+        previous = os.environ.get("WHISPER_SERVICE_API_URL")
+        try:
+            os.environ["WHISPER_SERVICE_API_URL"] = "http://127.0.0.1:8766/"
+            self.assertEqual(self.daemon._analysis_base_url(), "http://127.0.0.1:8766")
+            os.environ["WHISPER_SERVICE_API_URL"] = "https://example.test/wicx"
+            self.assertEqual(self.daemon._analysis_base_url(), "https://example.test/wicx")
+            os.environ.pop("WHISPER_SERVICE_API_URL")
+            derived = self.daemon._analysis_base_url()
+            for bad in ("", "not a url", "ftp://example.test", "/relative"):
+                os.environ["WHISPER_SERVICE_API_URL"] = bad
+                # An unusable value falls back to the configured live URL
+                # instead of sending requests somewhere unexpected.
+                self.assertEqual(self.daemon._analysis_base_url(), derived)
+        finally:
+            if previous is None:
+                os.environ.pop("WHISPER_SERVICE_API_URL", None)
+            else:
+                os.environ["WHISPER_SERVICE_API_URL"] = previous
+
+    def test_service_requests_carry_an_explicit_user_agent(self) -> None:
+        import os
+
+        previous = os.environ.get("WHISPER_SERVICE_USER_AGENT")
+        try:
+            os.environ["WHISPER_SERVICE_USER_AGENT"] = "WicxQA/1.0 (+https://example.test)"
+            headers = self.daemon._service_headers("token-1", "application/json")
+            self.assertEqual(headers["User-Agent"], "WicxQA/1.0 (+https://example.test)")
+            self.assertEqual(headers["Authorization"], "Bearer token-1")
+            self.assertEqual(headers["Content-Type"], "application/json")
+            # A hostile or unusable agent falls back to the versioned default.
+            os.environ["WHISPER_SERVICE_USER_AGENT"] = "bad\r\nX-Injected: 1"
+            self.assertTrue(self.daemon._service_headers("t")["User-Agent"].startswith("Wicx/"))
+        finally:
+            if previous is None:
+                os.environ.pop("WHISPER_SERVICE_USER_AGENT", None)
+            else:
+                os.environ["WHISPER_SERVICE_USER_AGENT"] = previous
+
+    def test_status_reports_the_service_url_and_agent(self) -> None:
+        status = self.daemon.command("status")
+        self.assertIn("service_api_url", status)
+        self.assertIn("service_user_agent", status)
+        self.assertTrue(status["service_user_agent"])
+
+    def test_stopping_a_recording_keeps_the_analysis_sweep_alive(self) -> None:
+        self.assertIsNotNone(self.daemon._sweep_timer)
+        self.daemon._cancel_timer()
+        self.assertIsNotNone(
+            self.daemon._sweep_timer,
+            "stopping a recording must not cancel queued-analysis retries",
+        )
+        self.daemon._cancel_analysis_sweep()
+        self.assertIsNone(self.daemon._sweep_timer)
+
+    def test_shutdown_stops_the_analysis_sweep(self) -> None:
+        self.assertIsNotNone(self.daemon._sweep_timer)
+        self.daemon.shutdown()
+        self.assertIsNone(self.daemon._sweep_timer)
+        self.assertTrue(self.daemon._stopping.is_set())
+
     def test_retry_diarization_validates_session(self) -> None:
         self.assertEqual(self.daemon.command("retry_diarization", {"session_id": ""})["ok"], "false")
         lecture = self.daemon._session_store.create("lecture")

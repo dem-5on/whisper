@@ -718,13 +718,18 @@ function renderMeetingAnalysis(session) {
   if (diarizationState && diarizationState !== "ready") {
     const note = document.createElement("p");
     note.className = "analysis-pending";
-    const pendingCopy = {
-      blocked: `Speaker detection unavailable: ${diarization.message || "subscription required"}`,
-      failed: diarization.message || "Speaker detection failed. The transcript is unaffected.",
-      cancelled: diarization.message || "Speaker detection was cancelled. The transcript is unaffected.",
+    // The daemon already knows why: refused, unreachable, not configured.
+    // Showing our own wording instead of that reason is how "still running"
+    // hid a Cloudflare block for hours.
+    const fallbackCopy = {
+      blocked: "Speaker detection is unavailable on this subscription.",
+      failed: "Speaker detection failed. The transcript is unaffected.",
+      cancelled: "Speaker detection was cancelled. The transcript is unaffected.",
       queued: "Speaker detection is still running — the transcript stays readable meanwhile.",
     };
-    note.textContent = pendingCopy[diarizationState] || "Speaker detection is still running.";
+    note.textContent = (diarization.message || "").trim()
+      || fallbackCopy[diarizationState]
+      || fallbackCopy.queued;
     section.append(note);
   }
   if (diarizationState === "queued") {
@@ -925,9 +930,10 @@ function renderMeetingAnalysis(session) {
     }
     const note = document.createElement("p");
     note.className = "analysis-pending";
-    note.textContent = state === "blocked" && states[key].message
-      ? `Unavailable right now: ${states[key].message}`
-      : "Still processing — check back shortly.";
+    note.textContent = (states[key].message || "").trim()
+      || (state === "blocked"
+        ? "Unavailable right now."
+        : "Still processing — check back shortly.");
     section.append(note);
   };
   meetingStage("summary", "Summary", () => {

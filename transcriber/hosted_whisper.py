@@ -8,6 +8,8 @@ import threading
 import time
 from typing import Callable
 
+from .service_identity import service_identity_headers
+
 
 _CLOSE = object()
 
@@ -60,7 +62,12 @@ class HostedWhisperEngine:
         try:
             with connect(
                 self.url,
-                additional_headers={"Authorization": f"Bearer {self.token}"},
+                additional_headers={
+                    "Authorization": f"Bearer {self.token}",
+                    # Proxies in front of the service reject default library
+                    # agents, so the handshake identifies Wicx too.
+                    **service_identity_headers(),
+                },
                 open_timeout=15,
                 close_timeout=3,
                 max_size=64 * 1024,

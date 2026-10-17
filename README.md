@@ -139,6 +139,20 @@ Other backends that do not expose timestamps continue to save plain text only.
 
 Provider, model, and mic switches are written through to `~/.config/transcriber/config.yaml`,
 so they survive daemon restarts. API keys are stored separately in `~/.config/transcriber/keys.env`
+
+Two more variables in that same file control how Wicx reaches its hosted service:
+
+```
+WHISPER_SERVICE_API_URL=http://127.0.0.1:8766   # point the whole hosted pipeline at a local service
+WHISPER_SERVICE_USER_AGENT=Wicx/2026.10.10      # sent on every request; proxies reject library agents
+```
+
+`WHISPER_SERVICE_API_URL` wins over the live URL in `config.yaml`, so local
+testing needs no production hostname; leave it unset in production to keep
+deriving the base from `streaming.server_url`. Every hosted request (analysis,
+speaker analysis, live WebSocket) sends an explicit `User-Agent`, because
+Cloudflare in front of the service answers `Python-urllib` with `error code:
+1010`, which is indistinguishable from an auth failure.
 (mode 0600, loaded at daemon startup, never logged); `status --json` only reports key *presence*
 (`has_groq_key`, `has_openrouter_key`, `has_openai_key`, `has_whisper_service_token`) so the panel can warn when a remote backend has no key.
 

@@ -23,6 +23,17 @@ KEY_ENV = {
     "hosted-whisper": "WHISPER_SERVICE_TOKEN",
 }
 
+#: Base URL of the hosted inference service (analysis, diarization, rewrite).
+#: Set it to run the whole pipeline locally, for example
+#: ``http://127.0.0.1:8766``. Without it the base is derived from the live
+#: WebSocket URL in the config file.
+SERVICE_API_URL_VARIABLE = "WHISPER_SERVICE_API_URL"
+
+#: User-Agent sent with every hosted-service request. Reverse proxies in front
+#: of the service reject default library agents (Cloudflare answers 1010 to
+#: ``Python-urllib``), so Wicx identifies itself explicitly.
+SERVICE_USER_AGENT_VARIABLE = "WHISPER_SERVICE_USER_AGENT"
+
 
 @dataclass(frozen=True)
 class AudioConfig:
